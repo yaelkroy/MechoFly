@@ -1,0 +1,7 @@
+host-windows/bin/
+host-windows/obj/
+*.user
+*.suo
+*.log
+artifacts/
+

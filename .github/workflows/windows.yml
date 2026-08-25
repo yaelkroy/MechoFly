@@ -1,0 +1,55 @@
+name: MechoFly Windows verification
+
+on:
+  push:
+    branches: [main, "feat/**", "chore/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse Windows PowerShell scripts
+        shell: powershell
+        run: |
+          $errors = @()
+          Get-ChildItem -Recurse -Filter '*.ps1' | ForEach-Object {
+            $tokens = $null
+            $parse = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parse) | Out-Null
+            $errors += @($parse)
+          }
+          if ($errors.Count -gt 0) { $errors | Format-List -Force; throw 'PowerShell parser failure.' }
+      - name: Verify active tree identity
+        shell: powershell
+        run: .\tools\Verify-Tree.ps1
+      - name: Compile x64 Windows host
+        shell: powershell
+        run: .\host-windows\build.ps1
+      - name: Run deterministic safety self-test
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Path .\artifacts -Force | Out-Null
+          $executable = (Resolve-Path .\host-windows\bin\MechoFly.exe).Path
+          $receiptPath = (Join-Path $PWD 'artifacts\self-test.json')
+          $arguments = '--self-test "{0}"' -f $receiptPath
+          $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru
+          if (Test-Path -LiteralPath $receiptPath -PathType Leaf) {
+            Get-Content -LiteralPath $receiptPath -Raw | Write-Host
+          }
+          if ($process.ExitCode -ne 0) { throw "Self-test exited $($process.ExitCode)" }
+          $receipt = Get-Content .\artifacts\self-test.json -Raw | ConvertFrom-Json
+          if ($receipt.status -ne 'PASS') { throw 'Self-test receipt failed.' }
+          if (-not $receipt.live_state_unchanged) { throw 'Preview mutated live state.' }
+          if (-not $receipt.alternative_differs) { throw 'Alternative trajectory did not differ.' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mechofly-self-test
+          path: artifacts/self-test.json
+          if-no-files-found: error
