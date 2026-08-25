@@ -29,11 +29,15 @@ function Invoke-MechoFlyGit {
     $GitOutput = @()
     $GitStandardError = ''
     $GitExitCode = -1
+    $PreviousErrorActionPreference = $ErrorActionPreference
     try {
         # Windows PowerShell 5.1 converts native stderr merged with 2>&1 into
         # NativeCommandError records. With ErrorActionPreference=Stop, normal
         # Git progress would terminate the setup before LASTEXITCODE is read.
-        # Keep stdout and stderr on separate channels instead.
+        # Keep stdout and stderr on separate channels. PS5.1 still applies the
+        # preference to redirected native stderr, so relax it only around the
+        # process and then make the captured exit code authoritative.
+        $ErrorActionPreference = 'Continue'
         $GitOutput = @(& $script:GitExecutable @Arguments 2> $StandardErrorPath)
         $GitExitCode = $LASTEXITCODE
         if (Test-Path -LiteralPath $StandardErrorPath -PathType Leaf) {
@@ -41,6 +45,7 @@ function Invoke-MechoFlyGit {
         }
     }
     finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
         Remove-Item -LiteralPath $StandardErrorPath -Force -ErrorAction SilentlyContinue
     }
 
