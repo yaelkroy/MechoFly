@@ -47,6 +47,11 @@ jobs:
           if ($receipt.status -ne 'PASS') { throw 'Self-test receipt failed.' }
           if (-not $receipt.live_state_unchanged) { throw 'Preview mutated live state.' }
           if (-not $receipt.alternative_differs) { throw 'Alternative trajectory did not differ.' }
+          if ($receipt.default_skin -ne 'drosophila') { throw 'Drosophila is not the default skin.' }
+          if (-not $receipt.drosophila_skin_available -or -not $receipt.firefly_skin_available) {
+            throw 'A required visual skin is unavailable.'
+          }
+          if (-not $receipt.invalid_skin_rejected) { throw 'Invalid skin was not rejected.' }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

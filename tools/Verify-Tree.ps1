@@ -10,7 +10,7 @@ $Forbidden = @(
     ('desktop' + 'fly'),
     ('DESKTOP' + 'FLY')
 )
-$TextExtensions = @('.cs', '.ps1', '.cmd', '.md', '.yml', '.yaml', '.json', '.txt')
+$TextExtensions = @('.cs', '.ps1', '.cmd', '.md', '.yml', '.yaml', '.json', '.txt', '.svg')
 $Failures = New-Object System.Collections.Generic.List[string]
 Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object {
     if ($_.FullName.IndexOf((Join-Path $Root '.git'), [StringComparison]::OrdinalIgnoreCase) -eq 0) {
