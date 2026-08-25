@@ -240,7 +240,7 @@ fn modeled_behavior(frame: u64, spike_count: usize, neuron_count: usize) -> Beha
     } else {
         match (frame / 90) % 9 {
             0 => Behavior::Rest,
-            1 | 2 | 3 => Behavior::Walk,
+            1..=3 => Behavior::Walk,
             4 => Behavior::Groom,
             5 | 6 => Behavior::Walk,
             7 => Behavior::Quiet,

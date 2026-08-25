@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use eframe::egui::{
     self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2,
@@ -395,7 +395,7 @@ fn draw_live_graph(painter: &egui::Painter, rect: Rect, session: &SimulationSess
 }
 
 fn comparison_view(ui: &mut egui::Ui, state: &mut BrainLabState) {
-    let Some(comparison) = state.comparison.as_ref() else {
+    if state.comparison.is_none() {
         ui.heading("Actual / alternative filmstrip");
         ui.add_space(16.0);
         egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0, GRID)).inner_margin(20).show(ui, |ui| {
@@ -403,12 +403,31 @@ fn comparison_view(ui: &mut egui::Ui, state: &mut BrainLabState) {
             ui.label("Use the experiment rail to select a retained source frame and generate a bounded, discarded comparison.");
         });
         return;
-    };
+    }
+    let frame_count = state
+        .comparison
+        .as_ref()
+        .map(|comparison| comparison.frames.len())
+        .unwrap_or_default();
     ui.horizontal(|ui| {
         ui.heading("Aligned multi-frame comparison");
         ui.colored_label(ACTUAL, "● ACTUAL");
         ui.colored_label(ALTERNATIVE, "■ ALTERNATIVE");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let label = if state.playing { "Pause" } else { "Play" };
+            if ui.button(label).clicked() {
+                state.playing = !state.playing;
+            }
+        });
     });
+    if state.playing && frame_count > 0 {
+        state.comparison_cursor = ui.input(|input| (input.time * 12.0) as usize) % frame_count;
+        ui.ctx().request_repaint_after(Duration::from_millis(80));
+    }
+    let comparison = state
+        .comparison
+        .as_ref()
+        .expect("comparison presence was checked above");
     ui.label("Both rows start from the same full checkpoint. The lower strip reports neuron-state divergence.");
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 390.0), Sense::hover());

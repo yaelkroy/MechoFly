@@ -80,7 +80,7 @@ impl ModelGraph {
             for source in unique {
                 let h = mix64(seed ^ ((source as u64) << 32) ^ target as u64);
                 let magnitude = 96 + (h % 225) as i32;
-                let inhibitory = (h >> 11) % 5 == 0;
+                let inhibitory = (h >> 11).is_multiple_of(5);
                 incoming_sources.push(source as u32);
                 modeled_weights.push(if inhibitory { -magnitude } else { magnitude });
             }
@@ -192,7 +192,11 @@ pub(crate) fn mix64(mut value: u64) -> u64 {
 fn brain_position(index: usize, count: usize, seed: u64) -> [f32; 2] {
     let h1 = mix64(seed ^ index as u64);
     let h2 = mix64(h1 ^ 0xA076_1D64_78BD_642F);
-    let side = if index % 2 == 0 { -1.0_f32 } else { 1.0_f32 };
+    let side = if index.is_multiple_of(2) {
+        -1.0_f32
+    } else {
+        1.0_f32
+    };
     let radial = ((h1 & 0xffff) as f32 / 65_535.0).sqrt();
     let theta = ((h2 & 0xffff) as f32 / 65_535.0) * std::f32::consts::TAU;
     let density = (count as f32).log10().max(1.0);
