@@ -3,7 +3,6 @@ use std::{sync::mpsc, sync::Arc, time::Instant};
 use bytemuck::{Pod, Zeroable};
 use mechofly_core::{
     FrameSummary, ModelEngine, ModelGraph, ModelTier, StepInput,
-    model::{ACTIVATION_MAX, ACTIVATION_MIN, RESET_DELTA, SPIKE_THRESHOLD},
 };
 use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
@@ -83,17 +82,10 @@ impl CapacityAssessment {
 
 pub enum RuntimeBackend {
     Cpu,
-    Gpu(GpuStepper),
+    Gpu(Box<GpuStepper>),
 }
 
 impl RuntimeBackend {
-    pub fn active(&self) -> ActiveBackend {
-        match self {
-            Self::Cpu => ActiveBackend::Cpu,
-            Self::Gpu(_) => ActiveBackend::Gpu,
-        }
-    }
-
     pub fn step(
         &mut self,
         engine: &mut ModelEngine,
@@ -207,7 +199,7 @@ pub fn backend_for_graph(
     if assessment.selected == ActiveBackend::Gpu {
         if let Some(render_state) = render_state {
             match GpuStepper::new(render_state, graph) {
-                Ok(gpu) => return RuntimeBackend::Gpu(gpu),
+                Ok(gpu) => return RuntimeBackend::Gpu(Box::new(gpu)),
                 Err(error) => {
                     assessment.selected = ActiveBackend::Cpu;
                     assessment.reason = format!(
@@ -530,11 +522,3 @@ fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
         resource: buffer.as_entire_binding(),
     }
 }
-
-#[allow(dead_code)]
-const _: (i32, i32, i32, i32) = (
-    ACTIVATION_MIN,
-    ACTIVATION_MAX,
-    SPIKE_THRESHOLD,
-    RESET_DELTA,
-);

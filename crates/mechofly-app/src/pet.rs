@@ -132,24 +132,30 @@ pub fn draw_pet(
         }
     }
 
-    let wing_alpha = if flying { 122 } else { 54 };
-    let wing_lift = if flying && !reduced_motion {
-        (phase * 28.0).sin() * 18.0
-    } else {
-        0.0
-    };
-    for side in [-1.0_f32, 1.0] {
-        let points = vec![
-            transform([-18.0, side * 4.0]),
-            transform([15.0, side * (34.0 + wing_lift)]),
-            transform([68.0, side * (42.0 + wing_lift)]),
-            transform([36.0, side * (8.0 + wing_lift * 0.25)]),
-        ];
-        painter.add(Shape::convex_polygon(
-            points,
-            Color32::from_rgba_premultiplied(174, 210, 214, wing_alpha),
-            Stroke::new(1.1 * scale, Color32::from_rgba_premultiplied(70, 103, 103, 120)),
-        ));
+    if skin == Skin::Drosophila || flying {
+        let wing_alpha = if flying { 122 } else { 64 };
+        let wing_lift = if flying && !reduced_motion {
+            (phase * 28.0).sin() * 18.0
+        } else {
+            0.0
+        };
+        let (outer_x, outer_y) = if flying { (68.0, 42.0) } else { (54.0, 20.0) };
+        for side in [-1.0_f32, 1.0] {
+            let points = vec![
+                transform([-18.0, side * 4.0]),
+                transform([15.0, side * (26.0 + wing_lift)]),
+                transform([outer_x, side * (outer_y + wing_lift)]),
+                transform([36.0, side * (8.0 + wing_lift * 0.25)]),
+            ];
+            painter.add(Shape::convex_polygon(
+                points,
+                Color32::from_rgba_premultiplied(174, 210, 214, wing_alpha),
+                Stroke::new(
+                    1.1 * scale,
+                    Color32::from_rgba_premultiplied(70, 103, 103, 120),
+                ),
+            ));
+        }
     }
 
     match skin {

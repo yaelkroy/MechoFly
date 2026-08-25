@@ -46,7 +46,14 @@ impl ModelState {
             .iter()
             .flat_map(|value| value.to_le_bytes())
             .collect();
-        sha256_hex([frame.as_slice(), seed.as_slice(), &behavior, age.as_slice(), &activation])
+        sha256_hex([
+            frame.as_slice(),
+            seed.as_slice(),
+            &behavior,
+            age.as_slice(),
+            activation.as_slice(),
+            self.spikes.as_slice(),
+        ])
     }
 }
 
@@ -177,6 +184,7 @@ impl ModelEngine {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_neuron(
     target: usize,
     frame: u64,

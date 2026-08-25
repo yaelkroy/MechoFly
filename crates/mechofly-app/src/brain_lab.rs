@@ -4,7 +4,7 @@ use eframe::egui::{
     self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2,
 };
 use mechofly_core::{
-    ComparisonResult, Feedback, ModelGraph, PetPolicy, StimulationPolicy, StimulationRequest,
+    ComparisonResult, Feedback, PetPolicy, StimulationPolicy, StimulationRequest,
 };
 
 use crate::{
@@ -95,9 +95,9 @@ impl BrainLabState {
         let mut commands = Vec::new();
         style_context(ui.ctx());
 
-        egui::TopBottomPanel::top("lab_header")
+        egui::Panel::top("lab_header")
             .frame(egui::Frame::new().fill(INK).inner_margin(egui::Margin::symmetric(18, 10)))
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.colored_label(Color32::WHITE, egui::RichText::new("MECHOFLY / FIELD NOTEBOOK").strong().size(19.0));
                     ui.add_space(16.0);
@@ -108,12 +108,12 @@ impl BrainLabState {
                 });
             });
 
-        egui::TopBottomPanel::bottom("lab_timeline")
+        egui::Panel::bottom("lab_timeline")
             .resizable(true)
-            .default_height(168.0)
-            .min_height(130.0)
+            .default_size(168.0)
+            .min_size(130.0)
             .frame(surface_frame())
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 timeline(ui, session);
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -124,14 +124,15 @@ impl BrainLabState {
                 });
             });
 
-        egui::SidePanel::left("experiment_rail")
+        egui::Panel::left("experiment_rail")
             .resizable(false)
-            .exact_width(282.0)
+            .exact_size(282.0)
             .frame(surface_frame())
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.heading("Experiment rail");
                 ui.label(egui::RichText::new("Session").strong().color(MUTED));
                 key_value(ui, "ID", session.short_session_id());
+                key_value(ui, "Started (Unix ms)", &session.started_unix_millis.to_string());
                 key_value(ui, "Skin", skin.label());
                 key_value(ui, "Backend", session.assessment.selected.label());
                 key_value(ui, "Tier", session.assessment.tier.label());
@@ -201,11 +202,11 @@ impl BrainLabState {
                 });
             });
 
-        egui::SidePanel::right("evidence_inspector")
+        egui::Panel::right("evidence_inspector")
             .resizable(false)
-            .exact_width(300.0)
+            .exact_size(300.0)
             .frame(surface_frame())
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.heading("Evidence inspector");
                 claim_badge(ui, "DERIVED STRUCTURE", POSITIVE_SOFT, POSITIVE);
                 claim_badge(ui, "MODELED DYNAMICS", ACTUAL_SOFT, ACTUAL);
@@ -250,7 +251,7 @@ impl BrainLabState {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(CANVAS).inner_margin(egui::Margin::same(14)))
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     view_tab(ui, &mut self.view, LabView::Overview, "Overview");
                     view_tab(ui, &mut self.view, LabView::Compare, "Actual / alternative");
@@ -310,7 +311,8 @@ impl BrainLabState {
 }
 
 fn style_context(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
+    ctx.set_theme(egui::Theme::Light);
+    let mut style = (*ctx.style_of(egui::Theme::Light)).clone();
     style.visuals = egui::Visuals::light();
     style.visuals.panel_fill = CANVAS;
     style.visuals.window_fill = SURFACE;
@@ -318,7 +320,7 @@ fn style_context(ctx: &egui::Context) {
     style.visuals.selection.bg_fill = ACTUAL_SOFT;
     style.visuals.selection.stroke = Stroke::new(1.5, ACTUAL);
     style.spacing.item_spacing = Vec2::new(8.0, 7.0);
-    ctx.set_style(style);
+    ctx.set_style_of(egui::Theme::Light, style);
 }
 
 fn surface_frame() -> egui::Frame {

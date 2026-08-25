@@ -307,7 +307,7 @@ impl eframe::App for MechoFlyApp {
                 .monitor_size
                 .unwrap_or(Vec2::new(1_920.0, 1_080.0))
         });
-        let hovered = ctx.is_pointer_over_area();
+        let hovered = ctx.input(|input| input.pointer.hover_pos().is_some());
         self.pet.advance(
             elapsed.as_secs_f32(),
             self.display_behavior(),
@@ -330,7 +330,7 @@ impl eframe::App for MechoFlyApp {
 
         egui::CentralPanel::default()
             .frame(transparent_frame())
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 let (pet_rect, response) = ui.allocate_exact_size(
                     Vec2::new(ui.available_width(), 118.0),
                     Sense::click_and_drag(),

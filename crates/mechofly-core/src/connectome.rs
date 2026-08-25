@@ -263,7 +263,7 @@ fn csv_reader(path: &Path) -> Result<Reader<Box<dyn Read>>, ConnectomeImportErro
     })?;
     let reader: Box<dyn Read> = if path
         .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("gz"))
+        .is_some_and(|extension| extension.to_string_lossy().eq_ignore_ascii_case("gz"))
     {
         Box::new(GzDecoder::new(BufReader::new(file)))
     } else {
