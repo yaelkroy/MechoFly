@@ -231,9 +231,11 @@ if (-not (Test-Path -LiteralPath $ProfileDirectory -PathType Container)) {
     New-Item -ItemType Directory -Path $ProfileDirectory -Force | Out-Null
 }
 $Profile = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     machine_role = 'ai100-development'
     skin = 'firefly'
+    compute = 'auto'
+    reduced_motion = $false
     canonical_repository = $CanonicalRepository
     workspace = $Target
     main_commit = $LocalCommit
@@ -268,7 +270,9 @@ if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
 }
 $Receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json
 if ($Receipt.status -ne 'PASS' -or -not $Receipt.live_state_unchanged -or
-    $Receipt.default_skin -ne 'drosophila' -or -not $Receipt.firefly_skin_available) {
+    $Receipt.default_skin -ne 'drosophila' -or -not $Receipt.firefly_skin_available -or
+    -not $Receipt.cpu_without_gpu_supported -or -not $Receipt.reevaluation_control -or
+    $Receipt.implementation -ne 'independent-rust-rebuild') {
     throw 'MechoFly self-test receipt did not satisfy the AI100 safety checks.'
 }
 

@@ -4,7 +4,14 @@ param(
     [switch] $Rebuild,
 
     [ValidateSet('drosophila', 'firefly')]
-    [string] $Skin
+    [string] $Skin,
+
+    [ValidateSet('auto', 'cpu', 'gpu')]
+    [string] $Compute,
+
+    [switch] $BrainLab,
+
+    [switch] $ReducedMotion
 )
 
 Set-StrictMode -Version Latest
@@ -15,29 +22,50 @@ if ($Rebuild -or -not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
     & (Join-Path $PSScriptRoot 'build.ps1')
 }
 
+$ProfilePath = Join-Path $env:LOCALAPPDATA 'MechoFly\runtime-profile.json'
+$Profile = $null
+if (Test-Path -LiteralPath $ProfilePath -PathType Leaf) {
+    try {
+        $Profile = Get-Content -LiteralPath $ProfilePath -Raw | ConvertFrom-Json
+    }
+    catch {
+        Write-Warning ('Ignoring invalid runtime profile: ' + $ProfilePath)
+    }
+}
+
 if (-not $PSBoundParameters.ContainsKey('Skin')) {
     $Skin = 'drosophila'
-    $ProfilePath = Join-Path $env:LOCALAPPDATA 'MechoFly\runtime-profile.json'
-    if (Test-Path -LiteralPath $ProfilePath -PathType Leaf) {
-        try {
-            $Profile = Get-Content -LiteralPath $ProfilePath -Raw | ConvertFrom-Json
-            if ($null -ne $Profile -and
-                $Profile.PSObject.Properties['skin'] -and
-                @('drosophila', 'firefly') -contains [string]$Profile.skin) {
-                $Skin = [string]$Profile.skin
-            }
-        }
-        catch {
-            Write-Warning ('Ignoring invalid runtime profile: ' + $ProfilePath)
-        }
+    if ($null -ne $Profile -and $Profile.PSObject.Properties['skin'] -and
+        @('drosophila', 'firefly') -contains [string]$Profile.skin) {
+        $Skin = [string]$Profile.skin
     }
+}
+if (-not $PSBoundParameters.ContainsKey('Compute')) {
+    $Compute = 'auto'
+    if ($null -ne $Profile -and $Profile.PSObject.Properties['compute'] -and
+        @('auto', 'cpu', 'gpu') -contains [string]$Profile.compute) {
+        $Compute = [string]$Profile.compute
+    }
+}
+if (-not $PSBoundParameters.ContainsKey('ReducedMotion') -and
+    $null -ne $Profile -and $Profile.PSObject.Properties['reduced_motion']) {
+    $ReducedMotion = [bool]$Profile.reduced_motion
+}
+
+$Arguments = @('--skin', $Skin, '--compute', $Compute)
+if ($BrainLab) {
+    $Arguments += '--brain-lab'
+}
+if ($ReducedMotion) {
+    $Arguments += '--reduced-motion'
 }
 
 $Process = Start-Process `
     -FilePath $Executable `
     -WorkingDirectory (Split-Path -Parent $Executable) `
-    -ArgumentList @('--skin', $Skin) `
+    -ArgumentList $Arguments `
     -PassThru
 Write-Host ('MECHOFLY_STARTED=' + $Executable)
 Write-Host ('MECHOFLY_SKIN=' + $Skin)
+Write-Host ('MECHOFLY_COMPUTE_PREFERENCE=' + $Compute)
 Write-Host ('MECHOFLY_PROCESS_ID=' + [string]$Process.Id)

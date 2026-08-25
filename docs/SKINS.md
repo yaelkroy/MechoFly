@@ -1,34 +1,32 @@
 # MechoFly visual skins
 
-MechoFly has two procedural runtime skins. The skin boundary is deliberately
-presentation-only: both skins consume the same modeled behavior label and do
-not alter neural state, replay frames, stimulation plans, comparison outputs,
-or receipts.
+Both skins are procedural and presentation-only. They consume modeled behavior
+and authored pet-policy action labels but cannot alter neural state, graph
+structure, replay, previews, learning values, or receipts.
 
 ## Drosophila Natural
 
-Drosophila Natural is the application and repository default. It uses a tan
-segmented abdomen, red compound eyes, six legs, and one visible wing pair.
-Outside modeled flight, the wings fold over the abdomen; during modeled flight,
-they extend and animate.
+Drosophila Natural is the repository default. It uses a compact tan segmented
+abdomen, red compound eyes, six articulated legs, and translucent wings.
 
 ```powershell
 .\host-windows\Start-MechoFly.ps1 -Skin drosophila
 ```
 
-## Firefly Prism
+## Firefly Field
 
-Firefly Prism uses dark green elytra, an amber pronotal shield, a chartreuse
-lantern, and translucent hindwings that appear only during modeled flight. It
-is the AI100 machine profile, not the repository default.
+Firefly Field uses deep green elytra, an amber pronotum, a chartreuse lantern,
+six articulated legs, and translucent hindwings. It is the AI100 machine
+profile, not the repository default.
 
 ```powershell
 .\host-windows\Start-MechoFly.ps1 -Skin firefly
 ```
 
-The tray menu can switch between skins for the current process. Starting a new
-process uses an explicit `-Skin` argument when supplied; otherwise it reads
-`%LOCALAPPDATA%\MechoFly\runtime-profile.json`, falling back to Drosophila.
+Walking uses floating-point screen position and visibly advances. Rest has no
+translation or decorative bob. Flight unfolds and animates wings; grooming
+uses legs without translating the pet. Reduced-motion mode removes nonessential
+animation but does not alter model timing.
 
-Skin names describe artwork only. They are not taxonomic labels for the
-synthetic topology and do not imply species-specific biological fidelity.
+Skin names describe artwork only. They do not imply that synthetic topology or
+modeled activity belongs to the pictured species.

@@ -1,42 +1,71 @@
 # MechoFly
 
 <p align="center">
-  <img src="docs/assets/mechofly-firefly-prism.svg" width="760" alt="MechoFly Firefly Prism artwork">
+  <img src="docs/assets/mechofly-firefly-prism.svg" width="760" alt="MechoFly Firefly artwork">
 </p>
 
-MechoFly is a Windows desktop companion and transparent neural-model lab. It
-combines a deterministic modeled neural engine, a procedural fly overlay,
-bounded replay, multi-frame actual-versus-alternative comparison, and an
-explicitly authored stimulation preview.
+MechoFly is a Rust desktop companion and transparent connectome-model lab. It
+combines an animated procedural pet, deterministic modeled neural dynamics,
+automatic CPU/GPU capacity calibration, bounded replay, aligned multi-frame
+actual-versus-alternative comparison, and an explicitly authored stimulation
+preview.
 
-The repository provides two procedural presentation skins:
+The application has two presentation-only skins:
 
-- **Drosophila Natural** is the application and repository default.
-- **Firefly Prism** is an alternate skin and the machine-local default on the
-  AI100 development workstation.
+- **Drosophila Natural** is the repository and application default.
+- **Firefly Field** is the alternate skin and AI100 machine-profile default.
 
-The Firefly artwork above is the project hero image; it does not change the
-runtime default. Skins affect drawing only. They do not change topology,
-dynamics, replay, preview results, or scientific claims.
+Skins never change graph structure, dynamics, replay, learning, or scientific
+claims.
 
-## Safety boundary
+## What is scientifically claimed
 
-The stimulation preview cannot mutate live simulation state. It runs only on a
-deep copy of a bounded replay snapshot, applies a strict local policy, and
-emits before/after state digests in its receipt. It has no live-hardware
-authority and is not evidence of a biological intervention.
+MechoFly keeps four layers separate:
 
-The built-in 1,536-neuron topology is deterministic synthetic demo data. No
-FAFB, BANC, MANC, MAOL, MCNS, or other connectome download is bundled.
+1. an imported graph is `DERIVED_CONNECTOME_STRUCTURE`;
+2. neural activity is `MODELED_NEURAL_DYNAMICS`, never a recording;
+3. pet adaptation is `MODELED_SOFTWARE_LEARNING` from explicit feedback;
+4. skins and motion are `AUTHORED_PRESENTATION`.
 
-## Requirements
+The FlyWire connectome is a structural wiring diagram, not a complete dynamics
+or learning model. The first learning layer is therefore a bounded contextual
+pet policy stored outside the connectome. It can be disabled, reset, exported,
+or deleted. It never rewrites connectome edges and is not labeled as biological
+synaptic plasticity.
 
-- Windows 10 or 11, x64
-- Windows PowerShell 5.1
-- .NET Framework 4.8 developer tools (`csc.exe`)
-- Git for Windows for AI100 setup and synchronization
+## CPU, Radeon, Intel, and NVIDIA
 
-## Build and run
+MechoFly benchmarks CPU at every startup and also benchmarks the active
+compute-capable GPU when one exists. `Auto` selects the faster exact-matching
+backend and the largest named model tier projected to stay inside the model
+step budget. With no suitable GPU, the same application runs on CPU.
+
+GPU work uses portable WGSL through `wgpu`; there is no CUDA dependency and no
+vendor allowlist. Brain Lab's **Re-evaluate capacity** button repeats the
+benchmarks and starts a new identified session if the backend or tier changes.
+
+## Brain Lab v2
+
+Double-click the pet or use its tray menu to open Brain Lab. The redesigned
+warm field-notebook interface has:
+
+- a left experiment rail for capacity, replay, and authored interventions;
+- a central population overview or aligned two-row comparison filmstrip;
+- a right evidence/provenance inspector; and
+- a bottom activity and behavior timeline.
+
+A valid preview targets at most 64 unique neurons, has amplitude in `(0, 0.25]`,
+lasts 33–990 ms, stays under a dosage ceiling, and runs on a full deep clone of
+a retained checkpoint. There is no apply or commit path. Its receipt proves the
+live digest did not change.
+
+## Build and run on Windows
+
+Requirements:
+
+- Windows 10 or 11, x64;
+- Windows PowerShell 5.1 or newer; and
+- stable Rust with Cargo (Rust 1.95 or newer).
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
@@ -44,47 +73,39 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\host-windows\Start-MechoFly.ps1
 ```
 
-Choose a skin explicitly when needed:
+Useful launch options:
 
 ```powershell
-.\host-windows\Start-MechoFly.ps1 -Skin drosophila
-.\host-windows\Start-MechoFly.ps1 -Skin firefly
+.\host-windows\Start-MechoFly.ps1 -Skin drosophila -Compute auto
+.\host-windows\Start-MechoFly.ps1 -Skin firefly -Compute cpu -BrainLab
+.\host-windows\Start-MechoFly.ps1 -Compute gpu -ReducedMotion
 ```
 
-The tray menu can switch skins while MechoFly is running. Open **Brain Lab**
-from that menu to retain and inspect a bounded window of modeled frames. Enter
-target neuron indices, amplitude, and duration, then choose **Generate
-preview**. The paired actual-versus-alternative display can be scrubbed or
-played without affecting the live overlay.
+An unavailable explicitly requested GPU falls back visibly to CPU. `Auto` is
+the normal setting.
 
-## AI100 development workstation
+## FlyWire FAFB v783
 
-Run the setup script from Windows PowerShell 5.1:
+MechoFly does not bundle or redistribute connectome data. After agreeing to the
+FlyWire citation guidelines and principles, download the filtered connection
+table from Codex and choose the local CSV or CSV.GZ path in Brain Lab. Import
+records the source URL, snapshot, column mapping, SHA-256, transform, counts,
+and validation warnings before starting a pinned imported-graph session.
+
+## AI100
+
+`tools\Setup-AI100-MechoFly.ps1` synchronizes the clean `main` checkout at
+`D:\Projects\MechoFly`, writes the machine-local Firefly/Auto profile, builds
+the Rust executable, runs the safety self-test, and maintains the Start, Stop,
+and Emergency Stop shortcuts.
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
 .\tools\Setup-AI100-MechoFly.ps1 -Launch
 ```
 
-It creates or fast-forwards the canonical clean `main` checkout at
-`D:\Projects\MechoFly`, writes a machine-local Firefly profile, builds and
-self-tests the exact `origin/main` commit, removes only recognized legacy fly
-shortcut names, and creates **Start MechoFly**, **Stop MechoFly**, and
-**Emergency Stop MechoFly** shortcuts. Rerun it without `-Launch` to safely
-synchronize AI100 with GitHub.
-
-The script refuses a dirty checkout, a non-`main` branch, an unexpected remote,
-or unrelated content at the target path. It does not delete a legacy project
-directory, install drivers, alter WSL, or grant live-hardware authority.
-
-## Verification
-
-```powershell
-.\tools\Verify-Tree.ps1
-.\host-windows\build.ps1
-.\host-windows\bin\MechoFly.exe --self-test .\artifacts\self-test.json
-```
-
-See [skins](docs/SKINS.md), [AI100 setup](docs/AI100.md),
-[architecture and trust boundaries](docs/ARCHITECTURE.md), and
-[data provenance](docs/DATA_PROVENANCE.md).
+See [architecture](docs/ARCHITECTURE.md),
+[compute profiles](docs/COMPUTE_PROFILES.md),
+[Brain Lab v2](docs/BRAIN_LAB_V2.md),
+[connectome and learning](docs/LEARNING_AND_CONNECTOME.md),
+[data provenance](docs/DATA_PROVENANCE.md), and
+[AI100 setup](docs/AI100.md).

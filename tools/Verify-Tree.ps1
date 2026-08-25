@@ -10,13 +10,24 @@ $Forbidden = @(
     ('desktop' + 'fly'),
     ('DESKTOP' + 'FLY')
 )
-$TextExtensions = @('.cs', '.ps1', '.cmd', '.md', '.yml', '.yaml', '.json', '.txt', '.svg')
+$TextExtensions = @(
+    '.rs', '.toml', '.wgsl', '.ps1', '.cmd', '.md', '.yml', '.yaml',
+    '.json', '.txt', '.svg'
+)
 $Failures = New-Object System.Collections.Generic.List[string]
 Get-ChildItem -LiteralPath $Root -Recurse -File | ForEach-Object {
     if ($_.FullName.IndexOf((Join-Path $Root '.git'), [StringComparison]::OrdinalIgnoreCase) -eq 0) {
         return
     }
     $RelativePath = $_.FullName.Substring($Root.Length).TrimStart('\', '/')
+    if ($RelativePath.StartsWith('target\', [StringComparison]::OrdinalIgnoreCase) -or
+        $RelativePath.StartsWith('target/', [StringComparison]::OrdinalIgnoreCase) -or
+        $RelativePath.StartsWith('host-windows\bin\', [StringComparison]::OrdinalIgnoreCase) -or
+        $RelativePath.StartsWith('host-windows/bin/', [StringComparison]::OrdinalIgnoreCase) -or
+        $RelativePath.StartsWith('artifacts\', [StringComparison]::OrdinalIgnoreCase) -or
+        $RelativePath.StartsWith('artifacts/', [StringComparison]::OrdinalIgnoreCase)) {
+        return
+    }
     foreach ($Token in $Forbidden) {
         if ($RelativePath.IndexOf($Token, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             $Failures.Add('path: ' + $RelativePath)

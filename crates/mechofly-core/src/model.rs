@@ -1,0 +1,263 @@
+use std::sync::Arc;
+
+use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
+
+use crate::{MODEL_VERSION, graph::mix64, graph::ModelGraph, provenance::sha256_hex};
+
+pub const ACTIVATION_MIN: i32 = -32_768;
+pub const ACTIVATION_MAX: i32 = 32_767;
+pub const SPIKE_THRESHOLD: i32 = 8_000;
+pub const RESET_DELTA: i32 = 10_000;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Behavior {
+    #[default]
+    Rest,
+    Quiet,
+    Walk,
+    Reverse,
+    Groom,
+    Alert,
+    PreEscape,
+    Flight,
+    Landing,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ModelState {
+    pub frame: u64,
+    pub seed: u64,
+    pub activation: Vec<i32>,
+    pub spikes: Vec<u8>,
+    pub behavior: Behavior,
+    pub behavior_age_frames: u32,
+}
+
+impl ModelState {
+    pub fn digest(&self) -> String {
+        let frame = self.frame.to_le_bytes();
+        let seed = self.seed.to_le_bytes();
+        let behavior = [self.behavior as u8];
+        let age = self.behavior_age_frames.to_le_bytes();
+        let activation: Vec<u8> = self
+            .activation
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        sha256_hex([frame.as_slice(), seed.as_slice(), &behavior, age.as_slice(), &activation])
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct StepInput<'a> {
+    pub stimulus_q15: &'a [i32],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FrameSummary {
+    pub frame: u64,
+    pub spike_count: usize,
+    pub mean_activation_q15: i32,
+    pub behavior: Behavior,
+    pub state_digest: String,
+}
+
+#[derive(Clone)]
+pub struct ModelEngine {
+    pub graph: Arc<ModelGraph>,
+    pub state: ModelState,
+}
+
+impl ModelEngine {
+    pub fn new(graph: Arc<ModelGraph>, seed: u64) -> Self {
+        let count = graph.neuron_ids.len();
+        let activation = (0..count)
+            .map(|index| initial_activation(seed, index))
+            .collect();
+        Self {
+            graph,
+            state: ModelState {
+                frame: 0,
+                seed,
+                activation,
+                spikes: vec![0; count],
+                behavior: Behavior::Rest,
+                behavior_age_frames: 0,
+            },
+        }
+    }
+
+    pub fn from_state(graph: Arc<ModelGraph>, state: ModelState) -> Result<Self, String> {
+        if state.activation.len() != graph.neuron_ids.len()
+            || state.spikes.len() != graph.neuron_ids.len()
+        {
+            return Err("checkpoint dimensions do not match graph".to_owned());
+        }
+        Ok(Self { graph, state })
+    }
+
+    pub fn empty_stimulus(&self) -> Vec<i32> {
+        vec![0; self.state.activation.len()]
+    }
+
+    pub fn step_cpu(&mut self, input: StepInput<'_>) -> FrameSummary {
+        assert_eq!(input.stimulus_q15.len(), self.state.activation.len());
+        let next_frame = self.state.frame + 1;
+        let previous = &self.state.activation;
+        let offsets = &self.graph.incoming_offsets;
+        let sources = &self.graph.incoming_sources;
+        let weights = &self.graph.modeled_weights;
+        let seed = self.state.seed;
+
+        let computed: Vec<(i32, u8)> = (0..previous.len())
+            .into_par_iter()
+            .map(|target| {
+                update_neuron(
+                    target,
+                    next_frame,
+                    seed,
+                    previous,
+                    offsets,
+                    sources,
+                    weights,
+                    input.stimulus_q15[target],
+                )
+            })
+            .collect();
+
+        let (activation, spikes): (Vec<i32>, Vec<u8>) = computed.into_iter().unzip();
+        self.accept_backend_step(activation, spikes)
+    }
+
+    pub fn accept_backend_step(
+        &mut self,
+        activation: Vec<i32>,
+        spikes: Vec<u8>,
+    ) -> FrameSummary {
+        assert_eq!(activation.len(), self.state.activation.len());
+        assert_eq!(spikes.len(), self.state.spikes.len());
+        self.state.activation = activation;
+        self.state.spikes = spikes;
+        self.state.frame += 1;
+        let spike_count = self.state.spikes.iter().map(|value| *value as usize).sum();
+        let mean_activation_q15 = if self.state.activation.is_empty() {
+            0
+        } else {
+            (self.state.activation.iter().map(|v| *v as i64).sum::<i64>()
+                / self.state.activation.len() as i64) as i32
+        };
+        let next_behavior = modeled_behavior(self.state.frame, spike_count, self.state.activation.len());
+        if next_behavior == self.state.behavior {
+            self.state.behavior_age_frames += 1;
+        } else {
+            self.state.behavior = next_behavior;
+            self.state.behavior_age_frames = 0;
+        }
+        self.summary(spike_count, mean_activation_q15)
+    }
+
+    pub fn summary(&self, spike_count: usize, mean_activation_q15: i32) -> FrameSummary {
+        FrameSummary {
+            frame: self.state.frame,
+            spike_count,
+            mean_activation_q15,
+            behavior: self.state.behavior,
+            state_digest: self.state.digest(),
+        }
+    }
+
+    pub fn model_identity(&self) -> String {
+        sha256_hex([
+            MODEL_VERSION.as_bytes(),
+            self.graph.identity.sha256.as_bytes(),
+            self.state.seed.to_le_bytes().as_slice(),
+        ])
+    }
+}
+
+pub fn update_neuron(
+    target: usize,
+    frame: u64,
+    seed: u64,
+    previous: &[i32],
+    offsets: &[u32],
+    sources: &[u32],
+    weights: &[i32],
+    stimulus_q15: i32,
+) -> (i32, u8) {
+    let mut drive = stimulus_q15.clamp(-8_192, 8_192);
+    let start = offsets[target] as usize;
+    let end = offsets[target + 1] as usize;
+    for edge in start..end {
+        let source = sources[edge] as usize;
+        let contribution = (previous[source] * weights[edge] / 4_096).clamp(-512, 512);
+        drive = (drive + contribution).clamp(-65_536, 65_536);
+    }
+    let noise_hash = model_noise(seed, frame, target as u32);
+    let noise = ((noise_hash & 0x1ff) as i32) - 256;
+    drive = (drive + noise).clamp(-65_536, 65_536);
+
+    let candidate = ((previous[target] * 13) + (drive * 3)) / 16;
+    if candidate > SPIKE_THRESHOLD {
+        ((candidate - RESET_DELTA).clamp(ACTIVATION_MIN, ACTIVATION_MAX), 1)
+    } else {
+        (candidate.clamp(ACTIVATION_MIN, ACTIVATION_MAX), 0)
+    }
+}
+
+pub fn model_noise(seed: u64, frame: u64, target: u32) -> u32 {
+    let mut value = (seed as u32)
+        ^ ((seed >> 32) as u32)
+        ^ (frame as u32).rotate_left(17)
+        ^ ((frame >> 32) as u32).rotate_left(7)
+        ^ target.wrapping_mul(0x9E37_79B9);
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7FEB_352D);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846C_A68B);
+    value ^ (value >> 16)
+}
+
+fn initial_activation(seed: u64, index: usize) -> i32 {
+    let h = mix64(seed ^ (index as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93));
+    ((h & 0x0fff) as i32) - 2_048
+}
+
+fn modeled_behavior(frame: u64, spike_count: usize, neuron_count: usize) -> Behavior {
+    let rate_per_10k = spike_count.saturating_mul(10_000) / neuron_count.max(1);
+    if rate_per_10k > 1_200 {
+        Behavior::Alert
+    } else {
+        match (frame / 90) % 9 {
+            0 => Behavior::Rest,
+            1 | 2 | 3 => Behavior::Walk,
+            4 => Behavior::Groom,
+            5 | 6 => Behavior::Walk,
+            7 => Behavior::Quiet,
+            _ => Behavior::Reverse,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::ModelTier;
+
+    #[test]
+    fn identical_engines_remain_identical() {
+        let graph = Arc::new(ModelGraph::synthetic(ModelTier::Demo4096, 5));
+        let mut a = ModelEngine::new(Arc::clone(&graph), 11);
+        let mut b = ModelEngine::new(graph, 11);
+        let stimulus = a.empty_stimulus();
+        for _ in 0..20 {
+            assert_eq!(
+                a.step_cpu(StepInput { stimulus_q15: &stimulus }),
+                b.step_cpu(StepInput { stimulus_q15: &stimulus })
+            );
+        }
+        assert_eq!(a.state, b.state);
+    }
+}
