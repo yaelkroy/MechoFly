@@ -2,7 +2,7 @@ name: MechoFly Windows verification
 
 on:
   push:
-    branches: [main, "feat/**", "chore/**"]
+    branches: [main, "feat/**", "fix/**", "chore/**"]
   pull_request:
     branches: [main]
 
@@ -28,6 +28,17 @@ jobs:
       - name: Verify active tree identity
         shell: powershell
         run: .\tools\Verify-Tree.ps1
+      - name: Reproduce Windows PowerShell 5.1 Git stderr handling
+        shell: powershell
+        run: |
+          $scriptPath = (Resolve-Path .\tools\Setup-AI100-MechoFly.ps1).Path
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -NoLogo `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $scriptPath `
+            -GitCaptureSelfTest
+          if ($LASTEXITCODE -ne 0) { throw "Git stderr regression test exited $LASTEXITCODE" }
       - name: Compile x64 Windows host
         shell: powershell
         run: .\host-windows\build.ps1

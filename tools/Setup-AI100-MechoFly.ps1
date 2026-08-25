@@ -1,7 +1,9 @@
 #requires -version 5.1
 [CmdletBinding()]
 param(
-    [switch] $Launch
+    [switch] $Launch,
+
+    [switch] $GitCaptureSelfTest
 )
 
 Set-StrictMode -Version Latest
@@ -15,26 +17,59 @@ $LegacyProduct = 'Desktop' + 'Fly'
 function Invoke-MechoFlyGit {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [string[]] $Arguments,
 
         [switch] $Capture
     )
 
-    $GitOutput = @(& $script:GitExecutable @Arguments 2>&1)
-    $GitExitCode = $LASTEXITCODE
+    $StandardErrorPath = [System.IO.Path]::Combine(
+        [System.IO.Path]::GetTempPath(),
+        'MechoFly-Git-Stderr-' + [Guid]::NewGuid().ToString('N') + '.txt')
+    $GitOutput = @()
+    $GitStandardError = ''
+    $GitExitCode = -1
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 converts native stderr merged with 2>&1 into
+        # NativeCommandError records. With ErrorActionPreference=Stop, normal
+        # Git progress would terminate the setup before LASTEXITCODE is read.
+        # Keep stdout and stderr on separate channels. PS5.1 still applies the
+        # preference to redirected native stderr, so relax it only around the
+        # process and then make the captured exit code authoritative.
+        $ErrorActionPreference = 'Continue'
+        $GitOutput = @(& $script:GitExecutable @Arguments 2> $StandardErrorPath)
+        $GitExitCode = $LASTEXITCODE
+        if (Test-Path -LiteralPath $StandardErrorPath -PathType Leaf) {
+            $GitStandardError = [System.IO.File]::ReadAllText($StandardErrorPath)
+        }
+    }
+    finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+        Remove-Item -LiteralPath $StandardErrorPath -Force -ErrorAction SilentlyContinue
+    }
+
+    $GitStandardOutput = (($GitOutput | ForEach-Object { [string]$_ }) -join
+        [Environment]::NewLine).Trim()
     if ($GitExitCode -ne 0) {
-        $Details = ($GitOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+        $Details = @($GitStandardOutput, $GitStandardError.Trim()) |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
         throw ('git {0} failed with exit code {1}.{2}{3}' -f
             ($Arguments -join ' '),
             $GitExitCode,
             [Environment]::NewLine,
-            $Details)
+            ($Details -join [Environment]::NewLine))
     }
 
     if ($Capture) {
-        return (($GitOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine).Trim()
+        return $GitStandardOutput
     }
-    $GitOutput | ForEach-Object { Write-Host ([string]$_) }
+    if (-not [string]::IsNullOrWhiteSpace($GitStandardOutput)) {
+        Write-Host $GitStandardOutput
+    }
+    if (-not [string]::IsNullOrWhiteSpace($GitStandardError)) {
+        Write-Host $GitStandardError.Trim()
+    }
 }
 
 function ConvertTo-NormalizedRepositoryUrl {
@@ -82,6 +117,51 @@ function New-MechoFlyShortcut {
     $Shortcut.Description = $Description
     $Shortcut.IconLocation = $IconLocation
     $Shortcut.Save()
+}
+
+if ($GitCaptureSelfTest) {
+    $FakeGitPath = [System.IO.Path]::Combine(
+        [System.IO.Path]::GetTempPath(),
+        'MechoFly-FakeGit-' + [Guid]::NewGuid().ToString('N') + '.cmd')
+    $FakeGitLines = @(
+        '@echo off',
+        'echo NORMAL_GIT_PROGRESS 1>&2',
+        'if /I "%~1"=="fail" exit /b 7',
+        'echo CAPTURED_STDOUT',
+        'exit /b 0'
+    )
+    try {
+        [System.IO.File]::WriteAllLines(
+            $FakeGitPath,
+            $FakeGitLines,
+            (New-Object System.Text.UTF8Encoding($false)))
+        $script:GitExecutable = $FakeGitPath
+
+        $CapturedOutput = Invoke-MechoFlyGit -Arguments @() -Capture
+        if ($CapturedOutput -ne 'CAPTURED_STDOUT') {
+            throw ('Git capture mixed channels: ' + $CapturedOutput)
+        }
+        Invoke-MechoFlyGit -Arguments @()
+
+        $ExpectedFailureObserved = $false
+        try {
+            Invoke-MechoFlyGit -Arguments @('fail') -Capture | Out-Null
+        }
+        catch {
+            $FailureText = $_.Exception.Message
+            $ExpectedFailureObserved =
+                $FailureText.Contains('exit code 7') -and
+                $FailureText.Contains('NORMAL_GIT_PROGRESS')
+        }
+        if (-not $ExpectedFailureObserved) {
+            throw 'Git failure-channel regression was not detected correctly.'
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $FakeGitPath -Force -ErrorAction SilentlyContinue
+    }
+    Write-Host 'MECHOFLY_PS51_GIT_STDERR_CAPTURE=PASS'
+    exit 0
 }
 
 $GitCommand = Get-Command 'git.exe' -ErrorAction SilentlyContinue
