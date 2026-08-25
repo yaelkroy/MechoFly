@@ -63,8 +63,10 @@ impl MechoFlyApp {
             Ok(tray) => (Some(tray), None),
             Err(error) => (None, Some(error)),
         };
-        let mut pet = PetMotion::default();
-        pet.reduced_motion = config.reduced_motion;
+        let pet = PetMotion {
+            reduced_motion: config.reduced_motion,
+            ..PetMotion::default()
+        };
         Self {
             render_state,
             session,

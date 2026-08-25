@@ -122,7 +122,13 @@ pub fn draw_pet(
     };
     for side in [-1.0_f32, 1.0] {
         for (index, anchor_x) in [-30.0_f32, 0.0, 30.0].into_iter().enumerate() {
-            let swing = gait * (if index % 2 == 0 { side } else { -side }) * 7.0;
+            let swing = gait
+                * (if index.is_multiple_of(2) {
+                    side
+                } else {
+                    -side
+                })
+                * 7.0;
             let lift = if grooming && index == 0 { -26.0 } else { 0.0 };
             let a = transform([anchor_x, 13.0 * side]);
             let b = transform([anchor_x + swing, 35.0 * side + lift]);

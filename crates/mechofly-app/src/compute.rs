@@ -196,16 +196,16 @@ pub fn backend_for_graph(
     assessment: &mut CapacityAssessment,
     graph: Arc<ModelGraph>,
 ) -> RuntimeBackend {
-    if assessment.selected == ActiveBackend::Gpu {
-        if let Some(render_state) = render_state {
-            match GpuStepper::new(render_state, graph) {
-                Ok(gpu) => return RuntimeBackend::Gpu(Box::new(gpu)),
-                Err(error) => {
-                    assessment.selected = ActiveBackend::Cpu;
-                    assessment.reason = format!(
-                        "GPU passed calibration but session initialization failed; using CPU: {error}"
-                    );
-                }
+    if assessment.selected == ActiveBackend::Gpu
+        && let Some(render_state) = render_state
+    {
+        match GpuStepper::new(render_state, graph) {
+            Ok(gpu) => return RuntimeBackend::Gpu(Box::new(gpu)),
+            Err(error) => {
+                assessment.selected = ActiveBackend::Cpu;
+                assessment.reason = format!(
+                    "GPU passed calibration but session initialization failed; using CPU: {error}"
+                );
             }
         }
     }
@@ -326,7 +326,7 @@ impl GpuStepper {
         .into_iter()
         .max()
         .unwrap_or_default();
-        if largest_storage > limits.max_storage_buffer_binding_size as u64 {
+        if largest_storage > limits.max_storage_buffer_binding_size {
             return Err(format!(
                 "graph needs a {largest_storage}-byte storage binding; adapter limit is {}",
                 limits.max_storage_buffer_binding_size
@@ -489,7 +489,7 @@ impl GpuStepper {
             .map_err(|error| format!("GPU mapped range failed: {error}"))?;
         let mut activation = Vec::with_capacity(self.neuron_count);
         let mut spikes = Vec::with_capacity(self.neuron_count);
-        for bytes in mapped.chunks_exact(8) {
+        for bytes in mapped.as_chunks::<8>().0 {
             activation.push(i32::from_le_bytes(bytes[0..4].try_into().unwrap()));
             spikes.push(u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as u8);
         }

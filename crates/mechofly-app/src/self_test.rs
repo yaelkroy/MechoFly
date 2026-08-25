@@ -104,11 +104,11 @@ pub fn run(path: &Path) -> Result<(), String> {
         measured_activity: false,
         live_hardware_authority: "NONE".to_owned(),
     };
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("cannot create self-test directory: {error}"))?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create self-test directory: {error}"))?;
     }
     let json = serde_json::to_string_pretty(&receipt)
         .map_err(|error| format!("cannot serialize self-test receipt: {error}"))?;
