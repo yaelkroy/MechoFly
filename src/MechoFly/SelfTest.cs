@@ -14,12 +14,27 @@ namespace MechoFly
             bool alternativeDiffers = false;
             bool excessivePlanRejected = false;
             bool replayBounded = false;
+            bool defaultSkinDrosophila = SkinCatalog.Default == VisualSkin.Drosophila;
+            bool drosophilaSkinAvailable = false;
+            bool fireflySkinAvailable = false;
+            bool invalidSkinRejected = false;
             int frameCount = 0;
             string failure = string.Empty;
             string previewReceipt = "{}";
 
             try
             {
+                drosophilaSkinAvailable = SkinCatalog.ParseRequired("drosophila") == VisualSkin.Drosophila;
+                fireflySkinAvailable = SkinCatalog.ParseRequired("firefly") == VisualSkin.Firefly;
+                try
+                {
+                    SkinCatalog.ParseRequired("unknown");
+                }
+                catch (ArgumentException)
+                {
+                    invalidSkinRejected = true;
+                }
+
                 using (SimulationCoordinator coordinator = new SimulationCoordinator(false))
                 {
                     int i;
@@ -68,13 +83,19 @@ namespace MechoFly
             }
 
             bool passed = liveStateUnchanged && alternativeDiffers && excessivePlanRejected &&
-                replayBounded && frameCount == 90 && string.IsNullOrEmpty(failure);
+                replayBounded && frameCount == 90 && defaultSkinDrosophila &&
+                drosophilaSkinAvailable && fireflySkinAvailable && invalidSkinRejected &&
+                string.IsNullOrEmpty(failure);
             string json = BuildReceipt(
                 passed,
                 liveStateUnchanged,
                 alternativeDiffers,
                 excessivePlanRejected,
                 replayBounded,
+                defaultSkinDrosophila,
+                drosophilaSkinAvailable,
+                fireflySkinAvailable,
+                invalidSkinRejected,
                 frameCount,
                 failure,
                 previewReceipt);
@@ -99,6 +120,10 @@ namespace MechoFly
             bool alternativeDiffers,
             bool excessivePlanRejected,
             bool replayBounded,
+            bool defaultSkinDrosophila,
+            bool drosophilaSkinAvailable,
+            bool fireflySkinAvailable,
+            bool invalidSkinRejected,
             int frameCount,
             string failure,
             string previewReceipt)
@@ -110,6 +135,11 @@ namespace MechoFly
             json.Append("  \"alternative_differs\": ").Append(alternativeDiffers ? "true" : "false").Append(",\n");
             json.Append("  \"excessive_plan_rejected\": ").Append(excessivePlanRejected ? "true" : "false").Append(",\n");
             json.Append("  \"replay_bounded\": ").Append(replayBounded ? "true" : "false").Append(",\n");
+            json.Append("  \"default_skin\": \"drosophila\",\n");
+            json.Append("  \"default_skin_is_drosophila\": ").Append(defaultSkinDrosophila ? "true" : "false").Append(",\n");
+            json.Append("  \"drosophila_skin_available\": ").Append(drosophilaSkinAvailable ? "true" : "false").Append(",\n");
+            json.Append("  \"firefly_skin_available\": ").Append(fireflySkinAvailable ? "true" : "false").Append(",\n");
+            json.Append("  \"invalid_skin_rejected\": ").Append(invalidSkinRejected ? "true" : "false").Append(",\n");
             json.Append("  \"comparison_frames\": ").Append(frameCount.ToString(CultureInfo.InvariantCulture)).Append(",\n");
             json.Append("  \"failure\": \"").Append(Escape(failure)).Append("\",\n");
             json.Append("  \"preview_receipt\": ").Append(previewReceipt).Append('\n');
@@ -124,4 +154,3 @@ namespace MechoFly
         }
     }
 }
-
