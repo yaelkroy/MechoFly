@@ -18,12 +18,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Self; ACTION_COUNT] = [
-        Self::Pause,
-        Self::Explore,
-        Self::Inspect,
-        Self::Groom,
-    ];
+    pub const ALL: [Self; ACTION_COUNT] = [Self::Pause, Self::Explore, Self::Inspect, Self::Groom];
 
     const fn index(self) -> usize {
         match self {
@@ -123,7 +118,9 @@ impl PetPolicy {
             Feedback::Encourage => UPDATE_STEP,
             Feedback::Discourage => -UPDATE_STEP,
         };
-        let value_after = value_before.saturating_add(delta).clamp(-VALUE_LIMIT, VALUE_LIMIT);
+        let value_after = value_before
+            .saturating_add(delta)
+            .clamp(-VALUE_LIMIT, VALUE_LIMIT);
         self.values[context_index][action_index] = value_after;
         self.updates[context_index][action_index] =
             self.updates[context_index][action_index].saturating_add(1);
@@ -184,7 +181,10 @@ mod tests {
             policy.apply_feedback(context, Action::Explore, Feedback::Encourage, time);
         }
         assert_ne!(before, policy.digest());
-        assert_eq!(policy.values[context.index()][Action::Explore.index()], VALUE_LIMIT);
+        assert_eq!(
+            policy.values[context.index()][Action::Explore.index()],
+            VALUE_LIMIT
+        );
         policy.enabled = false;
         let disabled = policy.digest();
         assert!(

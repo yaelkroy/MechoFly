@@ -2,7 +2,7 @@ use std::{fs, path::Path, sync::Arc};
 
 use mechofly_core::{
     Action, Behavior, Feedback, ModelCheckpoint, ModelEngine, ModelGraph, ModelTier, PetPolicy,
-    PolicyContext, StimulationPolicy, StimulationRequest, StepInput,
+    PolicyContext, StepInput, StimulationPolicy, StimulationRequest,
 };
 use serde::Serialize;
 

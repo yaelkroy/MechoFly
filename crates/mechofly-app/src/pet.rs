@@ -112,7 +112,11 @@ pub fn draw_pet(
             center.y + point[1] * scale,
         )
     };
-    let gait = if reduced_motion { 0.0 } else { (phase * 9.0).sin() };
+    let gait = if reduced_motion {
+        0.0
+    } else {
+        (phase * 9.0).sin()
+    };
     let grooming = behavior == Behavior::Groom;
     let flying = matches!(behavior, Behavior::Flight | Behavior::PreEscape);
 
@@ -122,13 +126,7 @@ pub fn draw_pet(
     };
     for side in [-1.0_f32, 1.0] {
         for (index, anchor_x) in [-30.0_f32, 0.0, 30.0].into_iter().enumerate() {
-            let swing = gait
-                * (if index.is_multiple_of(2) {
-                    side
-                } else {
-                    -side
-                })
-                * 7.0;
+            let swing = gait * (if index.is_multiple_of(2) { side } else { -side }) * 7.0;
             let lift = if grooming && index == 0 { -26.0 } else { 0.0 };
             let a = transform([anchor_x, 13.0 * side]);
             let b = transform([anchor_x + swing, 35.0 * side + lift]);
@@ -169,7 +167,11 @@ pub fn draw_pet(
         Skin::Firefly => draw_firefly(painter, &transform, scale),
     }
 
-    let antenna_sway = if reduced_motion { 0.0 } else { (phase * 2.3).sin() * 4.0 };
+    let antenna_sway = if reduced_motion {
+        0.0
+    } else {
+        (phase * 2.3).sin() * 4.0
+    };
     for side in [-1.0_f32, 1.0] {
         painter.line_segment(
             [
@@ -181,11 +183,7 @@ pub fn draw_pet(
     }
 }
 
-fn draw_drosophila(
-    painter: &Painter,
-    transform: &impl Fn([f32; 2]) -> Pos2,
-    scale: f32,
-) {
+fn draw_drosophila(painter: &Painter, transform: &impl Fn([f32; 2]) -> Pos2, scale: f32) {
     painter.add(ellipse(
         transform([27.0, 0.0]),
         Vec2::new(94.0 * scale, 48.0 * scale),
@@ -198,8 +196,16 @@ fn draw_drosophila(
             Stroke::new(1.3 * scale, Color32::from_rgb(92, 58, 30)),
         );
     }
-    painter.circle_filled(transform([-24.0, 0.0]), 27.0 * scale, Color32::from_rgb(111, 69, 37));
-    painter.circle_filled(transform([-57.0, 0.0]), 24.0 * scale, Color32::from_rgb(75, 47, 34));
+    painter.circle_filled(
+        transform([-24.0, 0.0]),
+        27.0 * scale,
+        Color32::from_rgb(111, 69, 37),
+    );
+    painter.circle_filled(
+        transform([-57.0, 0.0]),
+        24.0 * scale,
+        Color32::from_rgb(75, 47, 34),
+    );
     for side in [-1.0_f32, 1.0] {
         painter.circle_filled(
             transform([-62.0, side * 13.0]),
@@ -214,11 +220,7 @@ fn draw_drosophila(
     }
 }
 
-fn draw_firefly(
-    painter: &Painter,
-    transform: &impl Fn([f32; 2]) -> Pos2,
-    scale: f32,
-) {
+fn draw_firefly(painter: &Painter, transform: &impl Fn([f32; 2]) -> Pos2, scale: f32) {
     painter.add(ellipse(
         transform([23.0, 0.0]),
         Vec2::new(98.0 * scale, 52.0 * scale),
@@ -235,8 +237,16 @@ fn draw_firefly(
         Color32::from_rgb(196, 224, 70),
         Stroke::new(1.8 * scale, Color32::from_rgb(101, 129, 35)),
     ));
-    painter.circle_filled(transform([-28.0, 0.0]), 28.0 * scale, Color32::from_rgb(194, 132, 45));
-    painter.circle_filled(transform([-60.0, 0.0]), 23.0 * scale, Color32::from_rgb(50, 55, 45));
+    painter.circle_filled(
+        transform([-28.0, 0.0]),
+        28.0 * scale,
+        Color32::from_rgb(194, 132, 45),
+    );
+    painter.circle_filled(
+        transform([-60.0, 0.0]),
+        23.0 * scale,
+        Color32::from_rgb(50, 55, 45),
+    );
     for side in [-1.0_f32, 1.0] {
         painter.circle_filled(
             transform([-63.0, side * 13.0]),

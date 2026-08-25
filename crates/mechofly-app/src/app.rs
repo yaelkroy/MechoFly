@@ -6,9 +6,7 @@ use std::{
 };
 
 use eframe::egui::{self, Color32, Sense, Vec2, ViewportCommand};
-use mechofly_core::{
-    Action, Behavior, ConnectomeImport, Feedback, PetPolicy, PolicyContext,
-};
+use mechofly_core::{Action, Behavior, ConnectomeImport, Feedback, PetPolicy, PolicyContext};
 
 use crate::{
     brain_lab::{BrainLabState, LabCommand},
@@ -51,12 +49,8 @@ impl MechoFlyApp {
         let render_state = cc.wgpu_render_state.clone();
         let seed = 0x4D45_4348_4F46_4C59;
         let now = unix_millis();
-        let session = SimulationSession::calibrated(
-            render_state.as_ref(),
-            config.compute,
-            seed,
-            now,
-        );
+        let session =
+            SimulationSession::calibrated(render_state.as_ref(), config.compute, seed, now);
         let policy = load_policy().unwrap_or_default();
         let tray_result = TrayController::new();
         let (tray, tray_warning) = match tray_result {
@@ -198,16 +192,14 @@ impl MechoFlyApp {
             self.lab.message = "Select a local CSV or CSV.GZ file first.".to_owned();
             return;
         }
-        let imported = match ConnectomeImport::fafb_v783(
-            trimmed,
-            format!("unix-millis:{}", unix_millis()),
-        ) {
-            Ok(imported) => imported,
-            Err(error) => {
-                self.lab.message = format!("Connectome import rejected: {error}");
-                return;
-            }
-        };
+        let imported =
+            match ConnectomeImport::fafb_v783(trimmed, format!("unix-millis:{}", unix_millis())) {
+                Ok(imported) => imported,
+                Err(error) => {
+                    self.lab.message = format!("Connectome import rejected: {error}");
+                    return;
+                }
+            };
         let manifest_digest = imported.manifest_digest();
         if let Err(error) = persist_import_manifest(&imported.manifest, &manifest_digest) {
             self.lab.message = format!("Graph parsed, but manifest persistence failed: {error}");
@@ -240,11 +232,7 @@ impl MechoFlyApp {
         ) {
             self.lab.message = format!(
                 "Learning ledger #{}: {:?} {:?}, {} → {}. Connectome unchanged.",
-                entry.sequence,
-                entry.action,
-                entry.feedback,
-                entry.value_before,
-                entry.value_after
+                entry.sequence, entry.action, entry.feedback, entry.value_before, entry.value_after
             );
             self.persist_policy();
         } else {
@@ -284,7 +272,9 @@ impl eframe::App for MechoFlyApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_tray();
         let now = Instant::now();
-        let elapsed = now.duration_since(self.last_wall).min(Duration::from_millis(250));
+        let elapsed = now
+            .duration_since(self.last_wall)
+            .min(Duration::from_millis(250));
         self.last_wall = now;
         self.accumulator += elapsed;
         let mut steps = 0;
@@ -316,7 +306,11 @@ impl eframe::App for MechoFlyApp {
             monitor_size,
             hovered,
         );
-        ctx.request_repaint_after(Duration::from_millis(if self.pet.reduced_motion { 50 } else { 16 }));
+        ctx.request_repaint_after(Duration::from_millis(if self.pet.reduced_motion {
+            50
+        } else {
+            16
+        }));
         if self.exit_requested {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
@@ -373,7 +367,11 @@ impl eframe::App for MechoFlyApp {
                                     switch_skin = true;
                                 }
                                 if ui
-                                    .small_button(if self.pet.paused { "Resume pet" } else { "Pause pet" })
+                                    .small_button(if self.pet.paused {
+                                        "Resume pet"
+                                    } else {
+                                        "Pause pet"
+                                    })
                                     .clicked()
                                 {
                                     toggle_pause = true;
@@ -441,7 +439,8 @@ impl eframe::App for MechoFlyApp {
         }
 
         if let Some(warning) = self.tray_warning.take() {
-            self.lab.message = format!("System tray unavailable; pet controls remain available: {warning}");
+            self.lab.message =
+                format!("System tray unavailable; pet controls remain available: {warning}");
         }
     }
 }

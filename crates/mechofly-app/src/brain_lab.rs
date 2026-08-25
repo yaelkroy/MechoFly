@@ -1,17 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
-use eframe::egui::{
-    self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2,
-};
-use mechofly_core::{
-    ComparisonResult, Feedback, PetPolicy, StimulationPolicy, StimulationRequest,
-};
+use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
+use mechofly_core::{ComparisonResult, Feedback, PetPolicy, StimulationPolicy, StimulationRequest};
 
-use crate::{
-    compute::ComputePreference,
-    pet::Skin,
-    runtime::SimulationSession,
-};
+use crate::{compute::ComputePreference, pet::Skin, runtime::SimulationSession};
 
 const CANVAS: Color32 = Color32::from_rgb(244, 239, 227);
 const SURFACE: Color32 = Color32::from_rgb(255, 253, 248);
@@ -96,14 +88,33 @@ impl BrainLabState {
         style_context(ui.ctx());
 
         egui::Panel::top("lab_header")
-            .frame(egui::Frame::new().fill(INK).inner_margin(egui::Margin::symmetric(18, 10)))
+            .frame(
+                egui::Frame::new()
+                    .fill(INK)
+                    .inner_margin(egui::Margin::symmetric(18, 10)),
+            )
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.colored_label(Color32::WHITE, egui::RichText::new("MECHOFLY / FIELD NOTEBOOK").strong().size(19.0));
+                    ui.colored_label(
+                        Color32::WHITE,
+                        egui::RichText::new("MECHOFLY / FIELD NOTEBOOK")
+                            .strong()
+                            .size(19.0),
+                    );
                     ui.add_space(16.0);
-                    ui.colored_label(Color32::from_rgb(204, 218, 226), "modeled dynamics · bounded replay · live state isolated");
+                    ui.colored_label(
+                        Color32::from_rgb(204, 218, 226),
+                        "modeled dynamics · bounded replay · live state isolated",
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.colored_label(Color32::from_rgb(224, 229, 206), format!("{} neurons · {} rows", session.graph.identity.neuron_count, session.graph.identity.edge_count));
+                        ui.colored_label(
+                            Color32::from_rgb(224, 229, 206),
+                            format!(
+                                "{} neurons · {} rows",
+                                session.graph.identity.neuron_count,
+                                session.graph.identity.edge_count
+                            ),
+                        );
                     });
                 });
             });
@@ -211,7 +222,12 @@ impl BrainLabState {
                 claim_badge(ui, "DERIVED STRUCTURE", POSITIVE_SOFT, POSITIVE);
                 claim_badge(ui, "MODELED DYNAMICS", ACTUAL_SOFT, ACTUAL);
                 claim_badge(ui, "MEASURED ACTIVITY: NONE", ALTERNATIVE_SOFT, ALTERNATIVE);
-                claim_badge(ui, "LIVE HARDWARE: NONE", Color32::from_rgb(238, 232, 219), INK);
+                claim_badge(
+                    ui,
+                    "LIVE HARDWARE: NONE",
+                    Color32::from_rgb(238, 232, 219),
+                    INK,
+                );
                 ui.separator();
                 ui.label(egui::RichText::new("Graph identity").strong());
                 ui.monospace(&session.graph.identity.graph_id);
@@ -236,21 +252,45 @@ impl BrainLabState {
                     if index < session.engine.state.activation.len() {
                         key_value(ui, "Index", &index.to_string());
                         key_value(ui, "Root ID", &session.graph.neuron_ids[index].to_string());
-                        key_value(ui, "Activation", &session.engine.state.activation[index].to_string());
-                        key_value(ui, "Spiked", if session.engine.state.spikes[index] == 0 { "no" } else { "yes" });
+                        key_value(
+                            ui,
+                            "Activation",
+                            &session.engine.state.activation[index].to_string(),
+                        );
+                        key_value(
+                            ui,
+                            "Spiked",
+                            if session.engine.state.spikes[index] == 0 {
+                                "no"
+                            } else {
+                                "yes"
+                            },
+                        );
                     } else {
                         ui.colored_label(WARNING, "Index is outside this graph.");
                     }
                 }
                 ui.separator();
                 ui.label(egui::RichText::new("Learning boundary").strong());
-                key_value(ui, "Policy", if policy.enabled { "enabled" } else { "disabled" });
+                key_value(
+                    ui,
+                    "Policy",
+                    if policy.enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    },
+                );
                 key_value(ui, "Explicit updates", &policy.ledger.len().to_string());
                 ui.monospace(policy.digest());
             });
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(CANVAS).inner_margin(egui::Margin::same(14)))
+            .frame(
+                egui::Frame::new()
+                    .fill(CANVAS)
+                    .inner_margin(egui::Margin::same(14)),
+            )
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     view_tab(ui, &mut self.view, LabView::Overview, "Overview");
@@ -389,8 +429,20 @@ fn draw_live_graph(painter: &egui::Painter, rect: Rect, session: &SimulationSess
         let activation = session.engine.state.activation[index];
         let normalized = ((activation + 8_192) as f32 / 16_384.0).clamp(0.0, 1.0);
         let color = blend(Color32::from_rgb(204, 211, 205), ACTUAL, normalized);
-        let radius = if session.engine.state.spikes[index] != 0 { 3.7 } else { 1.3 + normalized * 1.2 };
-        painter.circle_filled(position, radius, if session.engine.state.spikes[index] != 0 { POSITIVE } else { color });
+        let radius = if session.engine.state.spikes[index] != 0 {
+            3.7
+        } else {
+            1.3 + normalized * 1.2
+        };
+        painter.circle_filled(
+            position,
+            radius,
+            if session.engine.state.spikes[index] != 0 {
+                POSITIVE
+            } else {
+                color
+            },
+        );
     }
 }
 
@@ -439,16 +491,30 @@ fn comparison_view(ui: &mut egui::Ui, state: &mut BrainLabState) {
         ui.horizontal_wrapped(|ui| {
             key_value(ui, "Offset", &frame.offset.to_string());
             key_value(ui, "Actual spikes", &frame.actual.spike_count.to_string());
-            key_value(ui, "Alternative spikes", &frame.alternative.spike_count.to_string());
-            key_value(ui, "Differing neurons", &frame.differing_neurons.to_string());
+            key_value(
+                ui,
+                "Alternative spikes",
+                &frame.alternative.spike_count.to_string(),
+            );
+            key_value(
+                ui,
+                "Differing neurons",
+                &frame.differing_neurons.to_string(),
+            );
         });
     }
     ui.separator();
     ui.horizontal_wrapped(|ui| {
         claim_badge(ui, &comparison.receipt.status, POSITIVE_SOFT, POSITIVE);
         ui.label(format!("source frame {}", comparison.receipt.source_frame));
-        ui.label(format!("live unchanged: {}", comparison.receipt.live_state_unchanged));
-        ui.label(format!("alternative differs: {}", comparison.receipt.alternative_differs));
+        ui.label(format!(
+            "live unchanged: {}",
+            comparison.receipt.live_state_unchanged
+        ));
+        ui.label(format!(
+            "alternative differs: {}",
+            comparison.receipt.alternative_differs
+        ));
     });
 }
 
@@ -463,23 +529,61 @@ fn draw_filmstrip(painter: egui::Painter, rect: Rect, comparison: &ComparisonRes
     let row_height = 142.0;
     let actual_y = rect.top() + 34.0;
     let alternative_y = actual_y + row_height + 24.0;
-    painter.text(Pos2::new(rect.left() + 10.0, actual_y + 55.0), Align2::LEFT_CENTER, "ACTUAL", FontId::proportional(12.0), ACTUAL);
-    painter.text(Pos2::new(rect.left() + 10.0, alternative_y + 55.0), Align2::LEFT_CENTER, "ALT", FontId::proportional(12.0), ALTERNATIVE);
+    painter.text(
+        Pos2::new(rect.left() + 10.0, actual_y + 55.0),
+        Align2::LEFT_CENTER,
+        "ACTUAL",
+        FontId::proportional(12.0),
+        ACTUAL,
+    );
+    painter.text(
+        Pos2::new(rect.left() + 10.0, alternative_y + 55.0),
+        Align2::LEFT_CENTER,
+        "ALT",
+        FontId::proportional(12.0),
+        ALTERNATIVE,
+    );
     for (column, index) in indices.into_iter().enumerate() {
         let frame = &comparison.frames[index];
         let x = left + column as f32 * (width + gap);
         let actual_rect = Rect::from_min_size(Pos2::new(x, actual_y), Vec2::new(width, 112.0));
         let alt_rect = Rect::from_min_size(Pos2::new(x, alternative_y), Vec2::new(width, 112.0));
         mini_frame(&painter, actual_rect, &frame.actual_sample, ACTUAL, false);
-        mini_frame(&painter, alt_rect, &frame.alternative_sample, ALTERNATIVE, true);
-        painter.text(Pos2::new(x + width * 0.5, rect.top() + 12.0), Align2::CENTER_TOP, format!("+{}", frame.offset), FontId::monospace(11.0), MUTED);
-        let divergence = frame.differing_neurons as f32
-            / comparison.frames[0].actual_sample.len().max(1) as f32;
-        let bar_rect = Rect::from_min_size(Pos2::new(x, rect.bottom() - 24.0), Vec2::new(width, 8.0));
+        mini_frame(
+            &painter,
+            alt_rect,
+            &frame.alternative_sample,
+            ALTERNATIVE,
+            true,
+        );
+        painter.text(
+            Pos2::new(x + width * 0.5, rect.top() + 12.0),
+            Align2::CENTER_TOP,
+            format!("+{}", frame.offset),
+            FontId::monospace(11.0),
+            MUTED,
+        );
+        let divergence =
+            frame.differing_neurons as f32 / comparison.frames[0].actual_sample.len().max(1) as f32;
+        let bar_rect =
+            Rect::from_min_size(Pos2::new(x, rect.bottom() - 24.0), Vec2::new(width, 8.0));
         painter.rect_filled(bar_rect, 2, Color32::from_rgb(229, 224, 214));
-        painter.rect_filled(Rect::from_min_size(bar_rect.min, Vec2::new(width * divergence.clamp(0.0, 1.0), 8.0)), 2, ALTERNATIVE);
+        painter.rect_filled(
+            Rect::from_min_size(
+                bar_rect.min,
+                Vec2::new(width * divergence.clamp(0.0, 1.0), 8.0),
+            ),
+            2,
+            ALTERNATIVE,
+        );
     }
-    painter.text(Pos2::new(rect.left() + 10.0, rect.bottom() - 20.0), Align2::LEFT_CENTER, "Δ", FontId::proportional(13.0), ALTERNATIVE);
+    painter.text(
+        Pos2::new(rect.left() + 10.0, rect.bottom() - 20.0),
+        Align2::LEFT_CENTER,
+        "Δ",
+        FontId::proportional(13.0),
+        ALTERNATIVE,
+    );
 }
 
 fn mini_frame(
@@ -492,16 +596,25 @@ fn mini_frame(
     painter.rect_filled(rect, 3, Color32::from_rgb(249, 247, 240));
     painter.rect_stroke(rect, 3, Stroke::new(1.2, color), StrokeKind::Inside);
     for sample in samples {
-        let normalized_index = sample.index as f32 / samples.last().map(|s| s.index.max(1)).unwrap_or(1) as f32;
+        let normalized_index =
+            sample.index as f32 / samples.last().map(|s| s.index.max(1)).unwrap_or(1) as f32;
         let angle = normalized_index * std::f32::consts::TAU * 7.0;
         let radius = normalized_index.sqrt() * 0.43;
         let center = rect.center();
-        let position = center + Vec2::new(angle.cos() * rect.width() * radius, angle.sin() * rect.height() * radius * 0.85);
+        let position = center
+            + Vec2::new(
+                angle.cos() * rect.width() * radius,
+                angle.sin() * rect.height() * radius * 0.85,
+            );
         let intensity = ((sample.activation_q15 as f32 + 8_192.0) / 16_384.0).clamp(0.15, 1.0);
         let mark = blend(Color32::from_rgb(208, 207, 199), color, intensity);
         let size = if sample.spiked { 3.0 } else { 1.5 };
         if squares {
-            painter.rect_filled(Rect::from_center_size(position, Vec2::splat(size * 2.0)), 0, mark);
+            painter.rect_filled(
+                Rect::from_center_size(position, Vec2::splat(size * 2.0)),
+                0,
+                mark,
+            );
         } else {
             painter.circle_filled(position, size, mark);
         }
@@ -519,19 +632,59 @@ fn provenance_view(ui: &mut egui::Ui, session: &SimulationSession) {
     ui.heading("Provenance ledger");
     ui.label("Every layer below has a narrower claim than the one above it. None is a biological recording.");
     ui.add_space(10.0);
-    provenance_card(ui, "1 · DERIVED CONNECTOME STRUCTURE", POSITIVE_SOFT, &session.graph.identity.structure_claim, &session.graph.identity.source_url, &session.graph.identity.sha256);
-    provenance_card(ui, "2 · MODELED NEURAL DYNAMICS", ACTUAL_SOFT, "deterministic signed fixed-point software dynamics", mechofly_core::MODEL_VERSION, &session.engine.model_identity());
-    provenance_card(ui, "3 · MODELED SOFTWARE LEARNING", Color32::from_rgb(237, 232, 247), "bounded contextual policy changed only by explicit feedback", mechofly_core::learning::LEARNING_RULE_VERSION, "stored separately from neural state");
-    provenance_card(ui, "4 · AUTHORED PRESENTATION", ALTERNATIVE_SOFT, "procedural pet skin and field-notebook interface", "presentation-v2", "does not alter graph or dynamics");
+    provenance_card(
+        ui,
+        "1 · DERIVED CONNECTOME STRUCTURE",
+        POSITIVE_SOFT,
+        &session.graph.identity.structure_claim,
+        &session.graph.identity.source_url,
+        &session.graph.identity.sha256,
+    );
+    provenance_card(
+        ui,
+        "2 · MODELED NEURAL DYNAMICS",
+        ACTUAL_SOFT,
+        "deterministic signed fixed-point software dynamics",
+        mechofly_core::MODEL_VERSION,
+        &session.engine.model_identity(),
+    );
+    provenance_card(
+        ui,
+        "3 · MODELED SOFTWARE LEARNING",
+        Color32::from_rgb(237, 232, 247),
+        "bounded contextual policy changed only by explicit feedback",
+        mechofly_core::learning::LEARNING_RULE_VERSION,
+        "stored separately from neural state",
+    );
+    provenance_card(
+        ui,
+        "4 · AUTHORED PRESENTATION",
+        ALTERNATIVE_SOFT,
+        "procedural pet skin and field-notebook interface",
+        "presentation-v2",
+        "does not alter graph or dynamics",
+    );
 }
 
-fn provenance_card(ui: &mut egui::Ui, title: &str, fill: Color32, claim: &str, source: &str, digest: &str) {
-    egui::Frame::new().fill(fill).stroke(Stroke::new(1.0, GRID)).corner_radius(5).inner_margin(12).show(ui, |ui| {
-        ui.label(egui::RichText::new(title).strong());
-        ui.label(claim);
-        ui.monospace(source);
-        ui.monospace(digest);
-    });
+fn provenance_card(
+    ui: &mut egui::Ui,
+    title: &str,
+    fill: Color32,
+    claim: &str,
+    source: &str,
+    digest: &str,
+) {
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(Stroke::new(1.0, GRID))
+        .corner_radius(5)
+        .inner_margin(12)
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(title).strong());
+            ui.label(claim);
+            ui.monospace(source);
+            ui.monospace(digest);
+        });
     ui.add_space(8.0);
 }
 
@@ -539,14 +692,23 @@ fn learning_view(ui: &mut egui::Ui, policy: &PetPolicy, commands: &mut Vec<LabCo
     ui.heading("Bounded pet-policy ledger");
     ui.label("The connectome is immutable. Only this separate software policy learns, and only from explicit feedback.");
     let mut enabled = policy.enabled;
-    if ui.checkbox(&mut enabled, "Allow learning from explicit feedback").changed() {
+    if ui
+        .checkbox(&mut enabled, "Allow learning from explicit feedback")
+        .changed()
+    {
         commands.push(LabCommand::SetLearningEnabled(enabled));
     }
     ui.horizontal(|ui| {
-        if ui.add(egui::Button::new("Encourage current action").fill(POSITIVE_SOFT)).clicked() {
+        if ui
+            .add(egui::Button::new("Encourage current action").fill(POSITIVE_SOFT))
+            .clicked()
+        {
             commands.push(LabCommand::Feedback(Feedback::Encourage));
         }
-        if ui.add(egui::Button::new("Discourage current action").fill(ALTERNATIVE_SOFT)).clicked() {
+        if ui
+            .add(egui::Button::new("Discourage current action").fill(ALTERNATIVE_SOFT))
+            .clicked()
+        {
             commands.push(LabCommand::Feedback(Feedback::Discourage));
         }
         if ui.button("Export ledger").clicked() {
@@ -562,15 +724,19 @@ fn learning_view(ui: &mut egui::Ui, policy: &PetPolicy, commands: &mut Vec<LabCo
     ui.separator();
     egui::ScrollArea::vertical().show(ui, |ui| {
         for entry in policy.ledger.iter().rev() {
-            egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0, GRID)).inner_margin(8).show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.monospace(format!("#{:04}", entry.sequence));
-                    ui.label(format!("{:?} / {:?}", entry.action, entry.feedback));
-                    ui.label(format!("{} → {}", entry.value_before, entry.value_after));
+            egui::Frame::new()
+                .fill(SURFACE)
+                .stroke(Stroke::new(1.0, GRID))
+                .inner_margin(8)
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.monospace(format!("#{:04}", entry.sequence));
+                        ui.label(format!("{:?} / {:?}", entry.action, entry.feedback));
+                        ui.label(format!("{} → {}", entry.value_before, entry.value_after));
+                    });
+                    ui.small(&entry.claim);
+                    ui.monospace(&entry.policy_after_sha256);
                 });
-                ui.small(&entry.claim);
-                ui.monospace(&entry.policy_after_sha256);
-            });
             ui.add_space(5.0);
         }
         if policy.ledger.is_empty() {
@@ -596,16 +762,30 @@ fn timeline(ui: &mut egui::Ui, session: &SimulationSession) {
     painter.rect_stroke(rect, 3, Stroke::new(1.0, GRID), StrokeKind::Inside);
     let summaries: Vec<_> = session.replay.summaries().collect();
     if summaries.is_empty() {
-        painter.text(rect.center(), Align2::CENTER_CENTER, "waiting for modeled frames", FontId::proportional(12.0), MUTED);
+        painter.text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "waiting for modeled frames",
+            FontId::proportional(12.0),
+            MUTED,
+        );
         return;
     }
-    let max_spikes = summaries.iter().map(|summary| summary.spike_count).max().unwrap_or(1).max(1);
+    let max_spikes = summaries
+        .iter()
+        .map(|summary| summary.spike_count)
+        .max()
+        .unwrap_or(1)
+        .max(1);
     let bar_width = rect.width() / summaries.len() as f32;
     for (index, summary) in summaries.into_iter().enumerate() {
         let height = summary.spike_count as f32 / max_spikes as f32 * (rect.height() - 22.0);
         let x = rect.left() + index as f32 * bar_width;
         painter.rect_filled(
-            Rect::from_min_max(Pos2::new(x, rect.bottom() - height - 12.0), Pos2::new(x + bar_width.max(1.0), rect.bottom() - 12.0)),
+            Rect::from_min_max(
+                Pos2::new(x, rect.bottom() - height - 12.0),
+                Pos2::new(x + bar_width.max(1.0), rect.bottom() - 12.0),
+            ),
             0,
             ACTUAL,
         );
@@ -615,7 +795,14 @@ fn timeline(ui: &mut egui::Ui, session: &SimulationSession) {
             mechofly_core::Behavior::Groom => WARNING,
             _ => ALTERNATIVE,
         };
-        painter.rect_filled(Rect::from_min_size(Pos2::new(x, rect.bottom() - 8.0), Vec2::new(bar_width.max(1.0), 5.0)), 0, behavior_color);
+        painter.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(x, rect.bottom() - 8.0),
+                Vec2::new(bar_width.max(1.0), 5.0),
+            ),
+            0,
+            behavior_color,
+        );
     }
 }
 

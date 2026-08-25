@@ -3,7 +3,7 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{MODEL_VERSION, graph::mix64, graph::ModelGraph, provenance::sha256_hex};
+use crate::{MODEL_VERSION, graph::ModelGraph, graph::mix64, provenance::sha256_hex};
 
 pub const ACTIVATION_MIN: i32 = -32_768;
 pub const ACTIVATION_MAX: i32 = 32_767;
@@ -138,11 +138,7 @@ impl ModelEngine {
         self.accept_backend_step(activation, spikes)
     }
 
-    pub fn accept_backend_step(
-        &mut self,
-        activation: Vec<i32>,
-        spikes: Vec<u8>,
-    ) -> FrameSummary {
+    pub fn accept_backend_step(&mut self, activation: Vec<i32>, spikes: Vec<u8>) -> FrameSummary {
         assert_eq!(activation.len(), self.state.activation.len());
         assert_eq!(spikes.len(), self.state.spikes.len());
         self.state.activation = activation;
@@ -155,7 +151,8 @@ impl ModelEngine {
             (self.state.activation.iter().map(|v| *v as i64).sum::<i64>()
                 / self.state.activation.len() as i64) as i32
         };
-        let next_behavior = modeled_behavior(self.state.frame, spike_count, self.state.activation.len());
+        let next_behavior =
+            modeled_behavior(self.state.frame, spike_count, self.state.activation.len());
         if next_behavior == self.state.behavior {
             self.state.behavior_age_frames += 1;
         } else {
@@ -209,7 +206,10 @@ pub fn update_neuron(
 
     let candidate = ((previous[target] * 13) + (drive * 3)) / 16;
     if candidate > SPIKE_THRESHOLD {
-        ((candidate - RESET_DELTA).clamp(ACTIVATION_MIN, ACTIVATION_MAX), 1)
+        (
+            (candidate - RESET_DELTA).clamp(ACTIVATION_MIN, ACTIVATION_MAX),
+            1,
+        )
     } else {
         (candidate.clamp(ACTIVATION_MIN, ACTIVATION_MAX), 0)
     }
@@ -262,8 +262,12 @@ mod tests {
         let stimulus = a.empty_stimulus();
         for _ in 0..20 {
             assert_eq!(
-                a.step_cpu(StepInput { stimulus_q15: &stimulus }),
-                b.step_cpu(StepInput { stimulus_q15: &stimulus })
+                a.step_cpu(StepInput {
+                    stimulus_q15: &stimulus
+                }),
+                b.step_cpu(StepInput {
+                    stimulus_q15: &stimulus
+                })
             );
         }
         assert_eq!(a.state, b.state);

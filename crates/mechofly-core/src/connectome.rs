@@ -211,7 +211,9 @@ impl ConnectomeImport {
             modeled_weights,
             positions,
         };
-        graph.validate().map_err(ConnectomeImportError::InvalidGraph)?;
+        graph
+            .validate()
+            .map_err(ConnectomeImportError::InvalidGraph)?;
 
         let mut validation_warnings = Vec::new();
         if dataset.eq_ignore_ascii_case("fafb") && snapshot.eq_ignore_ascii_case("v783") {
@@ -296,13 +298,13 @@ fn file_sha256(path: &Path) -> Result<String, ConnectomeImportError> {
 }
 
 fn normalize_header(header: &str) -> String {
-    header
-        .trim()
-        .to_ascii_lowercase()
-        .replace([' ', '-'], "_")
+    header.trim().to_ascii_lowercase().replace([' ', '-'], "_")
 }
 
-fn find_column(headers: &StringRecord, candidates: &[&str]) -> Result<usize, ConnectomeImportError> {
+fn find_column(
+    headers: &StringRecord,
+    candidates: &[&str],
+) -> Result<usize, ConnectomeImportError> {
     headers
         .iter()
         .position(|header| candidates.contains(&normalize_header(header).as_str()))

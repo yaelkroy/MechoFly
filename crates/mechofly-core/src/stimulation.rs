@@ -54,7 +54,11 @@ pub enum StimulationValidationError {
     #[error("amplitude must be finite and in (0, {0}]")]
     InvalidAmplitude(String),
     #[error("duration must be {min_ms}–{max_ms} ms and a multiple of {step_ms} ms")]
-    InvalidDuration { min_ms: u32, max_ms: u32, step_ms: u32 },
+    InvalidDuration {
+        min_ms: u32,
+        max_ms: u32,
+        step_ms: u32,
+    },
     #[error("comparison length must be 1–{0} frames")]
     InvalidComparisonFrames(u32),
     #[error("dosage exceeds the {0} neuron-second ceiling")]
@@ -146,7 +150,8 @@ impl StimulationPolicy {
             || request.amplitude > self.max_amplitude
         {
             return Err(StimulationValidationError::InvalidAmplitude(format!(
-                "{:.3}", self.max_amplitude
+                "{:.3}",
+                self.max_amplitude
             )));
         }
         if request.duration_ms < self.min_duration_ms
@@ -159,19 +164,18 @@ impl StimulationPolicy {
                 step_ms: MODEL_STEP_MS,
             });
         }
-        if request.comparison_frames == 0
-            || request.comparison_frames > self.max_comparison_frames
+        if request.comparison_frames == 0 || request.comparison_frames > self.max_comparison_frames
         {
             return Err(StimulationValidationError::InvalidComparisonFrames(
                 self.max_comparison_frames,
             ));
         }
-        let dosage = targets.len() as f32
-            * request.amplitude
-            * (request.duration_ms as f32 / 1_000.0);
+        let dosage =
+            targets.len() as f32 * request.amplitude * (request.duration_ms as f32 / 1_000.0);
         if dosage > self.max_dosage_neuron_seconds {
             return Err(StimulationValidationError::DosageExceeded(format!(
-                "{:.3}", self.max_dosage_neuron_seconds
+                "{:.3}",
+                self.max_dosage_neuron_seconds
             )));
         }
         if request.authored_label.trim().is_empty() {
@@ -203,8 +207,14 @@ impl StimulationPolicy {
         let mut frames = Vec::with_capacity(request.comparison_frames as usize);
 
         for offset in 0..request.comparison_frames {
-            let actual_summary = actual.step_cpu(StepInput { stimulus_q15: &zero });
-            let applied = if offset < stimulation_frames { &authored } else { &zero };
+            let actual_summary = actual.step_cpu(StepInput {
+                stimulus_q15: &zero,
+            });
+            let applied = if offset < stimulation_frames {
+                &authored
+            } else {
+                &zero
+            };
             let alternative_summary = alternative.step_cpu(StepInput {
                 stimulus_q15: applied,
             });
@@ -286,7 +296,9 @@ mod tests {
         let graph = Arc::new(ModelGraph::synthetic(ModelTier::Demo4096, 3));
         let mut live = ModelEngine::new(Arc::clone(&graph), 99);
         let zero = live.empty_stimulus();
-        let summary = live.step_cpu(StepInput { stimulus_q15: &zero });
+        let summary = live.step_cpu(StepInput {
+            stimulus_q15: &zero,
+        });
         let checkpoint = ModelCheckpoint {
             graph: live.graph.identity.clone(),
             model_identity: live.model_identity(),
@@ -313,6 +325,11 @@ mod tests {
         assert_eq!(live.state.digest(), original);
         assert!(result.receipt.live_state_unchanged);
         assert!(result.receipt.alternative_differs);
-        assert!(result.frames.iter().any(|frame| frame.differing_neurons > 0));
+        assert!(
+            result
+                .frames
+                .iter()
+                .any(|frame| frame.differing_neurons > 0)
+        );
     }
 }

@@ -1,9 +1,7 @@
-use std::{sync::mpsc, sync::Arc, time::Instant};
+use std::{sync::Arc, sync::mpsc, time::Instant};
 
 use bytemuck::{Pod, Zeroable};
-use mechofly_core::{
-    FrameSummary, ModelEngine, ModelGraph, ModelTier, StepInput,
-};
+use mechofly_core::{FrameSummary, ModelEngine, ModelGraph, ModelTier, StepInput};
 use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
@@ -93,8 +91,8 @@ impl RuntimeBackend {
     ) -> Result<FrameSummary, String> {
         match self {
             Self::Cpu => Ok(engine.step_cpu(StepInput {
-                    stimulus_q15: stimulus,
-                })),
+                stimulus_q15: stimulus,
+            })),
             Self::Gpu(gpu) => gpu.step(engine, stimulus),
         }
     }
@@ -383,12 +381,36 @@ impl GpuStepper {
             label: Some("MechoFly compute layout"),
             entries: &[
                 binding(0, wgpu::BufferBindingType::Uniform, false),
-                binding(1, wgpu::BufferBindingType::Storage { read_only: true }, false),
-                binding(2, wgpu::BufferBindingType::Storage { read_only: true }, false),
-                binding(3, wgpu::BufferBindingType::Storage { read_only: true }, false),
-                binding(4, wgpu::BufferBindingType::Storage { read_only: true }, false),
-                binding(5, wgpu::BufferBindingType::Storage { read_only: true }, false),
-                binding(6, wgpu::BufferBindingType::Storage { read_only: false }, false),
+                binding(
+                    1,
+                    wgpu::BufferBindingType::Storage { read_only: true },
+                    false,
+                ),
+                binding(
+                    2,
+                    wgpu::BufferBindingType::Storage { read_only: true },
+                    false,
+                ),
+                binding(
+                    3,
+                    wgpu::BufferBindingType::Storage { read_only: true },
+                    false,
+                ),
+                binding(
+                    4,
+                    wgpu::BufferBindingType::Storage { read_only: true },
+                    false,
+                ),
+                binding(
+                    5,
+                    wgpu::BufferBindingType::Storage { read_only: true },
+                    false,
+                ),
+                binding(
+                    6,
+                    wgpu::BufferBindingType::Storage { read_only: false },
+                    false,
+                ),
             ],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -432,11 +454,7 @@ impl GpuStepper {
         })
     }
 
-    fn step(
-        &mut self,
-        engine: &mut ModelEngine,
-        stimulus: &[i32],
-    ) -> Result<FrameSummary, String> {
+    fn step(&mut self, engine: &mut ModelEngine, stimulus: &[i32]) -> Result<FrameSummary, String> {
         if engine.state.activation.len() != self.neuron_count || stimulus.len() != self.neuron_count
         {
             return Err("GPU step dimensions differ from the active graph".to_owned());
@@ -450,8 +468,11 @@ impl GpuStepper {
         };
         self.queue
             .write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
-        self.queue
-            .write_buffer(&self.state, 0, bytemuck::cast_slice(&engine.state.activation));
+        self.queue.write_buffer(
+            &self.state,
+            0,
+            bytemuck::cast_slice(&engine.state.activation),
+        );
         self.queue
             .write_buffer(&self.stimulus, 0, bytemuck::cast_slice(stimulus));
 
