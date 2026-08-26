@@ -3,6 +3,8 @@
 mod app;
 mod brain_lab;
 mod compute;
+#[cfg(windows)]
+mod desktop_pet;
 mod diagnostics;
 mod pet;
 mod runtime;
@@ -13,6 +15,8 @@ use std::{path::PathBuf, str::FromStr};
 
 use app::{AppConfig, MechoFlyApp};
 use compute::ComputePreference;
+#[cfg(not(windows))]
+use pet::{PET_HEIGHT, PET_WIDTH};
 use pet::Skin;
 use serde::Deserialize;
 
@@ -40,19 +44,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     diagnostics::mark("runtime profile and command line accepted");
     let icon = app_icon();
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("MechoFly")
-            .with_inner_size([248.0, 166.0])
-            .with_min_inner_size([248.0, 166.0])
-            .with_max_inner_size([248.0, 166.0])
-            .with_position([96.0, 640.0])
-            .with_resizable(false)
-            .with_decorations(false)
-            .with_transparent(true)
-            .with_taskbar(false)
-            .with_window_level(eframe::egui::WindowLevel::AlwaysOnTop)
-            .with_has_shadow(false)
-            .with_icon(icon),
+        viewport: root_viewport(icon),
         multisampling: 4,
         ..Default::default()
     };
@@ -64,6 +56,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     diagnostics::mark("eframe native event loop returned normally");
     Ok(())
+}
+
+fn root_viewport(icon: eframe::egui::IconData) -> eframe::egui::ViewportBuilder {
+    let builder = eframe::egui::ViewportBuilder::default()
+        .with_title("MechoFly")
+        .with_resizable(false)
+        .with_decorations(false)
+        .with_taskbar(false)
+        .with_window_level(eframe::egui::WindowLevel::AlwaysOnTop)
+        .with_has_shadow(false)
+        .with_icon(icon);
+
+    #[cfg(windows)]
+    {
+        // The Windows desktop pet is a native per-pixel-alpha layered window.
+        // This hidden eframe root keeps the event loop, Brain Lab viewports,
+        // and vendor-neutral wgpu compute alive without exposing a swap-chain
+        // rectangle on the desktop.
+        builder
+            .with_inner_size([1.0, 1.0])
+            .with_position([-32_000.0, -32_000.0])
+            .with_visible(false)
+    }
+    #[cfg(not(windows))]
+    {
+        builder
+            .with_inner_size([PET_WIDTH as f32, PET_HEIGHT as f32])
+            .with_min_inner_size([PET_WIDTH as f32, PET_HEIGHT as f32])
+            .with_max_inner_size([PET_WIDTH as f32, PET_HEIGHT as f32])
+            .with_position([96.0, 640.0])
+            .with_transparent(true)
+    }
 }
 
 #[derive(Default, Deserialize)]

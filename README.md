@@ -13,7 +13,7 @@ preview.
 The application has two presentation-only skins:
 
 - **Drosophila Natural** is the repository and application default.
-- **Firefly Field** is the alternate skin and AI100 machine-profile default.
+- **Firefly Lantern** is the alternate skin and AI100 machine-profile default.
 
 Skins never change graph structure, dynamics, replay, learning, or scientific
 claims.
@@ -44,15 +44,22 @@ GPU work uses portable WGSL through `wgpu`; there is no CUDA dependency and no
 vendor allowlist. Brain Lab's **Re-evaluate capacity** button repeats the
 benchmarks and starts a new identified session if the backend or tier changes.
 
-## Brain Lab v2
+## Brain Lab v3
 
-Double-click the pet or use its tray menu to open Brain Lab. The redesigned
-warm field-notebook interface has:
+Double-click or right-click the pet, or use its tray menu, to open Brain Lab.
+The dark Neural Observatory interface has:
 
-- a left experiment rail for capacity, replay, and authored interventions;
-- a central population overview or aligned two-row comparison filmstrip;
-- a right evidence/provenance inspector; and
-- a bottom activity and behavior timeline.
+- a compact left model/replay dock with automatic CPU/GPU re-evaluation;
+- a central bilateral population field or aligned two-row comparison filmstrip;
+- a counterfactual composer beside the comparison it authors;
+- a right trust layer with exact identities, claims, and lookup; and
+- a compact bottom activity/behavior timeline and event line.
+
+On Windows the pet is not an `eframe` swap-chain window. Rust supplies a small
+premultiplied BGRA bitmap to the native layered-window compositor, so zero-alpha
+pixels are real desktop holes and no black rectangle or chroma key is exposed.
+All visible pet controls live in the tray; the desktop surface contains only
+the fly.
 
 A valid preview targets at most 64 unique neurons, has amplitude in `(0, 0.25]`,
 lasts 33–990 ms, stays under a dosage ceiling, and runs on a full deep clone of
@@ -105,7 +112,7 @@ and Emergency Stop shortcuts.
 
 See [architecture](docs/ARCHITECTURE.md),
 [compute profiles](docs/COMPUTE_PROFILES.md),
-[Brain Lab v2](docs/BRAIN_LAB_V2.md),
+[Brain Lab v3](docs/BRAIN_LAB_V3.md),
 [connectome and learning](docs/LEARNING_AND_CONNECTOME.md),
 [data provenance](docs/DATA_PROVENANCE.md), and
 [AI100 setup](docs/AI100.md).

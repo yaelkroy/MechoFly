@@ -30,7 +30,7 @@ impl TrayController {
         let menu = Menu::new();
         let open = MenuItem::new("Open Brain Lab", true, None);
         let drosophila = MenuItem::new("Skin: Drosophila Natural", true, None);
-        let firefly = MenuItem::new("Skin: Firefly Field", true, None);
+        let firefly = MenuItem::new("Skin: Firefly Lantern", true, None);
         let reevaluate = MenuItem::new("Re-evaluate capacity", true, None);
         let pause = MenuItem::new("Pause / resume pet", true, None);
         let separator_one = PredefinedMenuItem::separator();

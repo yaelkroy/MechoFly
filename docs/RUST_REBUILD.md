@@ -10,14 +10,16 @@ evidence. Its source and architecture are not inputs to this implementation.
   policy, provenance, and learning receipts.
 - The Windows host uses `eframe`/`egui` with `wgpu`. There is no CUDA path and
   no vendor-name allowlist.
-- Drosophila Natural is the repository default. Firefly Field is an alternate
+- Drosophila Natural is the repository default. Firefly Lantern is an alternate
   presentation-only skin and the AI100 machine-profile default.
 - A fixed 33 ms model clock is independent of visual repaint timing.
 - Rest has no translation or decorative bob. Walking advances in floating
   point screen coordinates. Escape has authored preparation, flight, and
   settling phases.
-- The Brain Lab is a separate opaque window. The pet overlay uses real alpha;
-  no transparency key or chroma-key color is used.
+- Brain Lab is a separate opaque `eframe` viewport. On Windows, the pet is an
+  independently rendered Win32 layered window supplied with premultiplied
+  per-pixel alpha by `UpdateLayeredWindow`; no swap-chain transparency,
+  transparency key, or chroma-key color is used.
 
 ## Scientific claim boundary
 
