@@ -117,8 +117,8 @@ pub fn assess_capacity(
     let mut gpu_reason = String::new();
 
     if preference == ComputePreference::Cpu {
-        gpu_reason = "GPU neural compute was not probed because CPU was explicitly selected"
-            .to_owned();
+        gpu_reason =
+            "GPU neural compute was not probed because CPU was explicitly selected".to_owned();
     } else if let Some(render_state) = render_state {
         let info = render_state.adapter.get_info();
         gpu_adapter = Some(info.name.clone());
