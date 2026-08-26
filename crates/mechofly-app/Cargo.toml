@@ -23,6 +23,7 @@ wgpu.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 tray-icon.workspace = true
+windows-sys.workspace = true
 
 [build-dependencies]
 naga.workspace = true

@@ -1,8 +1,15 @@
 # Data provenance
 
-The repository does not bundle FAFB, BANC, MANC, MAOL, MCNS, or another
-connectome download. Built-in tiers are deterministic synthetic demo graphs and
+The repository does not bundle a FAFB, BANC, MANC, MAOL, MCNS, or other
+connection table. Built-in tiers are deterministic synthetic demo graphs and
 are visibly labeled `SYNTHETIC_DEMO_TOPOLOGY`.
+
+Brain Lab embeds 23,210 FlyWire-derived soma coordinates from the accepted
+legacy anatomical-context asset. They are a small static point reference, not
+a wiring diagram, activity recording, or simulated population. The UI labels them
+`NOT SIMULATED`. Current model neurons are distributed across those points by
+a deterministic ordinal presentation hash; that display placement is labeled
+`NO IDENTITY MAPPING` and does not claim a root-ID registration.
 
 ## Imported connection tables
 

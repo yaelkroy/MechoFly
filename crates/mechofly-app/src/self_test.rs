@@ -31,6 +31,20 @@ struct SelfTestReceipt {
     connectome_mutated_by_learning: bool,
     measured_activity: bool,
     live_hardware_authority: String,
+    global_hotkeys: Vec<String>,
+    global_hotkey_count: usize,
+    global_hotkey_contract_passed: bool,
+    registered_hotkeys_tested: usize,
+    asynchronous_hotkey_fallback: bool,
+    firefly_visual_style: String,
+    firefly_palette: String,
+    firefly_visual_contract_passed: bool,
+    firefly_opaque_pixels: usize,
+    firefly_translucent_pixels: usize,
+    firefly_rest_temporal_invariant: bool,
+    firefly_escape_wing_responsive: bool,
+    anatomical_context_points: usize,
+    anatomical_context_measured: bool,
 }
 
 pub fn run(path: &Path) -> Result<(), String> {
@@ -72,13 +86,48 @@ pub fn run(path: &Path) -> Result<(), String> {
     };
     policy.apply_feedback(context, Action::Explore, Feedback::Encourage, 1);
     let explicit_learning_changed = policy_before != policy.digest() && policy.ledger.len() == 1;
+    let anatomical_context: serde_json::Value =
+        serde_json::from_str(include_str!("../assets/brain_points.json"))
+            .map_err(|error| format!("embedded anatomical context is invalid: {error}"))?;
+    let anatomical_context_points = anatomical_context
+        .get("points")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .unwrap_or_default();
+    let firefly_visual = crate::pet::run_firefly_visual_self_test();
+
+    #[cfg(windows)]
+    let hotkeys = crate::desktop_pet::run_hotkey_self_test();
+    #[cfg(not(windows))]
+    let hotkeys = NonWindowsHotkeyContract {
+        passed: true,
+        binding_count: 8,
+        registered_count: 0,
+        labels: vec![
+            "Ctrl+Alt+Q",
+            "Ctrl+Alt+H",
+            "Ctrl+Alt+L",
+            "Ctrl+Shift+F12",
+            "Ctrl+Alt+G",
+            "Ctrl+Alt+B",
+            "Ctrl+Alt+W",
+            "Ctrl+Alt+N",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect(),
+        async_fallback_all_bindings: true,
+    };
 
     let receipt = SelfTestReceipt {
-        schema_version: 2,
+        schema_version: 3,
         status: if comparison.receipt.live_state_unchanged
             && comparison.receipt.alternative_differs
             && live_before == live_after
             && explicit_learning_changed
+            && hotkeys.passed
+            && firefly_visual.passed
+            && anatomical_context_points == 23_210
         {
             "PASS".to_owned()
         } else {
@@ -103,6 +152,20 @@ pub fn run(path: &Path) -> Result<(), String> {
         connectome_mutated_by_learning: false,
         measured_activity: false,
         live_hardware_authority: "NONE".to_owned(),
+        global_hotkeys: hotkeys.labels,
+        global_hotkey_count: hotkeys.binding_count,
+        global_hotkey_contract_passed: hotkeys.passed,
+        registered_hotkeys_tested: hotkeys.registered_count,
+        asynchronous_hotkey_fallback: hotkeys.async_fallback_all_bindings,
+        firefly_visual_style: "neurofly_prism_firefly".to_owned(),
+        firefly_palette: "noctiluca_lantern".to_owned(),
+        firefly_visual_contract_passed: firefly_visual.passed,
+        firefly_opaque_pixels: firefly_visual.opaque_pixels,
+        firefly_translucent_pixels: firefly_visual.translucent_pixels,
+        firefly_rest_temporal_invariant: firefly_visual.rest_pixel_differences == 0,
+        firefly_escape_wing_responsive: firefly_visual.escape_wing_pixel_differences > 180,
+        anatomical_context_points,
+        anatomical_context_measured: false,
     };
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
@@ -119,4 +182,13 @@ pub fn run(path: &Path) -> Result<(), String> {
     } else {
         Err("self-test invariants failed".to_owned())
     }
+}
+
+#[cfg(not(windows))]
+struct NonWindowsHotkeyContract {
+    passed: bool,
+    binding_count: usize,
+    registered_count: usize,
+    labels: Vec<String>,
+    async_fallback_all_bindings: bool,
 }

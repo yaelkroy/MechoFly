@@ -3,6 +3,8 @@
 mod app;
 mod brain_lab;
 mod compute;
+#[cfg(windows)]
+mod desktop_pet;
 mod diagnostics;
 mod pet;
 mod runtime;
@@ -11,9 +13,11 @@ mod tray;
 
 use std::{path::PathBuf, str::FromStr};
 
-use app::{AppConfig, MechoFlyApp};
+use app::{AppConfig, MechoFlyApp, RuntimeSourceIdentity};
 use compute::ComputePreference;
 use pet::Skin;
+#[cfg(not(windows))]
+use pet::{PET_HEIGHT, PET_WIDTH};
 use serde::Deserialize;
 
 fn main() {
@@ -40,19 +44,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     diagnostics::mark("runtime profile and command line accepted");
     let icon = app_icon();
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("MechoFly")
-            .with_inner_size([248.0, 166.0])
-            .with_min_inner_size([248.0, 166.0])
-            .with_max_inner_size([248.0, 166.0])
-            .with_position([96.0, 640.0])
-            .with_resizable(false)
-            .with_decorations(false)
-            .with_transparent(true)
-            .with_taskbar(false)
-            .with_window_level(eframe::egui::WindowLevel::AlwaysOnTop)
-            .with_has_shadow(false)
-            .with_icon(icon),
+        viewport: root_viewport(icon),
         multisampling: 4,
         ..Default::default()
     };
@@ -66,11 +58,47 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn root_viewport(icon: eframe::egui::IconData) -> eframe::egui::ViewportBuilder {
+    let builder = eframe::egui::ViewportBuilder::default()
+        .with_title("MechoFly")
+        .with_resizable(false)
+        .with_decorations(false)
+        .with_taskbar(false)
+        .with_window_level(eframe::egui::WindowLevel::AlwaysOnTop)
+        .with_has_shadow(false)
+        .with_icon(icon);
+
+    #[cfg(windows)]
+    {
+        // The Windows desktop pet is a native per-pixel-alpha layered window.
+        // This hidden eframe root keeps the event loop, Brain Lab viewports,
+        // and vendor-neutral wgpu compute alive without exposing a swap-chain
+        // rectangle on the desktop.
+        builder
+            .with_inner_size([1.0, 1.0])
+            .with_position([-32_000.0, -32_000.0])
+            .with_visible(false)
+    }
+    #[cfg(not(windows))]
+    {
+        builder
+            .with_inner_size([PET_WIDTH as f32, PET_HEIGHT as f32])
+            .with_min_inner_size([PET_WIDTH as f32, PET_HEIGHT as f32])
+            .with_max_inner_size([PET_WIDTH as f32, PET_HEIGHT as f32])
+            .with_position([96.0, 640.0])
+            .with_transparent(true)
+    }
+}
+
 #[derive(Default, Deserialize)]
 struct RuntimeProfile {
     skin: Option<String>,
     compute: Option<ComputePreference>,
     reduced_motion: Option<bool>,
+    source_branch: Option<String>,
+    source_commit: Option<String>,
+    source_tree: Option<String>,
+    executable_sha256: Option<String>,
 }
 
 impl AppConfig {
@@ -86,6 +114,12 @@ impl AppConfig {
             open_brain_lab: args.iter().any(|arg| arg == "--brain-lab"),
             reduced_motion: profile.reduced_motion.unwrap_or(false)
                 || args.iter().any(|arg| arg == "--reduced-motion"),
+            source_identity: RuntimeSourceIdentity {
+                branch: profile.source_branch,
+                commit: profile.source_commit,
+                tree: profile.source_tree,
+                executable_sha256: profile.executable_sha256,
+            },
         };
         if let Some(value) = option_value(args, "--skin") {
             config.skin = Skin::from_str(value)?;

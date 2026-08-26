@@ -43,6 +43,39 @@ jobs:
             -File $scriptPath `
             -GitCaptureSelfTest
           if ($LASTEXITCODE -ne 0) { throw "Git stderr regression test exited $LASTEXITCODE" }
+      - name: Reproduce Windows PowerShell 5.1 evidence-list conversion
+        shell: powershell
+        run: |
+          $items = New-Object System.Collections.Generic.List[object]
+          $items.Add([pscustomobject]@{ name = 'first' })
+          $items.Add([pscustomobject]@{ name = 'second' })
+          $manifest = [ordered]@{ cases = [object[]]$items.ToArray() }
+          $roundTrip = $manifest | ConvertTo-Json -Depth 4 | ConvertFrom-Json
+          if (@($roundTrip.cases).Count -ne 2) {
+            throw 'Evidence generic-list conversion regression.'
+          }
+      - name: Reproduce review-branch switch from a single-branch clone
+        shell: powershell
+        run: |
+          $scriptPath = (Resolve-Path .\tools\Setup-AI100-MechoFly.ps1).Path
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -NoLogo `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $scriptPath `
+            -BranchSwitchSelfTest
+          if ($LASTEXITCODE -ne 0) { throw "Single-branch switch self-test exited $LASTEXITCODE" }
+      - name: Exercise guarded recovery, clean resume, and byte pinning
+        shell: powershell
+        run: |
+          $scriptPath = (Resolve-Path .\tools\Recover-AI100-ExactCandidate.ps1).Path
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -NoLogo `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $scriptPath `
+            -GuardSelfTest
+          if ($LASTEXITCODE -ne 0) { throw "Recovery guard self-test exited $LASTEXITCODE" }
       - name: Resolve reproducible dependencies
         shell: powershell
         run: cargo generate-lockfile
@@ -77,6 +110,15 @@ jobs:
           if ($receipt.default_skin -ne 'drosophila') { throw 'Drosophila is not the default skin.' }
           if (-not $receipt.cpu_without_gpu_supported) { throw 'CPU fallback invariant failed.' }
           if (-not $receipt.reevaluation_control) { throw 'Capacity reevaluation invariant failed.' }
+          if (-not $receipt.global_hotkey_contract_passed) { throw 'Global hotkey contract failed.' }
+          if ($receipt.global_hotkey_count -ne 8) { throw 'Expected eight global hotkeys.' }
+          if (-not $receipt.asynchronous_hotkey_fallback) { throw 'Global hotkey fallback is absent.' }
+          if ($receipt.firefly_visual_style -ne 'neurofly_prism_firefly') { throw 'Firefly Prism style is absent.' }
+          if (-not $receipt.firefly_visual_contract_passed) { throw 'Firefly Prism visual contract failed.' }
+          if (-not $receipt.firefly_rest_temporal_invariant) { throw 'Rest artwork drifted over time.' }
+          if (-not $receipt.firefly_escape_wing_responsive) { throw 'Escape wings did not respond.' }
+          if ($receipt.anatomical_context_points -ne 23210) { throw 'Anatomical context point count changed.' }
+          if ($receipt.anatomical_context_measured) { throw 'Anatomical context was mislabeled as measured.' }
           if ($receipt.connectome_mutated_by_learning) { throw 'Learning mutated the connectome.' }
           if ($receipt.measured_activity) { throw 'Modeled activity was mislabeled as measured.' }
       - name: Exercise real Windows GUI startup boundary

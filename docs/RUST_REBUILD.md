@@ -1,8 +1,10 @@
 # Rust rebuild contract
 
-MechoFly 0.2 is an independent Rust implementation. Earlier software may be
-used only as behavior, scientific-label, visual-quality, and acceptance-test
-evidence. Its source and architecture are not inputs to this implementation.
+MechoFly 0.2 is an independent Rust runtime implementation. The accepted legacy
+desktop experience is the user-approved behavior, scientific-label,
+visual-geometry, and acceptance-test reference for the Firefly Prism and Brain
+Lab experience. The result remains native Rust and has no C#, .NET, or earlier
+runtime dependency.
 
 ## Product invariants
 
@@ -10,14 +12,22 @@ evidence. Its source and architecture are not inputs to this implementation.
   policy, provenance, and learning receipts.
 - The Windows host uses `eframe`/`egui` with `wgpu`. There is no CUDA path and
   no vendor-name allowlist.
-- Drosophila Natural is the repository default. Firefly Field is an alternate
+- Drosophila Natural is the repository default. Firefly Lantern is an alternate
   presentation-only skin and the AI100 machine-profile default.
 - A fixed 33 ms model clock is independent of visual repaint timing.
 - Rest has no translation or decorative bob. Walking advances in floating
   point screen coordinates. Escape has authored preparation, flight, and
   settling phases.
-- The Brain Lab is a separate opaque window. The pet overlay uses real alpha;
-  no transparency key or chroma-key color is used.
+- Brain Lab is a separate opaque `eframe` viewport. On Windows, the pet is an
+  independently rendered Win32 layered window supplied with premultiplied
+  per-pixel alpha by `UpdateLayeredWindow`; no swap-chain transparency,
+  transparency key, or chroma-key color is used.
+- Eight legacy-compatible global hotkeys are handled by the native Win32
+  pet window with asynchronous edge-triggered fallback for reserved or
+  registration-conflicted chords.
+- The anatomical field contains 23,210 embedded FlyWire-derived soma points as
+  immutable visual context. Modeled neurons are ordinally distributed over
+  that field for presentation and are explicitly not identity-registered.
 
 ## Scientific claim boundary
 

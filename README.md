@@ -13,7 +13,7 @@ preview.
 The application has two presentation-only skins:
 
 - **Drosophila Natural** is the repository and application default.
-- **Firefly Field** is the alternate skin and AI100 machine-profile default.
+- **Firefly Lantern** is the alternate skin and AI100 machine-profile default.
 
 Skins never change graph structure, dynamics, replay, learning, or scientific
 claims.
@@ -44,15 +44,41 @@ GPU work uses portable WGSL through `wgpu`; there is no CUDA dependency and no
 vendor allowlist. Brain Lab's **Re-evaluate capacity** button repeats the
 benchmarks and starts a new identified session if the backend or tier changes.
 
-## Brain Lab v2
+## Brain Lab v3
 
-Double-click the pet or use its tray menu to open Brain Lab. The redesigned
-warm field-notebook interface has:
+Double-click or right-click the pet, use `Ctrl+Alt+N`, or use its tray menu to
+open Brain Lab.
+The dark Neural Observatory interface has:
 
-- a left experiment rail for capacity, replay, and authored interventions;
-- a central population overview or aligned two-row comparison filmstrip;
-- a right evidence/provenance inspector; and
-- a bottom activity and behavior timeline.
+- a compact left model/replay dock with automatic CPU/GPU re-evaluation;
+- a central FlyWire-derived anatomical context with live modeled spikes,
+  click-synchronized circuit selection, or an aligned comparison filmstrip;
+- a counterfactual composer beside the comparison it authors;
+- a right trust layer with exact identities, claims, root/index lookup, and
+  strongest inbound/outbound modeled neighborhoods; and
+- a multi-lane bottom timeline for spike counts, mean activation, selected
+  neuron spikes, behavior, replay cursor, and per-frame inspection.
+
+On Windows the pet is not an `eframe` swap-chain window. Rust supplies a small
+premultiplied BGRA bitmap to the native layered-window compositor, so zero-alpha
+pixels are real desktop holes and no black rectangle or chroma key is exposed.
+Per-pixel hit testing also passes clicks through those holes, so only visible
+insect pixels capture interaction.
+All visible pet controls live in the tray; the desktop surface contains only
+the fly.
+
+Global shortcuts preserve the accepted legacy control contract:
+
+- `Ctrl+Alt+N` toggles Brain Lab;
+- `Ctrl+Alt+H` hides or shows the pet;
+- `Ctrl+Alt+L` presents loom → escape → landing;
+- `Ctrl+Alt+G`, `Ctrl+Alt+B`, and `Ctrl+Alt+W` present grooming, reverse, and
+  walk respectively; and
+- `Ctrl+Alt+Q` or `Ctrl+Shift+F12` exits.
+
+The native host uses `RegisterHotKey` plus an edge-triggered
+`GetAsyncKeyState` fallback for all eight bindings. This keeps the controls
+available when Windows reserves F12 or another program owns a registration.
 
 A valid preview targets at most 64 unique neurons, has amplitude in `(0, 0.25]`,
 lasts 33–990 ms, stays under a dosage ceiling, and runs on a full deep clone of
@@ -86,26 +112,34 @@ the normal setting.
 
 ## FlyWire FAFB v783
 
-MechoFly does not bundle or redistribute connectome data. After agreeing to the
-FlyWire citation guidelines and principles, download the filtered connection
-table from Codex and choose the local CSV or CSV.GZ path in Brain Lab. Import
+MechoFly does not bundle or redistribute a connectome connection table. It
+does embed a compact set of 23,210 FlyWire-derived soma coordinates solely as
+faint anatomical presentation context; these points are labeled **not
+simulated** and are not identity-mapped to model neurons. After agreeing to
+the FlyWire citation guidelines and principles, download the filtered
+connection table from Codex and choose the local CSV or CSV.GZ path in Brain Lab. Import
 records the source URL, snapshot, column mapping, SHA-256, transform, counts,
 and validation warnings before starting a pinned imported-graph session.
 
 ## AI100
 
-`tools\Setup-AI100-MechoFly.ps1` synchronizes the clean `main` checkout at
-`D:\Projects\MechoFly`, writes the machine-local Firefly/Auto profile, builds
-the Rust executable, runs the safety self-test, and maintains the Start, Stop,
-and Emergency Stop shortcuts.
+`tools\Setup-AI100-MechoFly.ps1` synchronizes a clean selected GitHub branch at
+`D:\Projects\MechoFly`, builds and tests it, and records the exact branch,
+commit, Git tree, and executable SHA-256. AI100 defaults to Firefly/Auto. Start
+refuses a checkout or binary that differs from that receipt; the Sync shortcut
+performs a guarded fast-forward and rebuild.
 
 ```powershell
 .\tools\Setup-AI100-MechoFly.ps1 -Launch
 ```
 
+`tools\Capture-AI100-Evidence.ps1` rechecks GitHub identity, exercises CPU and
+Auto, captures only MechoFly windows (not the full desktop), and creates one
+upload ZIP in Downloads for runtime and design review.
+
 See [architecture](docs/ARCHITECTURE.md),
 [compute profiles](docs/COMPUTE_PROFILES.md),
-[Brain Lab v2](docs/BRAIN_LAB_V2.md),
+[Brain Lab v3](docs/BRAIN_LAB_V3.md),
 [connectome and learning](docs/LEARNING_AND_CONNECTOME.md),
 [data provenance](docs/DATA_PROVENANCE.md), and
 [AI100 setup](docs/AI100.md).
