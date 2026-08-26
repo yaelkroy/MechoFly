@@ -79,12 +79,19 @@ jobs:
           if (-not $receipt.reevaluation_control) { throw 'Capacity reevaluation invariant failed.' }
           if ($receipt.connectome_mutated_by_learning) { throw 'Learning mutated the connectome.' }
           if ($receipt.measured_activity) { throw 'Modeled activity was mislabeled as measured.' }
+      - name: Exercise real Windows GUI startup boundary
+        shell: powershell
+        run: |
+          .\tools\Test-Windows-GuiStartup.ps1 `
+            -ExecutablePath .\host-windows\bin\MechoFly.exe `
+            -OutputDirectory .\artifacts\runtime-smoke `
+            -ObservationSeconds 8
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: mechofly-windows-verification
           path: |
             Cargo.lock
-            artifacts/self-test.json
-            host-windows/bin/MechoFly.exe
+            artifacts/
+            host-windows/bin/
           if-no-files-found: warn

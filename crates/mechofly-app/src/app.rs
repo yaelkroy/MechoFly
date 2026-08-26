@@ -11,6 +11,7 @@ use mechofly_core::{Action, Behavior, ConnectomeImport, Feedback, PetPolicy, Pol
 use crate::{
     brain_lab::{BrainLabState, LabCommand},
     compute::ComputePreference,
+    diagnostics,
     pet::{PetMotion, Skin, draw_pet, transparent_frame},
     runtime::SimulationSession,
     tray::{TrayAction, TrayController},
@@ -46,22 +47,25 @@ pub struct MechoFlyApp {
 
 impl MechoFlyApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: AppConfig) -> Self {
+        diagnostics::mark("eframe application construction started");
         let render_state = cc.wgpu_render_state.clone();
         let seed = 0x4D45_4348_4F46_4C59;
         let now = unix_millis();
         let session =
             SimulationSession::calibrated(render_state.as_ref(), config.compute, seed, now);
+        diagnostics::mark("capacity assessment and simulation session initialized");
         let policy = load_policy().unwrap_or_default();
         let tray_result = TrayController::new();
         let (tray, tray_warning) = match tray_result {
             Ok(tray) => (Some(tray), None),
             Err(error) => (None, Some(error)),
         };
+        diagnostics::mark("system tray initialization attempted");
         let pet = PetMotion {
             reduced_motion: config.reduced_motion,
             ..PetMotion::default()
         };
-        Self {
+        let app = Self {
             render_state,
             session,
             lab: BrainLabState::new(config.open_brain_lab, config.compute),
@@ -80,7 +84,9 @@ impl MechoFlyApp {
             accumulator: Duration::ZERO,
             seed,
             exit_requested: false,
-        }
+        };
+        diagnostics::mark("eframe application construction completed");
+        app
     }
 
     fn process_tray(&mut self) {

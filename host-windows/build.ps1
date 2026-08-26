@@ -77,8 +77,19 @@ if (-not (Test-Path -LiteralPath $BuiltExecutable -PathType Leaf)) {
 }
 $Executable = Join-Path $Output 'MechoFly.exe'
 Copy-Item -LiteralPath $BuiltExecutable -Destination $Executable -Force
+$BuiltSymbols = Join-Path $Root 'target\release\MechoFly.pdb'
+$Symbols = Join-Path $Output 'MechoFly.pdb'
+Remove-Item -LiteralPath $Symbols -Force -ErrorAction SilentlyContinue
+if (Test-Path -LiteralPath $BuiltSymbols -PathType Leaf) {
+    Copy-Item -LiteralPath $BuiltSymbols -Destination $Symbols -Force
+}
+else {
+    Write-Warning ('Cargo did not emit the optional Windows symbol file ' + $BuiltSymbols)
+}
 $Hash = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash
 
 Write-Host ('MECHOFLY_BUILD=PASS executable=' + $Executable)
 Write-Host ('MECHOFLY_IMPLEMENTATION=rust')
 Write-Host ('MECHOFLY_EXECUTABLE_SHA256=' + $Hash)
+Write-Host ('MECHOFLY_PDB_PRESENT=' +
+    (Test-Path -LiteralPath $Symbols -PathType Leaf))

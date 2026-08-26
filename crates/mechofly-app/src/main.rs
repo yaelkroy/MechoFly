@@ -3,6 +3,7 @@
 mod app;
 mod brain_lab;
 mod compute;
+mod diagnostics;
 mod pet;
 mod runtime;
 mod self_test;
@@ -16,7 +17,9 @@ use pet::Skin;
 use serde::Deserialize;
 
 fn main() {
+    diagnostics::initialize();
     if let Err(error) = run() {
+        diagnostics::record_fatal_error(&error.to_string());
         eprintln!("MechoFly: {error}");
         std::process::exit(1);
     }
@@ -25,13 +28,16 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(path) = option_value(&args, "--self-test") {
+        diagnostics::mark("starting isolated deterministic self-test");
         self_test::run(PathBuf::from(path).as_path())?;
+        diagnostics::mark("isolated deterministic self-test completed");
         return Ok(());
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
         .try_init()
         .ok();
     let config = AppConfig::from_profile_and_args(&args)?;
+    diagnostics::mark("runtime profile and command line accepted");
     let icon = app_icon();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -50,11 +56,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         multisampling: 4,
         ..Default::default()
     };
+    diagnostics::mark("entering eframe native event loop");
     eframe::run_native(
         "MechoFly",
         options,
         Box::new(move |cc| Ok(Box::new(MechoFlyApp::new(cc, config.clone())))),
     )?;
+    diagnostics::mark("eframe native event loop returned normally");
     Ok(())
 }
 
