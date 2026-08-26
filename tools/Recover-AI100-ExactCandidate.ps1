@@ -207,7 +207,7 @@ function Get-VerifiedPreservation {
         '-C', $Root, 'for-each-ref',
         '--sort=-refname',
         '--format=%(refname:short)|%(objectname)',
-        'refs/heads/backup/ai100-pre-sync-') -Capture
+        'refs/heads/backup/ai100-pre-sync-*') -Capture
     $SelectedBranch = $null
     $SelectedCommit = $null
     foreach ($Line in @($BackupRefs -split '[\r\n]+' |
