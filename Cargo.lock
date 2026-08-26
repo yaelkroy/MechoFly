@@ -2140,6 +2140,7 @@ dependencies = [
  "env_logger",
  "log",
  "mechofly-core",
+ "naga",
  "pollster 0.4.0",
  "serde",
  "serde_json",
@@ -4914,4 +4915,3 @@ dependencies = [
  "syn 3.0.4",
  "winnow 1.0.4",
 ]
-

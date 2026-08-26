@@ -116,7 +116,10 @@ pub fn assess_capacity(
     let mut gpu_exact_match = None;
     let mut gpu_reason = String::new();
 
-    if let Some(render_state) = render_state {
+    if preference == ComputePreference::Cpu {
+        gpu_reason = "GPU neural compute was not probed because CPU was explicitly selected"
+            .to_owned();
+    } else if let Some(render_state) = render_state {
         let info = render_state.adapter.get_info();
         gpu_adapter = Some(info.name.clone());
         gpu_backend = Some(format!("{:?}", info.backend));
@@ -541,5 +544,22 @@ fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry {
         binding,
         resource: buffer.as_entire_binding(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_cpu_capacity_assessment_never_requires_a_render_adapter() {
+        let assessment = assess_capacity(None, ComputePreference::Cpu);
+
+        assert_eq!(assessment.requested, ComputePreference::Cpu);
+        assert_eq!(assessment.selected, ActiveBackend::Cpu);
+        assert!(!assessment.gpu_available);
+        assert_eq!(assessment.gpu_calibration_ms, None);
+        assert_eq!(assessment.gpu_exact_match, None);
+        assert!(assessment.reason.contains("explicitly selected"));
     }
 }
