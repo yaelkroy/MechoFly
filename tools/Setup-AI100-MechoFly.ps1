@@ -5,6 +5,8 @@ param(
 
     [switch] $GitCaptureSelfTest,
 
+    [switch] $BranchSwitchSelfTest,
+
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$')]
     [string] $Branch = 'main',
 
@@ -94,6 +96,120 @@ function ConvertTo-NormalizedRepositoryUrl {
     return $Normalized.ToLowerInvariant()
 }
 
+function Switch-MechoFlyBranch {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $RepositoryRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string] $BranchName,
+
+        [Parameter(Mandatory = $true)]
+        [string] $RemoteBranch
+    )
+
+    $CurrentBranch = Invoke-MechoFlyGit -Arguments @(
+        '-C', $RepositoryRoot, 'rev-parse', '--abbrev-ref', 'HEAD') -Capture
+    if ($CurrentBranch -eq $BranchName) {
+        return
+    }
+
+    $ExistingBranch = Invoke-MechoFlyGit -Arguments @(
+        '-C', $RepositoryRoot, 'branch', '--list',
+        '--format=%(refname:short)', $BranchName) -Capture
+    if ([string]::IsNullOrWhiteSpace($ExistingBranch)) {
+        # A checkout originally cloned with --single-branch may contain an
+        # explicitly fetched refs/remotes/origin/... ref that Git refuses as
+        # a --track starting point because remote.origin.fetch still names
+        # only the original branch. The explicit start point is sufficient;
+        # setup always fetches and fast-forwards the named remote ref itself.
+        Invoke-MechoFlyGit -Arguments @(
+            '-C', $RepositoryRoot, 'switch', '--create', $BranchName,
+            '--no-track', $RemoteBranch)
+    }
+    else {
+        Invoke-MechoFlyGit -Arguments @(
+            '-C', $RepositoryRoot, 'switch', $BranchName)
+    }
+}
+
+function Invoke-BranchSwitchSelfTest {
+    $FixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        'MechoFly-SingleBranch-SelfTest-' + [Guid]::NewGuid().ToString('N'))
+    $Bare = Join-Path $FixtureRoot 'remote.git'
+    $Seed = Join-Path $FixtureRoot 'seed'
+    $Clone = Join-Path $FixtureRoot 'clone'
+    New-Item -ItemType Directory -Path $FixtureRoot -Force | Out-Null
+    try {
+        Invoke-MechoFlyGit -Arguments @('init', '--bare', $Bare)
+        Invoke-MechoFlyGit -Arguments @('init', $Seed)
+        Invoke-MechoFlyGit -Arguments @(
+            '-C', $Seed, 'config', 'user.name', 'MechoFly Branch Test')
+        Invoke-MechoFlyGit -Arguments @(
+            '-C', $Seed, 'config', 'user.email', 'branch-test@invalid')
+        [System.IO.File]::WriteAllText(
+            (Join-Path $Seed 'fixture.txt'),
+            'main' + [Environment]::NewLine,
+            (New-Object System.Text.UTF8Encoding($false)))
+        Invoke-MechoFlyGit -Arguments @('-C', $Seed, 'add', 'fixture.txt')
+        Invoke-MechoFlyGit -Arguments @(
+            '-C', $Seed, 'commit', '-m', 'fixture main')
+        Invoke-MechoFlyGit -Arguments @('-C', $Seed, 'branch', '-M', 'main')
+        Invoke-MechoFlyGit -Arguments @(
+            '-C', $Seed, 'remote', 'add', 'origin', $Bare)
+        Invoke-MechoFlyGit -Arguments @(
+            '-C', $Seed, 'push', '--set-upstream', 'origin', 'main')
+        Invoke-MechoFlyGit -Arguments @(
+            '-C', $Bare, 'symbolic-ref', 'HEAD', 'refs/heads/main')
+
+        Invoke-MechoFlyGit -Arguments @(
+            '-C', $Seed, 'switch', '--create', 'feat/test')
+        [System.IO.File]::WriteAllText(
+            (Join-Path $Seed 'fixture.txt'),
+            'feature' + [Environment]::NewLine,
+            (New-Object System.Text.UTF8Encoding($false)))
+        Invoke-MechoFlyGit -Arguments @(
+            '-C', $Seed, 'commit', '--all', '-m', 'fixture feature')
+        Invoke-MechoFlyGit -Arguments @(
+            '-C', $Seed, 'push', '--set-upstream', 'origin', 'feat/test')
+
+        Invoke-MechoFlyGit -Arguments @(
+            'clone', '--single-branch', '--branch', 'main', $Bare, $Clone)
+        Invoke-MechoFlyGit -Arguments @(
+            '-C', $Clone, 'fetch', 'origin',
+            'refs/heads/feat/test:refs/remotes/origin/feat/test')
+        $ConfiguredFetch = Invoke-MechoFlyGit -Arguments @(
+            '-C', $Clone, 'config', '--get-all', 'remote.origin.fetch') -Capture
+        if ($ConfiguredFetch.Contains('feat/test')) {
+            throw 'Fixture did not retain its single-branch fetch configuration.'
+        }
+
+        Switch-MechoFlyBranch `
+            -RepositoryRoot $Clone `
+            -BranchName 'feat/test' `
+            -RemoteBranch 'origin/feat/test'
+        $LocalBranch = Invoke-MechoFlyGit -Arguments @(
+            '-C', $Clone, 'branch', '--show-current') -Capture
+        $LocalCommit = Invoke-MechoFlyGit -Arguments @(
+            '-C', $Clone, 'rev-parse', 'HEAD') -Capture
+        $RemoteCommit = Invoke-MechoFlyGit -Arguments @(
+            '-C', $Clone, 'rev-parse', 'origin/feat/test') -Capture
+        $LocalUpstream = Invoke-MechoFlyGit -Arguments @(
+            '-C', $Clone, 'for-each-ref',
+            '--format=%(upstream:short)', 'refs/heads/feat/test') -Capture
+        if ($LocalBranch -ne 'feat/test' -or $LocalCommit -ne $RemoteCommit -or
+            -not [string]::IsNullOrWhiteSpace($LocalUpstream)) {
+            throw 'Single-branch fixture did not switch to the fetched ref.'
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $FixtureRoot -PathType Container) {
+            Remove-Item -LiteralPath $FixtureRoot -Recurse -Force
+        }
+    }
+    Write-Host 'MECHOFLY_SINGLE_BRANCH_SWITCH=PASS'
+}
+
 function New-MechoFlyShortcut {
     param(
         [Parameter(Mandatory = $true)]
@@ -179,6 +295,10 @@ if ($null -eq $GitCommand) {
 }
 $script:GitExecutable = $GitCommand.Source
 $script:Target = $Target
+if ($BranchSwitchSelfTest) {
+    Invoke-BranchSwitchSelfTest
+    exit 0
+}
 Invoke-MechoFlyGit -Arguments @('check-ref-format', '--branch', $Branch)
 $RemoteRef = 'origin/' + $Branch
 $FetchRef = 'refs/heads/' + $Branch + ':refs/remotes/origin/' + $Branch
@@ -230,20 +350,10 @@ else {
             $ExpectedCommit.ToLowerInvariant() + '.')
     }
 
-    $CurrentBranch = Invoke-MechoFlyGit -Arguments @(
-        '-C', $Target, 'rev-parse', '--abbrev-ref', 'HEAD') -Capture
-    if ($CurrentBranch -ne $Branch) {
-        $ExistingBranch = Invoke-MechoFlyGit -Arguments @(
-            '-C', $Target, 'branch', '--list', '--format=%(refname:short)', $Branch) -Capture
-        if ([string]::IsNullOrWhiteSpace($ExistingBranch)) {
-            Invoke-MechoFlyGit -Arguments @(
-                '-C', $Target, 'switch', '--create', $Branch,
-                '--track', $RemoteRef)
-        }
-        else {
-            Invoke-MechoFlyGit -Arguments @('-C', $Target, 'switch', $Branch)
-        }
-    }
+    Switch-MechoFlyBranch `
+        -RepositoryRoot $Target `
+        -BranchName $Branch `
+        -RemoteBranch $RemoteRef
     Invoke-MechoFlyGit -Arguments @(
         '-C', $Target, 'merge', '--ff-only', $RemoteRef)
 }

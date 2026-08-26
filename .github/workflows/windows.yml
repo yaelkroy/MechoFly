@@ -43,6 +43,17 @@ jobs:
             -File $scriptPath `
             -GitCaptureSelfTest
           if ($LASTEXITCODE -ne 0) { throw "Git stderr regression test exited $LASTEXITCODE" }
+      - name: Reproduce review-branch switch from a single-branch clone
+        shell: powershell
+        run: |
+          $scriptPath = (Resolve-Path .\tools\Setup-AI100-MechoFly.ps1).Path
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -NoLogo `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $scriptPath `
+            -BranchSwitchSelfTest
+          if ($LASTEXITCODE -ne 0) { throw "Single-branch switch self-test exited $LASTEXITCODE" }
       - name: Exercise guarded AI100 dirty-tree recovery
         shell: powershell
         run: |
