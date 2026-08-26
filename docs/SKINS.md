@@ -15,7 +15,7 @@ abdomen, red compound eyes, six articulated legs, and translucent wings.
 
 ## Firefly Lantern
 
-Firefly Lantern is the Rust reinterpretation of DesktopFly's approved
+Firefly Lantern is the Rust reinterpretation of the approved legacy
 `neurofly_prism_firefly` / `noctiluca_lantern` appearance: jewel-like emerald
 elytra and thorax, amber pronotum, red-orange compound eyes with glints, a
 segmented chartreuse lantern and halo, six fine articulated legs, long curved

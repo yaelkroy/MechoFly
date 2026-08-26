@@ -51,7 +51,7 @@ animation without changing model timing, replay, or receipts.
 ## Anatomical context and modeled registration
 
 The prior synthetic bilateral projection created a generic triangular field
-that did not resemble the accepted DesktopFly brain view. V3 now draws the
+that did not resemble the accepted legacy brain view. V3 now draws the
 FlyWire-derived soma atlas as faint immutable context and distributes displayed
 model neurons over it with a deterministic ordinal hash. The atlas is labeled
 `NOT SIMULATED`; the overlay is labeled `NO IDENTITY MAPPING`. This makes the

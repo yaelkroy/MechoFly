@@ -2,11 +2,11 @@
 
 ## Independent implementation boundary
 
-The active application is written in Rust under `crates/`. DesktopFly is the
-user-approved acceptance and visual-geometry reference for the companion and
-observatory, but no earlier runtime, C# assembly, or .NET architecture ships in
-or is invoked by MechoFly. This is a repository-design statement, not a legal
-opinion or a rewrite of Git history.
+The active application is written in Rust under `crates/`. The accepted legacy
+desktop experience is the user-approved acceptance and visual-geometry
+reference for the companion and observatory, but no earlier runtime, C#
+assembly, or .NET architecture ships in or is invoked by MechoFly. This is a
+repository-design statement, not a legal opinion or a rewrite of Git history.
 
 ## Runtime ownership
 

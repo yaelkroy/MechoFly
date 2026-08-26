@@ -67,7 +67,7 @@ insect pixels capture interaction.
 All visible pet controls live in the tray; the desktop surface contains only
 the fly.
 
-Global shortcuts preserve the DesktopFly control contract:
+Global shortcuts preserve the accepted legacy control contract:
 
 - `Ctrl+Alt+N` toggles Brain Lab;
 - `Ctrl+Alt+H` hides or shows the pet;
