@@ -12,17 +12,23 @@ scientific claim and safety boundaries remain continuously visible.
 - **Left model-control dock:** skin/session identity, CPU/GPU preference,
   capacity re-evaluation, bounded replay-source selection, and local
   connectome import.
-- **Center evidence surface:** a bilateral population field, an aligned
-  actual-versus-authored filmstrip, provenance cards, or the learning ledger.
+- **Center evidence surface:** a 23,210-point FlyWire-derived anatomical
+  context behind current modeled activation/spikes, a synchronized selected
+  circuit, an aligned actual-versus-authored filmstrip, provenance cards, or
+  the learning ledger. A five-stage causal strip explains context → model →
+  spikes → behavior → authored pet pose.
 - **Counterfactual composer:** targets, amplitude, duration, frame count,
   authored purpose, and the immutable preview boundary appear directly above
   the comparison rather than in an unrelated rail.
 - **Right trust layer:** claim badges, graph identity and digest, AI100 source
   branch/commit/tree and executable SHA-256, adapter/API, neuron lookup, and
   the separate software-learning digest. Builds without a complete runtime
-  receipt are labeled as unrecorded development builds.
-- **Bottom signal timeline:** retained-frame spike activity, behavior state,
-  runtime warning, and the most recent user-facing event.
+  receipt are labeled as unrecorded development builds. Index/root-ID search
+  and canvas clicks share one selection and expose strongest modeled inbound
+  and outbound connections.
+- **Bottom signal timeline:** exact current spike fraction, stable-scale mean
+  activation, selected-neuron spike marks, behavior state, replay cursor,
+  hovered-frame readout, runtime warning, and the latest user-facing event.
 
 The alternative surface is created only after a bounded preview succeeds. It
 is never presented as a second live model and has no apply or commit action.
@@ -42,13 +48,16 @@ Actual and authored-alternative data also differ by labels and mark shape;
 color is never the only channel. Reduced-motion mode removes nonessential pet
 animation without changing model timing, replay, or receipts.
 
-## Projection correction
+## Anatomical context and modeled registration
 
-The synthetic graph stores bilateral positions by alternating index parity.
-The earlier display sampled with an even stride at large tiers and therefore
-selected only one parity, creating a misleading triangular half-field. V3 uses
-an odd deterministic stride, preserving both modeled hemispheres without
-changing graph positions or neural state.
+The prior synthetic bilateral projection created a generic triangular field
+that did not resemble the accepted DesktopFly brain view. V3 now draws the
+FlyWire-derived soma atlas as faint immutable context and distributes displayed
+model neurons over it with a deterministic ordinal hash. The atlas is labeled
+`NOT SIMULATED`; the overlay is labeled `NO IDENTITY MAPPING`. This makes the
+population and real modeled spike events legible without claiming that a
+synthetic or imported graph node has been anatomically registered when it has
+not.
 
 ## Safety boundary
 

@@ -402,6 +402,15 @@ $Receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json
 if ($Receipt.status -ne 'PASS' -or -not $Receipt.live_state_unchanged -or
     $Receipt.default_skin -ne 'drosophila' -or -not $Receipt.firefly_skin_available -or
     -not $Receipt.cpu_without_gpu_supported -or -not $Receipt.reevaluation_control -or
+    -not $Receipt.global_hotkey_contract_passed -or
+    $Receipt.global_hotkey_count -ne 8 -or
+    -not $Receipt.asynchronous_hotkey_fallback -or
+    $Receipt.firefly_visual_style -ne 'neurofly_prism_firefly' -or
+    -not $Receipt.firefly_visual_contract_passed -or
+    -not $Receipt.firefly_rest_temporal_invariant -or
+    -not $Receipt.firefly_escape_wing_responsive -or
+    $Receipt.anatomical_context_points -ne 23210 -or
+    $Receipt.anatomical_context_measured -or
     $Receipt.implementation -ne 'independent-rust-rebuild') {
     throw 'MechoFly self-test receipt did not satisfy the AI100 safety checks.'
 }

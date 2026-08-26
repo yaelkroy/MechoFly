@@ -8,6 +8,8 @@ use std::{
 use eframe::egui::{self, Pos2, Sense, Vec2, ViewportCommand};
 use mechofly_core::{Action, Behavior, ConnectomeImport, Feedback, PetPolicy, PolicyContext};
 
+#[cfg(windows)]
+use crate::desktop_pet::HotkeyAction;
 use crate::{
     brain_lab::{BrainLabState, LabCommand},
     compute::ComputePreference,
@@ -18,6 +20,34 @@ use crate::{
 };
 
 const MODEL_INTERVAL: Duration = Duration::from_millis(mechofly_core::MODEL_STEP_MS as u64);
+
+#[derive(Clone, Copy, Debug)]
+enum ManualPresentation {
+    Loom {
+        started: Instant,
+    },
+    Behavior {
+        behavior: Behavior,
+        started: Instant,
+    },
+}
+
+impl ManualPresentation {
+    fn behavior(self) -> Option<Behavior> {
+        match self {
+            Self::Loom { started } => match started.elapsed().as_secs_f32() {
+                elapsed if elapsed < 0.42 => Some(Behavior::PreEscape),
+                elapsed if elapsed < 2.15 => Some(Behavior::Flight),
+                elapsed if elapsed < 3.0 => Some(Behavior::Landing),
+                _ => None,
+            },
+            Self::Behavior { behavior, started } if started.elapsed() < Duration::from_secs(5) => {
+                Some(behavior)
+            }
+            Self::Behavior { .. } => None,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -70,6 +100,7 @@ pub struct MechoFlyApp {
     accumulator: Duration,
     seed: u64,
     exit_requested: bool,
+    manual_presentation: Option<ManualPresentation>,
 }
 
 impl MechoFlyApp {
@@ -93,31 +124,34 @@ impl MechoFlyApp {
             ..PetMotion::default()
         };
         #[cfg(windows)]
-        let (desktop_pet, overlay_warning) =
-            match crate::desktop_pet::PetOverlay::new(pet.screen_position) {
-                Ok(overlay) => {
-                    diagnostics::mark("native per-pixel-alpha desktop pet initialized");
-                    (Some(overlay), None)
-                }
-                Err(error) => {
-                    diagnostics::mark(
-                        "native desktop pet failed; exposing transparent fallback host",
-                    );
-                    cc.egui_ctx
-                        .send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(
-                            PET_WIDTH as f32,
-                            PET_HEIGHT as f32,
-                        )));
-                    cc.egui_ctx
-                        .send_viewport_cmd(ViewportCommand::OuterPosition(pet.screen_position));
-                    cc.egui_ctx
-                        .send_viewport_cmd(ViewportCommand::Visible(true));
-                    (
-                        None,
-                        Some(format!("Native desktop overlay unavailable: {error}")),
-                    )
-                }
-            };
+        let (desktop_pet, overlay_warning) = match crate::desktop_pet::PetOverlay::new(
+            pet.screen_position,
+        ) {
+            Ok(overlay) => {
+                diagnostics::mark("native per-pixel-alpha desktop pet initialized");
+                diagnostics::mark(&format!(
+                    "{} of 8 global hotkeys registered; asynchronous fallback covers every binding",
+                    overlay.registered_hotkey_count()
+                ));
+                (Some(overlay), None)
+            }
+            Err(error) => {
+                diagnostics::mark("native desktop pet failed; exposing transparent fallback host");
+                cc.egui_ctx
+                    .send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(
+                        PET_WIDTH as f32,
+                        PET_HEIGHT as f32,
+                    )));
+                cc.egui_ctx
+                    .send_viewport_cmd(ViewportCommand::OuterPosition(pet.screen_position));
+                cc.egui_ctx
+                    .send_viewport_cmd(ViewportCommand::Visible(true));
+                (
+                    None,
+                    Some(format!("Native desktop overlay unavailable: {error}")),
+                )
+            }
+        };
         #[cfg(windows)]
         let tray_warning = match (tray_warning, overlay_warning) {
             (Some(tray), Some(overlay)) => Some(format!("{tray}; {overlay}")),
@@ -146,6 +180,7 @@ impl MechoFlyApp {
             accumulator: Duration::ZERO,
             seed,
             exit_requested: false,
+            manual_presentation: None,
         };
         diagnostics::mark("eframe application construction completed");
         app
@@ -187,6 +222,12 @@ impl MechoFlyApp {
     }
 
     fn display_behavior(&self) -> Behavior {
+        if let Some(behavior) = self
+            .manual_presentation
+            .and_then(ManualPresentation::behavior)
+        {
+            return behavior;
+        }
         match self.session.engine.state.behavior {
             Behavior::Alert | Behavior::PreEscape | Behavior::Flight | Behavior::Landing => {
                 self.session.engine.state.behavior
@@ -197,6 +238,50 @@ impl MechoFlyApp {
                 Action::Inspect => Behavior::Alert,
                 Action::Groom => Behavior::Groom,
             },
+        }
+    }
+
+    #[cfg(windows)]
+    fn handle_hotkeys(&mut self, events: crate::desktop_pet::PetEvents) {
+        if events.hotkey(HotkeyAction::Quit) || events.hotkey(HotkeyAction::EmergencyQuit) {
+            self.exit_requested = true;
+        }
+        if events.hotkey(HotkeyAction::ToggleVisibility)
+            && let Some(overlay) = &mut self.desktop_pet
+        {
+            let visible = !overlay.is_visible();
+            overlay.set_visible(visible);
+            self.lab.message = format!(
+                "Global hotkey Ctrl+Alt+H: desktop companion {}.",
+                if visible { "shown" } else { "hidden" }
+            );
+        }
+        if events.hotkey(HotkeyAction::BrainLab) {
+            self.lab.open = !self.lab.open;
+            self.lab.message = "Global hotkey Ctrl+Alt+N: Brain Lab toggled.".to_owned();
+        }
+        if events.hotkey(HotkeyAction::Loom) {
+            self.manual_presentation = Some(ManualPresentation::Loom {
+                started: Instant::now(),
+            });
+            self.lab.message =
+                "Global hotkey Ctrl+Alt+L: authored loom presentation started.".to_owned();
+        }
+        for (action, behavior, label) in [
+            (HotkeyAction::Groom, Behavior::Groom, "Ctrl+Alt+G"),
+            (HotkeyAction::Reverse, Behavior::Reverse, "Ctrl+Alt+B"),
+            (HotkeyAction::Walk, Behavior::Walk, "Ctrl+Alt+W"),
+        ] {
+            if events.hotkey(action) {
+                self.manual_presentation = Some(ManualPresentation::Behavior {
+                    behavior,
+                    started: Instant::now(),
+                });
+                self.lab.message = format!(
+                    "Global hotkey {label}: temporary authored {:?} presentation. Model state unchanged.",
+                    behavior
+                );
+            }
         }
     }
 
@@ -370,8 +455,15 @@ impl eframe::App for MechoFlyApp {
         });
         let mut held = ctx.input(|input| input.pointer.hover_pos().is_some());
         #[cfg(windows)]
-        if let Some(overlay) = &self.desktop_pet {
-            let events = overlay.poll();
+        if let Some(events) = self
+            .desktop_pet
+            .as_ref()
+            .map(crate::desktop_pet::PetOverlay::poll)
+        {
+            let overlay = self
+                .desktop_pet
+                .as_ref()
+                .expect("overlay existed while its events were polled");
             screen_origin = overlay.screen_origin();
             screen_size = overlay.screen_size();
             held = events.dragging || events.hovered;
@@ -385,6 +477,7 @@ impl eframe::App for MechoFlyApp {
                 self.last_interaction = Some(Instant::now());
                 self.select_policy_action();
             }
+            self.handle_hotkeys(events);
         }
         self.pet.advance(
             elapsed.as_secs_f32(),
@@ -397,6 +490,7 @@ impl eframe::App for MechoFlyApp {
         {
             let behavior = self.display_behavior();
             let update_error = self.desktop_pet.as_mut().and_then(|overlay| {
+                overlay.set_observatory_open(self.lab.open);
                 overlay
                     .update(
                         self.pet.screen_position,

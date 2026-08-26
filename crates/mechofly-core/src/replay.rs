@@ -63,6 +63,10 @@ impl BoundedReplay {
     pub fn summaries(&self) -> impl Iterator<Item = &FrameSummary> {
         self.frames.iter().map(|frame| &frame.summary)
     }
+
+    pub fn frames(&self) -> impl Iterator<Item = &ModelCheckpoint> {
+        self.frames.iter()
+    }
 }
 
 #[cfg(test)]

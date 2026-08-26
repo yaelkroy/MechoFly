@@ -15,10 +15,12 @@ abdomen, red compound eyes, six articulated legs, and translucent wings.
 
 ## Firefly Lantern
 
-Firefly Lantern uses deep green segmented elytra, an amber pronotum, compound
-eyes, a chartreuse lantern with a soft alpha glow, six articulated legs, long
-antennae, and behavior-specific translucent hindwings. It is the AI100 machine
-profile, not the repository default.
+Firefly Lantern is the Rust reinterpretation of DesktopFly's approved
+`neurofly_prism_firefly` / `noctiluca_lantern` appearance: jewel-like emerald
+elytra and thorax, amber pronotum, red-orange compound eyes with glints, a
+segmented chartreuse lantern and halo, six fine articulated legs, long curved
+antennae, and translucent veined flight wings. It is the AI100 machine profile,
+not the repository default.
 
 ```powershell
 .\host-windows\Start-MechoFly.ps1 -Skin firefly

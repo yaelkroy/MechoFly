@@ -1,8 +1,9 @@
 # Rust rebuild contract
 
-MechoFly 0.2 is an independent Rust implementation. Earlier software may be
-used only as behavior, scientific-label, visual-quality, and acceptance-test
-evidence. Its source and architecture are not inputs to this implementation.
+MechoFly 0.2 is an independent Rust runtime implementation. DesktopFly is the
+user-approved behavior, scientific-label, visual-geometry, and acceptance-test
+reference for the Firefly Prism and Brain Lab experience. The result remains
+native Rust and has no C#, .NET, or DesktopFly runtime dependency.
 
 ## Product invariants
 
@@ -20,6 +21,12 @@ evidence. Its source and architecture are not inputs to this implementation.
   independently rendered Win32 layered window supplied with premultiplied
   per-pixel alpha by `UpdateLayeredWindow`; no swap-chain transparency,
   transparency key, or chroma-key color is used.
+- Eight DesktopFly-compatible global hotkeys are handled by the native Win32
+  pet window with asynchronous edge-triggered fallback for reserved or
+  registration-conflicted chords.
+- The anatomical field contains 23,210 embedded FlyWire-derived soma points as
+  immutable visual context. Modeled neurons are ordinally distributed over
+  that field for presentation and are explicitly not identity-registered.
 
 ## Scientific claim boundary
 

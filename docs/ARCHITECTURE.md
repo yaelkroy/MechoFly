@@ -2,11 +2,11 @@
 
 ## Independent implementation boundary
 
-The active application is written in Rust under `crates/`. Earlier software is
-used only as acceptance evidence for behavior, scientific labels, and visual
-quality. No earlier source or architecture is part of this implementation.
-This is a repository-design statement, not a legal opinion or a rewrite of Git
-history.
+The active application is written in Rust under `crates/`. DesktopFly is the
+user-approved acceptance and visual-geometry reference for the companion and
+observatory, but no earlier runtime, C# assembly, or .NET architecture ships in
+or is invoked by MechoFly. This is a repository-design statement, not a legal
+opinion or a rewrite of Git history.
 
 ## Runtime ownership
 
@@ -66,6 +66,12 @@ desktop interaction. `eframe` remains hidden at the root and owns the opaque
 Brain Lab viewport plus portable `wgpu` compute. No magenta/chroma-key
 transparency is used. Visual repaint timing is independent from the fixed 33
 ms model step.
+
+The layered window registers the eight documented global shortcuts and also
+polls their physical key state with edge detection. The second path covers
+reserved F12 and registration conflicts without installing a keyboard hook.
+While Brain Lab is open, the pet is moved out of the topmost band so it cannot
+cover observatory controls; closing Brain Lab restores desktop-topmost behavior.
 
 ## Safety limits
 

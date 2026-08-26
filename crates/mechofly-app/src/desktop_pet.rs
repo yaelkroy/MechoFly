@@ -11,7 +11,7 @@ use std::{
     ffi::c_void,
     mem::{size_of, zeroed},
     ptr::{copy_nonoverlapping, null, null_mut},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 use eframe::egui::{Pos2, Vec2};
@@ -25,16 +25,19 @@ use windows_sys::Win32::{
     },
     System::LibraryLoader::GetModuleHandleW,
     UI::{
-        Input::KeyboardAndMouse::{ReleaseCapture, SetCapture},
+        Input::KeyboardAndMouse::{
+            GetAsyncKeyState, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, RegisterHotKey,
+            ReleaseCapture, SetCapture, UnregisterHotKey, VK_CONTROL, VK_F12, VK_MENU, VK_SHIFT,
+        },
         WindowsAndMessaging::{
             CS_DBLCLKS, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
             GetCursorPos, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, HTCLIENT,
-            HTTRANSPARENT, HWND_TOPMOST, RegisterClassExW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE,
-            SetWindowLongPtrW, SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow,
-            WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
-            WM_NCHITTEST, WM_RBUTTONUP, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+            HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, RegisterClassExW, SM_CXVIRTUALSCREEN,
+            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE,
+            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+            ULW_ALPHA, UpdateLayeredWindow, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
+            WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCHITTEST, WM_RBUTTONUP, WNDCLASSEXW,
+            WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
 };
@@ -43,6 +46,110 @@ use crate::pet::{PET_HEIGHT, PET_WIDTH, Skin, render_pet_bgra};
 
 const HIT_ALPHA_THRESHOLD: u8 = 12;
 
+const HOTKEY_QUIT: i32 = 0x4D01;
+const HOTKEY_VISIBILITY: i32 = 0x4D02;
+const HOTKEY_LOOM: i32 = 0x4D03;
+const HOTKEY_EMERGENCY_QUIT: i32 = 0x4D04;
+const HOTKEY_GROOM: i32 = 0x4D05;
+const HOTKEY_REVERSE: i32 = 0x4D06;
+const HOTKEY_WALK: i32 = 0x4D07;
+const HOTKEY_BRAIN_LAB: i32 = 0x4D08;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HotkeyAction {
+    Quit,
+    ToggleVisibility,
+    Loom,
+    EmergencyQuit,
+    Groom,
+    Reverse,
+    Walk,
+    BrainLab,
+}
+
+impl HotkeyAction {
+    const fn bit(self) -> u32 {
+        match self {
+            Self::Quit => 1 << 0,
+            Self::ToggleVisibility => 1 << 1,
+            Self::Loom => 1 << 2,
+            Self::EmergencyQuit => 1 << 3,
+            Self::Groom => 1 << 4,
+            Self::Reverse => 1 << 5,
+            Self::Walk => 1 << 6,
+            Self::BrainLab => 1 << 7,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct HotkeyBinding {
+    id: i32,
+    key: u32,
+    modifiers: u32,
+    action: HotkeyAction,
+    label: &'static str,
+}
+
+const HOTKEY_BINDINGS: [HotkeyBinding; 8] = [
+    HotkeyBinding {
+        id: HOTKEY_QUIT,
+        key: b'Q' as u32,
+        modifiers: MOD_CONTROL | MOD_ALT,
+        action: HotkeyAction::Quit,
+        label: "Ctrl+Alt+Q",
+    },
+    HotkeyBinding {
+        id: HOTKEY_VISIBILITY,
+        key: b'H' as u32,
+        modifiers: MOD_CONTROL | MOD_ALT,
+        action: HotkeyAction::ToggleVisibility,
+        label: "Ctrl+Alt+H",
+    },
+    HotkeyBinding {
+        id: HOTKEY_LOOM,
+        key: b'L' as u32,
+        modifiers: MOD_CONTROL | MOD_ALT,
+        action: HotkeyAction::Loom,
+        label: "Ctrl+Alt+L",
+    },
+    HotkeyBinding {
+        id: HOTKEY_EMERGENCY_QUIT,
+        key: VK_F12 as u32,
+        modifiers: MOD_CONTROL | MOD_SHIFT,
+        action: HotkeyAction::EmergencyQuit,
+        label: "Ctrl+Shift+F12",
+    },
+    HotkeyBinding {
+        id: HOTKEY_GROOM,
+        key: b'G' as u32,
+        modifiers: MOD_CONTROL | MOD_ALT,
+        action: HotkeyAction::Groom,
+        label: "Ctrl+Alt+G",
+    },
+    HotkeyBinding {
+        id: HOTKEY_REVERSE,
+        key: b'B' as u32,
+        modifiers: MOD_CONTROL | MOD_ALT,
+        action: HotkeyAction::Reverse,
+        label: "Ctrl+Alt+B",
+    },
+    HotkeyBinding {
+        id: HOTKEY_WALK,
+        key: b'W' as u32,
+        modifiers: MOD_CONTROL | MOD_ALT,
+        action: HotkeyAction::Walk,
+        label: "Ctrl+Alt+W",
+    },
+    HotkeyBinding {
+        id: HOTKEY_BRAIN_LAB,
+        key: b'N' as u32,
+        modifiers: MOD_CONTROL | MOD_ALT,
+        action: HotkeyAction::BrainLab,
+        label: "Ctrl+Alt+N",
+    },
+];
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PetEvents {
     pub open_lab: bool,
@@ -50,6 +157,13 @@ pub struct PetEvents {
     pub dragging: bool,
     pub hovered: bool,
     pub position: Option<Pos2>,
+    hotkeys: u32,
+}
+
+impl PetEvents {
+    pub fn hotkey(self, action: HotkeyAction) -> bool {
+        self.hotkeys & action.bit() != 0
+    }
 }
 
 struct OverlayShared {
@@ -59,6 +173,8 @@ struct OverlayShared {
     drag_cursor: Cell<(i32, i32)>,
     drag_window: Cell<(i32, i32)>,
     hit_alpha: RefCell<Vec<u8>>,
+    hotkeys: AtomicU32,
+    hotkey_down: Cell<u32>,
 }
 
 impl OverlayShared {
@@ -70,6 +186,8 @@ impl OverlayShared {
             drag_cursor: Cell::new((0, 0)),
             drag_window: Cell::new((0, 0)),
             hit_alpha: RefCell::new(vec![0; PET_WIDTH * PET_HEIGHT]),
+            hotkeys: AtomicU32::new(0),
+            hotkey_down: Cell::new(0),
         }
     }
 
@@ -100,6 +218,9 @@ pub struct PetOverlay {
     bitmap_bits: *mut u8,
     shared: Box<OverlayShared>,
     pixels: Vec<u8>,
+    registered_hotkeys: Vec<i32>,
+    visible: bool,
+    observatory_open: bool,
 }
 
 impl PetOverlay {
@@ -185,7 +306,11 @@ impl PetOverlay {
                 bitmap_bits: bits.cast(),
                 shared,
                 pixels: vec![0; PET_WIDTH * PET_HEIGHT * 4],
+                registered_hotkeys: Vec::with_capacity(HOTKEY_BINDINGS.len()),
+                visible: true,
+                observatory_open: false,
             };
+            overlay.register_hotkeys();
             overlay.update(position, Skin::default(), Behavior::Rest, 0.0, 1.0, false)?;
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             Ok(overlay)
@@ -248,6 +373,7 @@ impl PetOverlay {
     }
 
     pub fn poll(&self) -> PetEvents {
+        self.poll_hotkey_fallback();
         let position = self.position();
         PetEvents {
             open_lab: self.shared.open_lab.swap(false, Ordering::AcqRel),
@@ -255,7 +381,86 @@ impl PetOverlay {
             dragging: self.shared.dragging.get(),
             hovered: self.cursor_hits_pet(),
             position,
+            hotkeys: self.shared.hotkeys.swap(0, Ordering::AcqRel),
         }
+    }
+
+    pub fn set_visible(&mut self, visible: bool) {
+        if self.visible == visible {
+            return;
+        }
+        // SAFETY: `hwnd` belongs to this object and remains valid until Drop.
+        unsafe {
+            ShowWindow(self.hwnd, if visible { SW_SHOWNOACTIVATE } else { SW_HIDE });
+        }
+        self.visible = visible;
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    pub fn registered_hotkey_count(&self) -> usize {
+        self.registered_hotkeys.len()
+    }
+
+    pub fn set_observatory_open(&mut self, open: bool) {
+        if self.observatory_open == open {
+            return;
+        }
+        // Keep the companion available without painting it over Brain Lab's
+        // controls. Closing the observatory restores normal desktop topmost
+        // behavior.
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                if open { HWND_NOTOPMOST } else { HWND_TOPMOST },
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+        self.observatory_open = open;
+    }
+
+    fn register_hotkeys(&mut self) {
+        for binding in HOTKEY_BINDINGS {
+            // F12 is reserved by Windows for debuggers. It, and any binding
+            // owned by another program, still work through the edge-triggered
+            // GetAsyncKeyState fallback in `poll_hotkey_fallback`.
+            let registered = unsafe {
+                RegisterHotKey(
+                    self.hwnd,
+                    binding.id,
+                    binding.modifiers | MOD_NOREPEAT,
+                    binding.key,
+                ) != 0
+                    || RegisterHotKey(self.hwnd, binding.id, binding.modifiers, binding.key) != 0
+            };
+            if registered {
+                self.registered_hotkeys.push(binding.id);
+            }
+        }
+    }
+
+    fn poll_hotkey_fallback(&self) {
+        let mut down = 0_u32;
+        let previous = self.shared.hotkey_down.get();
+        for binding in HOTKEY_BINDINGS {
+            let control = binding.modifiers & MOD_CONTROL == 0 || key_down(VK_CONTROL as u32);
+            let alt = binding.modifiers & MOD_ALT == 0 || key_down(VK_MENU as u32);
+            let shift = binding.modifiers & MOD_SHIFT == 0 || key_down(VK_SHIFT as u32);
+            if control && alt && shift && key_down(binding.key) {
+                let bit = binding.action.bit();
+                down |= bit;
+                if previous & bit == 0 {
+                    self.shared.hotkeys.fetch_or(bit, Ordering::AcqRel);
+                }
+            }
+        }
+        self.shared.hotkey_down.set(down);
     }
 
     pub fn screen_size(&self) -> Vec2 {
@@ -306,6 +511,9 @@ impl Drop for PetOverlay {
         // SAFETY: these handles were created and are uniquely owned by this
         // object. Restoring the previous selected object precedes deletion.
         unsafe {
+            for id in &self.registered_hotkeys {
+                UnregisterHotKey(self.hwnd, *id);
+            }
             SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0);
             SelectObject(self.memory_dc, self.old_bitmap);
             DeleteObject(self.bitmap);
@@ -337,6 +545,18 @@ unsafe extern "system" fn window_proc(
         // and atomics because callbacks and polling share the allocation.
         let shared = unsafe { &*shared_pointer };
         match message {
+            WM_HOTKEY => {
+                if let Some(binding) = HOTKEY_BINDINGS
+                    .iter()
+                    .find(|binding| binding.id as usize == wparam)
+                {
+                    let bit = binding.action.bit();
+                    if shared.hotkey_down.get() & bit == 0 {
+                        shared.hotkeys.fetch_or(bit, Ordering::AcqRel);
+                    }
+                }
+                return 0;
+            }
             WM_NCHITTEST => {
                 // lParam stores signed 16-bit screen coordinates. Returning
                 // HTTRANSPARENT for an alpha hole lets the real desktop or
@@ -422,4 +642,62 @@ fn last_error(operation: &str) -> String {
     // SAFETY: GetLastError has no pointer preconditions.
     let code = unsafe { GetLastError() };
     format!("{operation} failed with Windows error {code}")
+}
+
+fn key_down(key: u32) -> bool {
+    // SAFETY: GetAsyncKeyState has no pointer preconditions.
+    unsafe { (GetAsyncKeyState(key as i32) as u16 & 0x8000) != 0 }
+}
+
+#[derive(Clone, Debug)]
+pub struct HotkeySelfTest {
+    pub passed: bool,
+    pub binding_count: usize,
+    pub registered_count: usize,
+    pub labels: Vec<String>,
+    pub async_fallback_all_bindings: bool,
+}
+
+pub fn run_hotkey_self_test() -> HotkeySelfTest {
+    let mut registered = Vec::new();
+    let mut unique_ids = std::collections::BTreeSet::new();
+    let mut unique_actions = std::collections::BTreeSet::new();
+    for (offset, binding) in HOTKEY_BINDINGS.iter().enumerate() {
+        unique_ids.insert(binding.id);
+        unique_actions.insert(binding.action.bit());
+        if binding.action == HotkeyAction::EmergencyQuit {
+            continue;
+        }
+        let id = 0x5D00 + offset as i32;
+        // SAFETY: a NULL HWND registers against this short-lived self-test
+        // thread; every successful binding is unregistered below.
+        if unsafe {
+            RegisterHotKey(
+                null_mut(),
+                id,
+                binding.modifiers | MOD_NOREPEAT,
+                binding.key,
+            )
+        } != 0
+        {
+            registered.push(id);
+        }
+    }
+    for id in &registered {
+        // SAFETY: the IDs were registered by this thread just above.
+        unsafe {
+            UnregisterHotKey(null_mut(), *id);
+        }
+    }
+    HotkeySelfTest {
+        passed: unique_ids.len() == HOTKEY_BINDINGS.len()
+            && unique_actions.len() == HOTKEY_BINDINGS.len(),
+        binding_count: HOTKEY_BINDINGS.len(),
+        registered_count: registered.len(),
+        labels: HOTKEY_BINDINGS
+            .iter()
+            .map(|binding| binding.label.to_owned())
+            .collect(),
+        async_fallback_all_bindings: true,
+    }
 }

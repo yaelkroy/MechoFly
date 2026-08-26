@@ -46,14 +46,18 @@ benchmarks and starts a new identified session if the backend or tier changes.
 
 ## Brain Lab v3
 
-Double-click or right-click the pet, or use its tray menu, to open Brain Lab.
+Double-click or right-click the pet, use `Ctrl+Alt+N`, or use its tray menu to
+open Brain Lab.
 The dark Neural Observatory interface has:
 
 - a compact left model/replay dock with automatic CPU/GPU re-evaluation;
-- a central bilateral population field or aligned two-row comparison filmstrip;
+- a central FlyWire-derived anatomical context with live modeled spikes,
+  click-synchronized circuit selection, or an aligned comparison filmstrip;
 - a counterfactual composer beside the comparison it authors;
-- a right trust layer with exact identities, claims, and lookup; and
-- a compact bottom activity/behavior timeline and event line.
+- a right trust layer with exact identities, claims, root/index lookup, and
+  strongest inbound/outbound modeled neighborhoods; and
+- a multi-lane bottom timeline for spike counts, mean activation, selected
+  neuron spikes, behavior, replay cursor, and per-frame inspection.
 
 On Windows the pet is not an `eframe` swap-chain window. Rust supplies a small
 premultiplied BGRA bitmap to the native layered-window compositor, so zero-alpha
@@ -62,6 +66,19 @@ Per-pixel hit testing also passes clicks through those holes, so only visible
 insect pixels capture interaction.
 All visible pet controls live in the tray; the desktop surface contains only
 the fly.
+
+Global shortcuts preserve the DesktopFly control contract:
+
+- `Ctrl+Alt+N` toggles Brain Lab;
+- `Ctrl+Alt+H` hides or shows the pet;
+- `Ctrl+Alt+L` presents loom → escape → landing;
+- `Ctrl+Alt+G`, `Ctrl+Alt+B`, and `Ctrl+Alt+W` present grooming, reverse, and
+  walk respectively; and
+- `Ctrl+Alt+Q` or `Ctrl+Shift+F12` exits.
+
+The native host uses `RegisterHotKey` plus an edge-triggered
+`GetAsyncKeyState` fallback for all eight bindings. This keeps the controls
+available when Windows reserves F12 or another program owns a registration.
 
 A valid preview targets at most 64 unique neurons, has amplitude in `(0, 0.25]`,
 lasts 33–990 ms, stays under a dosage ceiling, and runs on a full deep clone of
@@ -95,9 +112,12 @@ the normal setting.
 
 ## FlyWire FAFB v783
 
-MechoFly does not bundle or redistribute connectome data. After agreeing to the
-FlyWire citation guidelines and principles, download the filtered connection
-table from Codex and choose the local CSV or CSV.GZ path in Brain Lab. Import
+MechoFly does not bundle or redistribute a connectome connection table. It
+does embed a compact set of 23,210 FlyWire-derived soma coordinates solely as
+faint anatomical presentation context; these points are labeled **not
+simulated** and are not identity-mapped to model neurons. After agreeing to
+the FlyWire citation guidelines and principles, download the filtered
+connection table from Codex and choose the local CSV or CSV.GZ path in Brain Lab. Import
 records the source URL, snapshot, column mapping, SHA-256, transform, counts,
 and validation warnings before starting a pinned imported-graph session.
 

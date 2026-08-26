@@ -273,7 +273,6 @@ pub fn draw_pet(
 
 /// Render the pet into the premultiplied BGRA format required by
 /// `UpdateLayeredWindow` with `AC_SRC_ALPHA`.
-#[cfg(windows)]
 pub fn render_pet_bgra(
     output: &mut [u8],
     skin: Skin,
@@ -312,36 +311,48 @@ fn pet_scene(
     };
     let mut scene = SceneBuilder::new(facing, offset_y);
 
-    scene.ellipse(
-        [165.0, 187.0],
-        [105.0, 8.0],
-        0.0,
-        Rgba(
-            5,
-            12,
-            16,
-            if matches!(behavior, Behavior::Flight) {
-                10
-            } else {
-                38
-            },
-        ),
-        None,
-    );
-
-    let leg = match skin {
-        Skin::Drosophila => Rgba::rgb(83, 55, 42),
-        Skin::Firefly => Rgba::rgb(31, 50, 43),
-    };
-    draw_legs(&mut scene, behavior, gait, leg);
-    draw_wings(&mut scene, skin, behavior, phase, animated);
-
     match skin {
-        Skin::Drosophila => draw_drosophila_scene(&mut scene),
-        Skin::Firefly => draw_firefly_scene(&mut scene, behavior),
+        Skin::Drosophila => {
+            scene.ellipse(
+                [165.0, 187.0],
+                [105.0, 8.0],
+                0.0,
+                Rgba(
+                    5,
+                    12,
+                    16,
+                    if matches!(behavior, Behavior::Flight) {
+                        10
+                    } else {
+                        38
+                    },
+                ),
+                None,
+            );
+            let leg = Rgba::rgb(83, 55, 42);
+            draw_legs(&mut scene, behavior, gait, leg);
+            draw_wings(&mut scene, skin, behavior, phase, animated);
+            draw_drosophila_scene(&mut scene);
+            draw_front_details(&mut scene, skin, behavior, phase, animated, leg);
+        }
+        Skin::Firefly => {
+            draw_firefly_behavior_field(&mut scene, behavior, phase, animated);
+            let flight = matches!(behavior, Behavior::Flight | Behavior::PreEscape);
+            scene.ellipse(
+                [162.0, if flight { 169.0 } else { 164.0 }],
+                if flight { [46.0, 5.0] } else { [79.0, 9.0] },
+                0.0,
+                Rgba(3, 10, 9, if flight { 18 } else { 58 }),
+                None,
+            );
+            draw_firefly_motion_trails(&mut scene, behavior, phase, animated);
+            draw_firefly_flight_wings(&mut scene, behavior, phase, animated);
+            draw_firefly_legs(&mut scene, behavior, gait, phase, true);
+            draw_firefly_scene(&mut scene, behavior, phase, animated);
+            draw_firefly_legs(&mut scene, behavior, gait, phase, false);
+            draw_firefly_antennae(&mut scene, behavior, phase, animated);
+        }
     }
-
-    draw_front_details(&mut scene, skin, behavior, phase, animated, leg);
     scene.primitives
 }
 
@@ -438,100 +449,604 @@ fn draw_wings(
     }
 }
 
-fn draw_firefly_scene(scene: &mut SceneBuilder, behavior: Behavior) {
-    let glow_alpha = if matches!(behavior, Behavior::Alert | Behavior::PreEscape) {
-        76
+fn draw_firefly_behavior_field(
+    scene: &mut SceneBuilder,
+    behavior: Behavior,
+    phase: f32,
+    animated: bool,
+) {
+    let pulse = if animated {
+        (phase * 4.0).sin() * 4.0
     } else {
-        56
+        0.0
     };
+    let cue = match behavior {
+        Behavior::PreEscape => Some(Rgba(255, 119, 70, 112)),
+        Behavior::Flight => Some(Rgba(68, 210, 245, 76)),
+        Behavior::Landing => Some(Rgba(255, 194, 74, 76)),
+        Behavior::Groom => Some(Rgba(184, 128, 227, 62)),
+        Behavior::Alert => Some(Rgba(244, 191, 62, 58)),
+        _ => None,
+    };
+    if let Some(color) = cue {
+        scene.ellipse(
+            [165.0, 110.0],
+            [104.0 + pulse, 73.0 + pulse * 0.5],
+            0.0,
+            Rgba(0, 0, 0, 0),
+            Some((color, 1.6)),
+        );
+        scene.ellipse(
+            [165.0, 110.0],
+            [119.0 + pulse, 84.0 + pulse * 0.5],
+            0.0,
+            Rgba(0, 0, 0, 0),
+            Some((Rgba(color.0, color.1, color.2, color.3 / 2), 0.9)),
+        );
+    }
+}
+
+fn draw_firefly_motion_trails(
+    scene: &mut SceneBuilder,
+    behavior: Behavior,
+    phase: f32,
+    animated: bool,
+) {
+    if !matches!(behavior, Behavior::PreEscape | Behavior::Flight) {
+        return;
+    }
+    let drift = if animated {
+        (phase * 6.0).sin() * 2.2
+    } else {
+        0.0
+    };
+    for index in 0..3 {
+        let y = -18.0 + index as f32 * 18.0 + drift;
+        firefly_line(
+            scene,
+            [82.0 + index as f32 * 4.0, y],
+            [112.0 + index as f32 * 7.0, y - 1.5],
+            1.7,
+            Rgba(194, 255, 105, 96),
+        );
+    }
+}
+
+fn draw_firefly_flight_wings(
+    scene: &mut SceneBuilder,
+    behavior: Behavior,
+    phase: f32,
+    animated: bool,
+) {
+    if !matches!(
+        behavior,
+        Behavior::PreEscape | Behavior::Flight | Behavior::Landing
+    ) {
+        return;
+    }
+    let amplitude = match behavior {
+        Behavior::Landing => 0.42,
+        Behavior::Flight => 0.78,
+        _ => 1.0,
+    };
+    for (wing_index, side) in [-1.0_f32, 1.0].into_iter().enumerate() {
+        let phase_offset = if wing_index == 0 { 0.0 } else { 0.77 };
+        let lift = if animated {
+            (phase * 22.0 + phase_offset).sin() * amplitude
+        } else {
+            0.0
+        };
+        let root = [-1.0, side * 8.0];
+        let tip = [40.0 + lift * 7.0, side * (83.0 + lift * 8.0)];
+        let trailing = [58.0 + lift * 4.0, side * (36.0 + lift * 3.0)];
+        let leading_control_1 = [5.0, side * 34.0];
+        let leading_control_2 = [18.0, side * 72.0];
+        let trailing_control_1 = [58.0, side * 77.0];
+        let trailing_control_2 = [70.0, side * 51.0];
+        let return_control_1 = [37.0, side * 24.0];
+        let return_control_2 = [17.0, side * 13.0];
+        let mut outline = Vec::with_capacity(38);
+        append_cubic(
+            &mut outline,
+            root,
+            leading_control_1,
+            leading_control_2,
+            tip,
+            12,
+        );
+        append_cubic(
+            &mut outline,
+            tip,
+            trailing_control_1,
+            trailing_control_2,
+            trailing,
+            10,
+        );
+        append_cubic(
+            &mut outline,
+            trailing,
+            return_control_1,
+            return_control_2,
+            root,
+            10,
+        );
+        firefly_polygon(
+            scene,
+            &outline,
+            if side < 0.0 {
+                Rgba(113, 227, 218, 105)
+            } else {
+                Rgba(181, 167, 236, 88)
+            },
+            Some((Rgba(128, 238, 198, 190), 1.15)),
+        );
+        stroke_firefly_cubic(
+            scene,
+            root,
+            [10.0, side * 37.0],
+            [24.0, side * 68.0],
+            tip,
+            0.72,
+            Rgba(26, 91, 76, 126),
+        );
+        stroke_firefly_cubic(
+            scene,
+            root,
+            [22.0, side * 20.0],
+            [45.0, side * 30.0],
+            trailing,
+            0.72,
+            Rgba(26, 91, 76, 112),
+        );
+        for index in 1..=6 {
+            let amount = index as f32 / 7.0;
+            let leading = cubic_point(root, leading_control_1, leading_control_2, tip, amount);
+            let returning = cubic_point(root, return_control_2, return_control_1, trailing, amount);
+            firefly_line(scene, leading, returning, 0.62, Rgba(26, 91, 76, 92));
+        }
+    }
+}
+
+fn draw_firefly_scene(scene: &mut SceneBuilder, behavior: Behavior, phase: f32, animated: bool) {
+    let glow = if animated && !matches!(behavior, Behavior::Rest | Behavior::Quiet) {
+        0.68 + 0.18 * (phase * 2.1).sin()
+    } else {
+        0.64
+    };
+    let lantern = firefly_point([57.0, 0.0]);
+    for (radius, alpha) in [(34.0_f32, 16_u8), (26.0, 28), (18.0, 42)] {
+        scene.ellipse(
+            lantern,
+            [radius, radius * 0.88],
+            0.0,
+            Rgba(222, 255, 104, alpha + (glow * 16.0) as u8),
+            None,
+        );
+    }
+
+    for (index, center) in [8.0_f32, 22.0, 36.0, 50.0, 64.0].into_iter().enumerate() {
+        let width = 17.0 - index as f32 * 1.2;
+        let height = 25.0 - index as f32 * 2.2;
+        let lantern_segment = index >= 3;
+        let center = firefly_point([center, 0.0]);
+        let fill = if lantern_segment {
+            Rgba::rgb(184, 232, 76)
+        } else {
+            Rgba::rgb(18, 72 + index as u8 * 7, 50 + index as u8 * 5)
+        };
+        let rim = if lantern_segment {
+            Rgba(222, 255, 131, 232)
+        } else {
+            Rgba(47, 124, 82, 225)
+        };
+        scene.ellipse(
+            center,
+            [width * 0.5, height * 0.5],
+            0.0,
+            fill,
+            Some((rim, 0.9)),
+        );
+        scene.ellipse(
+            [center[0] + 1.4, center[1] - 3.0],
+            [width * 0.28, height * 0.18],
+            0.0,
+            if lantern_segment {
+                Rgba(239, 255, 158, 126)
+            } else {
+                Rgba(98, 194, 118, 76)
+            },
+            None,
+        );
+    }
+
+    for side in [-1.0_f32, 1.0] {
+        draw_firefly_elytron(scene, side, behavior == Behavior::PreEscape);
+    }
+
+    let thorax = firefly_point([-10.5, 0.0]);
     scene.ellipse(
-        [62.0, 116.0],
-        [52.0, 48.0],
+        thorax,
+        [19.5, 18.0],
         0.0,
-        Rgba(204, 255, 74, glow_alpha / 4),
+        Rgba::rgb(10, 39, 32),
+        Some((Rgba(102, 217, 124, 235), 1.35)),
+    );
+    scene.ellipse(
+        [thorax[0] + 4.0, thorax[1] - 3.0],
+        [12.0, 11.0],
+        -0.16,
+        Rgba::rgb(69, 151, 97),
         None,
     );
-    scene.ellipse(
-        [68.0, 116.0],
-        [39.0, 37.0],
-        0.0,
-        Rgba(211, 249, 62, glow_alpha),
+
+    let mut pronotum = Vec::with_capacity(38);
+    append_cubic(
+        &mut pronotum,
+        [-59.0, 0.0],
+        [-56.0, -18.0],
+        [-31.0, -24.0],
+        [-20.0, -11.0],
+        12,
+    );
+    append_cubic(
+        &mut pronotum,
+        [-20.0, -11.0],
+        [-15.0, -4.0],
+        [-15.0, 4.0],
+        [-20.0, 11.0],
+        8,
+    );
+    append_cubic(
+        &mut pronotum,
+        [-20.0, 11.0],
+        [-31.0, 24.0],
+        [-56.0, 18.0],
+        [-59.0, 0.0],
+        12,
+    );
+    firefly_polygon(
+        scene,
+        &pronotum,
+        Rgba::rgb(211, 96, 35),
+        Some((Rgba(255, 215, 82, 240), 1.25)),
+    );
+    firefly_ellipse(scene, [-36.5, 0.0], [6.5, 7.0], Rgba(18, 35, 28, 220), None);
+    firefly_ellipse(
+        scene,
+        [-43.0, -7.0],
+        [9.0, 4.0],
+        Rgba(255, 184, 62, 78),
         None,
     );
-    scene.ellipse(
-        [123.0, 116.0],
-        [72.0, 34.0],
-        -0.04,
-        Rgba::rgb(28, 103, 66),
-        Some((Rgba::rgb(13, 48, 34), 3.0)),
+
+    firefly_ellipse(
+        scene,
+        [-65.5, 0.0],
+        [12.5, 13.5],
+        Rgba::rgb(4, 17, 19),
+        Some((Rgba(83, 171, 106, 220), 1.0)),
     );
-    scene.ellipse(
-        [66.0, 116.0],
-        [28.0, 31.0],
-        0.0,
-        Rgba::rgb(199, 235, 55),
-        Some((Rgba::rgb(95, 132, 25), 2.4)),
+    firefly_ellipse(
+        scene,
+        [-62.8, -3.0],
+        [7.5, 8.5],
+        Rgba::rgb(34, 82, 62),
+        None,
     );
-    scene.ellipse(
-        [190.0, 116.0],
-        [39.0, 38.0],
-        0.02,
-        Rgba::rgb(41, 66, 48),
-        Some((Rgba::rgb(14, 29, 23), 3.0)),
-    );
-    scene.ellipse(
-        [226.0, 116.0],
-        [31.0, 30.0],
-        0.0,
-        Rgba::rgb(198, 126, 35),
-        Some((Rgba::rgb(94, 58, 20), 2.4)),
-    );
-    scene.ellipse(
-        [243.0, 116.0],
-        [18.0, 24.0],
-        0.0,
-        Rgba::rgb(37, 47, 38),
-        Some((Rgba::rgb(13, 20, 17), 2.0)),
-    );
-    for x in [91.0_f32, 112.0, 133.0, 154.0] {
-        scene.line([x, 88.0], [x + 1.0, 144.0], 2.0, Rgba(127, 197, 103, 190));
+    for side in [-1.0_f32, 1.0] {
+        let eye_center = firefly_point([-68.0, side * 8.0]);
+        scene.ellipse(
+            eye_center,
+            [5.5, 4.5],
+            side * 0.16,
+            Rgba::rgb(205, 61, 38),
+            Some((Rgba(247, 191, 84, 230), 0.72)),
+        );
+        scene.ellipse(
+            [eye_center[0] + 1.8, eye_center[1] - 1.4],
+            [2.7, 2.0],
+            0.0,
+            Rgba(248, 138, 55, 235),
+            None,
+        );
+        scene.ellipse(
+            [eye_center[0] + 2.4, eye_center[1] - 2.2],
+            [1.0, 1.0],
+            0.0,
+            Rgba(255, 250, 205, 220),
+            None,
+        );
     }
-    scene.line([87.0, 116.0], [164.0, 116.0], 1.6, Rgba(135, 208, 121, 190));
-    for (x, y, size) in [
-        (101.0, 102.0, 2.5),
-        (116.0, 129.0, 2.0),
-        (132.0, 98.0, 1.8),
-        (149.0, 132.0, 2.2),
-        (164.0, 106.0, 1.8),
-    ] {
-        scene.ellipse([x, y], [size, size], 0.0, Rgba::rgb(184, 226, 112), None);
-    }
-    scene.ellipse(
-        [250.0, 105.0],
-        [8.5, 10.0],
-        -0.2,
-        Rgba::rgb(224, 69, 36),
-        Some((Rgba::rgb(94, 30, 20), 1.2)),
-    );
-    scene.ellipse(
-        [250.0, 127.0],
-        [8.5, 10.0],
-        0.2,
-        Rgba::rgb(224, 69, 36),
-        Some((Rgba::rgb(94, 30, 20), 1.2)),
-    );
 
     if behavior == Behavior::Landing {
         for (radius, alpha) in [(30.0_f32, 110_u8), (48.0, 66), (67.0, 36)] {
             scene.ellipse(
-                [174.0, 187.0],
+                [162.0, 171.0],
                 [radius, radius * 0.16],
                 0.0,
                 Rgba(0, 0, 0, 0),
-                Some((Rgba(194, 235, 65, alpha), 2.0)),
+                Some((Rgba(194, 235, 65, alpha), 1.5)),
             );
         }
     }
+}
+
+fn draw_firefly_elytron(scene: &mut SceneBuilder, side: f32, opening: bool) {
+    let open = if opening { side * 0.10 } else { 0.0 };
+    let adjust = |point: [f32; 2]| {
+        let reach = ((point[0] + 3.0) / 71.0).clamp(0.0, 1.0);
+        [point[0], point[1] + open * reach * 32.0]
+    };
+    let start = adjust([-3.0, side * 2.0]);
+    let tip = adjust([68.0, side * 12.0]);
+    let lower = adjust([66.0, side * 1.0]);
+    let mut shell = Vec::with_capacity(38);
+    append_cubic(
+        &mut shell,
+        start,
+        adjust([7.0, side * 17.0]),
+        adjust([38.0, side * 22.0]),
+        tip,
+        13,
+    );
+    append_cubic(
+        &mut shell,
+        tip,
+        adjust([76.0, side * 8.0]),
+        adjust([76.0, side * 3.0]),
+        lower,
+        7,
+    );
+    append_cubic(
+        &mut shell,
+        lower,
+        adjust([35.0, side * 0.3]),
+        adjust([10.0, side * 0.4]),
+        start,
+        13,
+    );
+    firefly_polygon(
+        scene,
+        &shell,
+        Rgba::rgb(11, 52, 43),
+        Some((Rgba(104, 211, 120, 238), 1.25)),
+    );
+    let inset: Vec<_> = shell
+        .iter()
+        .map(|point| {
+            let center = [30.0, side * 7.0];
+            [
+                center[0] + (point[0] - center[0]) * 0.91,
+                center[1] + (point[1] - center[1]) * 0.78,
+            ]
+        })
+        .collect();
+    firefly_polygon(scene, &inset, Rgba(42, 143, 91, 214), None);
+    stroke_firefly_cubic(
+        scene,
+        adjust([0.0, side * 2.0]),
+        adjust([22.0, side * 3.0]),
+        adjust([47.0, side * 3.0]),
+        adjust([67.0, side * 2.0]),
+        0.7,
+        Rgba(223, 245, 126, 150),
+    );
+    for spot in 0..7 {
+        firefly_ellipse(
+            scene,
+            [
+                9.0 + spot as f32 * 8.0,
+                side * (5.0 + (spot % 3) as f32 * 3.0),
+            ],
+            [1.1, 1.1],
+            Rgba(180, 252, 144, 96),
+            None,
+        );
+    }
+}
+
+fn draw_firefly_legs(
+    scene: &mut SceneBuilder,
+    behavior: Behavior,
+    gait: f32,
+    phase: f32,
+    rear_layer: bool,
+) {
+    let locomoting = matches!(behavior, Behavior::Walk | Behavior::Reverse);
+    for (side_index, side) in [-1.0_f32, 1.0].into_iter().enumerate() {
+        for leg_index in 0..3 {
+            if rear_layer != (leg_index == 2) {
+                continue;
+            }
+            let phase_offset = leg_index as f32 * 2.07
+                + if side_index == 0 {
+                    0.0
+                } else {
+                    std::f32::consts::PI
+                };
+            let swing = if locomoting {
+                (gait * std::f32::consts::TAU + phase_offset).sin()
+            } else {
+                0.0
+            };
+            let hip = [
+                -26.0 + leg_index as f32 * 18.0,
+                side * (8.0 + leg_index as f32 * 2.0),
+            ];
+            let (knee, ankle, toe) = if behavior == Behavior::Landing {
+                let reach_x = match leg_index {
+                    0 => -78.0,
+                    1 => -26.0,
+                    _ => 44.0,
+                };
+                let reach_y = side * (42.0 + leg_index as f32 * 5.0);
+                (
+                    [
+                        (hip[0] + reach_x) * 0.5,
+                        side * (28.0 + leg_index as f32 * 4.0),
+                    ],
+                    [reach_x, reach_y],
+                    [reach_x + 14.0, reach_y + side * 5.0],
+                )
+            } else if behavior == Behavior::Groom && leg_index == 0 {
+                let rub = (phase * 9.0 + side * 1.4).sin();
+                (
+                    [-47.0 + rub * 4.0, side * (15.0 - rub * 2.0)],
+                    [-68.0 + rub * 7.0, side * (10.0 - rub * 7.0)],
+                    [-79.0 + rub * 9.0, side * (5.0 - rub * 8.0)],
+                )
+            } else {
+                let reach_x = match leg_index {
+                    0 => -61.0 + swing * 4.0,
+                    1 => -18.0 + swing * 5.0,
+                    _ => 35.0 + swing * 7.0,
+                };
+                let reach_y = side
+                    * match leg_index {
+                        0 => 31.0,
+                        1 => 40.0,
+                        _ => 45.0,
+                    };
+                (
+                    [
+                        (hip[0] + reach_x) * 0.5 + swing * 2.5,
+                        side * (20.0 + leg_index as f32 * 5.0),
+                    ],
+                    [reach_x, reach_y],
+                    [
+                        reach_x + if leg_index == 2 { 11.0 } else { -7.0 },
+                        reach_y + side * 3.0,
+                    ],
+                )
+            };
+            let dark = if rear_layer {
+                Rgba(10, 25, 22, 190)
+            } else {
+                Rgba(10, 25, 22, 238)
+            };
+            firefly_line(scene, hip, knee, if rear_layer { 2.0 } else { 2.35 }, dark);
+            firefly_line(
+                scene,
+                knee,
+                ankle,
+                if rear_layer { 2.0 } else { 2.35 },
+                dark,
+            );
+            firefly_line(scene, ankle, toe, if rear_layer { 1.6 } else { 1.9 }, dark);
+            firefly_line(scene, hip, knee, 0.66, Rgba(116, 207, 99, 128));
+            firefly_line(scene, knee, ankle, 0.66, Rgba(116, 207, 99, 128));
+            firefly_ellipse(scene, knee, [1.45, 1.45], Rgba(218, 157, 57, 220), None);
+        }
+    }
+}
+
+fn draw_firefly_antennae(scene: &mut SceneBuilder, behavior: Behavior, phase: f32, animated: bool) {
+    let sway = if animated && !matches!(behavior, Behavior::Rest | Behavior::Quiet) {
+        (phase * 2.9).sin() * 2.0
+    } else {
+        0.0
+    };
+    for side in [-1.0_f32, 1.0] {
+        let end = [-103.0 + sway, side * 20.0];
+        stroke_firefly_cubic(
+            scene,
+            [-75.0, side * 6.0],
+            [-86.0, side * 10.0],
+            [-96.0 + sway, side * 18.0],
+            end,
+            0.95,
+            Rgba(42, 77, 56, 230),
+        );
+        firefly_ellipse(scene, end, [1.5, 1.5], Rgba(172, 225, 92, 225), None);
+    }
+}
+
+fn firefly_point(point: [f32; 2]) -> [f32; 2] {
+    [SCENE_CENTER_X - point[0], 110.0 + point[1]]
+}
+
+fn firefly_line(scene: &mut SceneBuilder, from: [f32; 2], to: [f32; 2], width: f32, color: Rgba) {
+    scene.line(firefly_point(from), firefly_point(to), width, color);
+}
+
+fn firefly_ellipse(
+    scene: &mut SceneBuilder,
+    center: [f32; 2],
+    radii: [f32; 2],
+    fill: Rgba,
+    stroke: Option<(Rgba, f32)>,
+) {
+    scene.ellipse(firefly_point(center), radii, 0.0, fill, stroke);
+}
+
+fn firefly_polygon(
+    scene: &mut SceneBuilder,
+    points: &[[f32; 2]],
+    fill: Rgba,
+    stroke: Option<(Rgba, f32)>,
+) {
+    let points: Vec<_> = points.iter().copied().map(firefly_point).collect();
+    scene.polygon(&points, fill, stroke);
+}
+
+fn stroke_firefly_cubic(
+    scene: &mut SceneBuilder,
+    start: [f32; 2],
+    control_1: [f32; 2],
+    control_2: [f32; 2],
+    end: [f32; 2],
+    width: f32,
+    color: Rgba,
+) {
+    let mut points = Vec::with_capacity(13);
+    append_cubic(&mut points, start, control_1, control_2, end, 12);
+    for pair in points.windows(2) {
+        firefly_line(scene, pair[0], pair[1], width, color);
+    }
+}
+
+fn append_cubic(
+    points: &mut Vec<[f32; 2]>,
+    start: [f32; 2],
+    control_1: [f32; 2],
+    control_2: [f32; 2],
+    end: [f32; 2],
+    segments: usize,
+) {
+    if points.is_empty() {
+        points.push(start);
+    }
+    for index in 1..=segments {
+        points.push(cubic_point(
+            start,
+            control_1,
+            control_2,
+            end,
+            index as f32 / segments as f32,
+        ));
+    }
+}
+
+fn cubic_point(
+    start: [f32; 2],
+    control_1: [f32; 2],
+    control_2: [f32; 2],
+    end: [f32; 2],
+    amount: f32,
+) -> [f32; 2] {
+    let inverse = 1.0 - amount;
+    let inverse_squared = inverse * inverse;
+    let amount_squared = amount * amount;
+    [
+        inverse_squared * inverse * start[0]
+            + 3.0 * inverse_squared * amount * control_1[0]
+            + 3.0 * inverse * amount_squared * control_2[0]
+            + amount_squared * amount * end[0],
+        inverse_squared * inverse * start[1]
+            + 3.0 * inverse_squared * amount * control_1[1]
+            + 3.0 * inverse * amount_squared * control_2[1]
+            + amount_squared * amount * end[1],
+    ]
 }
 
 fn draw_drosophila_scene(scene: &mut SceneBuilder) {
@@ -645,14 +1160,12 @@ fn ellipse_points(center: [f32; 2], radii: [f32; 2], angle: f32, count: usize) -
         .collect()
 }
 
-#[cfg(windows)]
 struct RasterCanvas {
     width: usize,
     height: usize,
     premultiplied_bgra: Vec<u8>,
 }
 
-#[cfg(windows)]
 impl RasterCanvas {
     fn new(width: usize, height: usize) -> Self {
         Self {
@@ -857,7 +1370,6 @@ impl RasterCanvas {
     }
 }
 
-#[cfg(windows)]
 fn point_in_polygon(point: [f32; 2], polygon: &[[f32; 2]]) -> bool {
     let mut inside = false;
     let mut previous = polygon.len() - 1;
@@ -882,6 +1394,90 @@ fn point_in_polygon(point: [f32; 2], polygon: &[[f32; 2]]) -> bool {
     inside
 }
 
+#[derive(Clone, Debug)]
+pub struct FireflyVisualSelfTest {
+    pub passed: bool,
+    pub opaque_pixels: usize,
+    pub translucent_pixels: usize,
+    pub red_eye_pixels: usize,
+    pub lantern_pixels: usize,
+    pub elytron_pixels: usize,
+    pub rest_pixel_differences: usize,
+    pub escape_wing_pixel_differences: usize,
+    pub rest_escape_pixel_differences: usize,
+    pub grooming_pixel_differences: usize,
+}
+
+pub fn run_firefly_visual_self_test() -> FireflyVisualSelfTest {
+    let render = |behavior, phase| {
+        let mut pixels = vec![0; PET_WIDTH * PET_HEIGHT * 4];
+        render_pet_bgra(&mut pixels, Skin::Firefly, behavior, phase, 1.0, false);
+        pixels
+    };
+    let rest = render(Behavior::Rest, 0.0);
+    let rest_later = render(Behavior::Rest, 2.0);
+    let escape_first = render(Behavior::PreEscape, 0.04);
+    let escape_later = render(Behavior::PreEscape, 0.11);
+    let groom = render(Behavior::Groom, 0.35);
+
+    let mut result = FireflyVisualSelfTest {
+        passed: false,
+        opaque_pixels: 0,
+        translucent_pixels: 0,
+        red_eye_pixels: 0,
+        lantern_pixels: 0,
+        elytron_pixels: 0,
+        rest_pixel_differences: pixel_difference(&rest, &rest_later),
+        escape_wing_pixel_differences: pixel_difference(&escape_first, &escape_later),
+        rest_escape_pixel_differences: pixel_difference(&rest, &escape_first),
+        grooming_pixel_differences: pixel_difference(&rest, &groom),
+    };
+    for pixel in rest.as_chunks::<4>().0 {
+        let alpha = pixel[3] as u32;
+        if alpha == 0 {
+            continue;
+        }
+        if alpha >= 220 {
+            result.opaque_pixels += 1;
+        } else {
+            result.translucent_pixels += 1;
+        }
+        let unpremultiply = |channel: u8| (channel as u32 * 255 / alpha).min(255) as u8;
+        let red = unpremultiply(pixel[2]);
+        let green = unpremultiply(pixel[1]);
+        let blue = unpremultiply(pixel[0]);
+        if red > 145 && red > green.saturating_add(35) && red > blue.saturating_add(20) {
+            result.red_eye_pixels += 1;
+        }
+        if green > 145 && red > 105 && green > blue.saturating_add(30) {
+            result.lantern_pixels += 1;
+        }
+        if alpha >= 190 && green > red.saturating_add(18) && green > 55 && blue < 150 {
+            result.elytron_pixels += 1;
+        }
+    }
+    result.passed = result.opaque_pixels > 1_200
+        && result.translucent_pixels > 180
+        && result.red_eye_pixels > 20
+        && result.lantern_pixels > 45
+        && result.elytron_pixels > 280
+        && result.rest_pixel_differences == 0
+        && result.escape_wing_pixel_differences > 180
+        && result.rest_escape_pixel_differences > 900
+        && result.grooming_pixel_differences > 90;
+    result
+}
+
+fn pixel_difference(first: &[u8], second: &[u8]) -> usize {
+    first
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(second.as_chunks::<4>().0)
+        .filter(|(first, second)| *first != *second)
+        .count()
+}
+
 pub fn transparent_frame() -> egui::Frame {
     egui::Frame::new()
         .fill(Color32::TRANSPARENT)
@@ -902,8 +1498,8 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(centers.iter().any(|x| *x < SCENE_CENTER_X - 90.0));
-        assert!(centers.iter().any(|x| *x > SCENE_CENTER_X + 70.0));
+        assert!(centers.iter().any(|x| *x < SCENE_CENTER_X - 48.0));
+        assert!(centers.iter().any(|x| *x > SCENE_CENTER_X + 64.0));
     }
 
     #[test]
@@ -923,7 +1519,6 @@ mod tests {
         assert!(motion.screen_position.y <= 1_080.0 - PET_HEIGHT as f32 - 8.0);
     }
 
-    #[cfg(windows)]
     #[test]
     fn layered_bitmap_has_real_holes_and_premultiplied_color() {
         let mut pixels = vec![0; PET_WIDTH * PET_HEIGHT * 4];
@@ -948,5 +1543,39 @@ mod tests {
         }
         assert!(transparent > PET_WIDTH * PET_HEIGHT / 3);
         assert!(visible > PET_WIDTH * PET_HEIGHT / 20);
+    }
+
+    #[test]
+    fn firefly_prism_visual_contract_is_colorful_and_behavior_responsive() {
+        let result = run_firefly_visual_self_test();
+        assert!(result.passed, "{result:#?}");
+
+        if let Some(path) = std::env::var_os("MECHOFLY_VISUAL_FIXTURE") {
+            let mut rest = vec![0; PET_WIDTH * PET_HEIGHT * 4];
+            render_pet_bgra(&mut rest, Skin::Firefly, Behavior::Rest, 0.0, 1.0, false);
+            write_pam(std::path::Path::new(&path), &rest);
+        }
+    }
+
+    fn write_pam(path: &std::path::Path, pixels: &[u8]) {
+        let mut bytes = format!(
+            "P7\nWIDTH {PET_WIDTH}\nHEIGHT {PET_HEIGHT}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n"
+        )
+        .into_bytes();
+        for pixel in pixels.as_chunks::<4>().0 {
+            let alpha = pixel[3] as u32;
+            if alpha == 0 {
+                bytes.extend_from_slice(&[0, 0, 0, 0]);
+            } else {
+                let unpremultiply = |channel: u8| (channel as u32 * 255 / alpha).min(255) as u8;
+                bytes.extend_from_slice(&[
+                    unpremultiply(pixel[2]),
+                    unpremultiply(pixel[1]),
+                    unpremultiply(pixel[0]),
+                    pixel[3],
+                ]);
+            }
+        }
+        std::fs::write(path, bytes).expect("visual fixture must be writable");
     }
 }

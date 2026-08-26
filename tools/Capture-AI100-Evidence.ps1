@@ -424,7 +424,10 @@ namespace MechoFly.Evidence
         status = 'PASS'
         purpose = 'exact-source runtime diagnostics and visual iteration review'
         source_identity = $Identity
-        cases = @($CaseResults)
+        # Windows PowerShell 5.1 can throw "Argument types do not match" when
+        # its array-subexpression binder enumerates List[object] directly.
+        # ToArray() preserves the same values without invoking that binder.
+        cases = [object[]]$CaseResults.ToArray()
         screenshot_scope = 'MechoFly application windows with 16-pixel context only'
         full_desktop_captured = $false
         source_mutation = $false
@@ -444,7 +447,7 @@ catch {
         message = $_.Exception.Message
         details = ($_ | Out-String)
         source_identity = $Identity
-        completed_cases = @($CaseResults)
+        completed_cases = [object[]]$CaseResults.ToArray()
         source_mutation = $false
         live_hardware_authority = 'NONE'
         started_utc = $StartedUtc.ToString('o')
