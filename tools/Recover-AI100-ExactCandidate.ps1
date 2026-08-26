@@ -114,6 +114,69 @@ function ConvertTo-NormalizedRepositoryUrl {
     return $Normalized.ToLowerInvariant()
 }
 
+function Assert-PinnedPowerShellScript {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $LiteralPath,
+
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^[0-9a-fA-F]{64}$')]
+        [string] $ExpectedSha256,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Label
+    )
+
+    if (-not (Test-Path -LiteralPath $LiteralPath -PathType Leaf)) {
+        throw ($Label + ' was not found: ' + $LiteralPath)
+    }
+
+    $ExpectedSha256 = $ExpectedSha256.ToUpperInvariant()
+    $ActualSha256 = (
+        Get-FileHash -LiteralPath $LiteralPath -Algorithm SHA256
+    ).Hash
+    if ($ActualSha256 -ne $ExpectedSha256) {
+        throw ($Label + ' hash mismatch. Expected ' + $ExpectedSha256 +
+            '; received ' + $ActualSha256)
+    }
+
+    Unblock-File -LiteralPath $LiteralPath -ErrorAction SilentlyContinue
+    $Tokens = $null
+    $ParseErrors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile(
+        $LiteralPath,
+        [ref]$Tokens,
+        [ref]$ParseErrors) | Out-Null
+    if (@($ParseErrors).Count -gt 0) {
+        $ParseErrors | Format-List Message, ErrorId, Extent -Force
+        throw ($Label + ' failed the Windows PowerShell 5.1 parser.')
+    }
+}
+
+function Get-PinnedPowerShellScript {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Uri,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Destination,
+
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^[0-9a-fA-F]{64}$')]
+        [string] $ExpectedSha256,
+
+        [Parameter(Mandatory = $true)]
+        [string] $Label
+    )
+
+    Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Destination
+    Assert-PinnedPowerShellScript `
+        -LiteralPath $Destination `
+        -ExpectedSha256 $ExpectedSha256 `
+        -Label $Label
+    return (Resolve-Path -LiteralPath $Destination).Path
+}
+
 function Get-RecoveryState {
     param(
         [Parameter(Mandatory = $true)]
@@ -138,6 +201,43 @@ function Get-RecoveryState {
         unstaged = $Unstaged
         untracked = $Untracked
     }
+}
+
+function Test-CleanTargetAncestor {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Root,
+
+        [Parameter(Mandatory = $true)]
+        [object] $State,
+
+        [Parameter(Mandatory = $true)]
+        [string] $RequiredBranch,
+
+        [Parameter(Mandatory = $true)]
+        [string] $TargetCommit
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace([string]$State.status) -or
+        [string]$State.branch -ne $RequiredBranch) {
+        return $false
+    }
+
+    $HeadTree = Invoke-RecoveryGit -Arguments @(
+        '-C', $Root, 'rev-parse', ([string]$State.head + '^{tree}')) -Capture
+    if ([string]$State.index_tree -ne $HeadTree) {
+        return $false
+    }
+
+    try {
+        $MergeBase = Invoke-RecoveryGit -Arguments @(
+            '-C', $Root, 'merge-base', [string]$State.head,
+            $TargetCommit) -Capture
+    }
+    catch {
+        return $false
+    }
+    return $MergeBase -eq [string]$State.head
 }
 
 function Assert-ExactRecoverableState {
@@ -501,13 +601,90 @@ function Invoke-RecoveryGuardSelfTest {
             $OriginalPreservation.stash_commit) {
             throw 'Original preservation changed after residue preservation.'
         }
+
+        Invoke-RecoveryGit -Arguments @(
+            '-C', $Fixture, 'switch', '--create',
+            'feat/recovery-self-test')
+        [System.IO.File]::WriteAllText(
+            $FixtureFile,
+            'clean prior candidate' + [Environment]::NewLine,
+            (New-Object System.Text.UTF8Encoding($false)))
+        Invoke-RecoveryGit -Arguments @('-C', $Fixture, 'add', 'candidate.txt')
+        Invoke-RecoveryGit -Arguments @(
+            '-C', $Fixture, 'commit', '-m', 'fixture prior candidate')
+        $PriorCandidate = Invoke-RecoveryGit -Arguments @(
+            '-C', $Fixture, 'rev-parse', 'HEAD') -Capture
+
+        [System.IO.File]::WriteAllText(
+            $FixtureFile,
+            'clean target candidate' + [Environment]::NewLine,
+            (New-Object System.Text.UTF8Encoding($false)))
+        Invoke-RecoveryGit -Arguments @('-C', $Fixture, 'add', 'candidate.txt')
+        Invoke-RecoveryGit -Arguments @(
+            '-C', $Fixture, 'commit', '-m', 'fixture target candidate')
+        $TargetCandidate = Invoke-RecoveryGit -Arguments @(
+            '-C', $Fixture, 'rev-parse', 'HEAD') -Capture
+
+        Invoke-RecoveryGit -Arguments @('-C', $Fixture, 'switch', 'main')
+        Invoke-RecoveryGit -Arguments @(
+            '-C', $Fixture, 'branch', '--force',
+            'feat/recovery-self-test', $PriorCandidate)
+        Invoke-RecoveryGit -Arguments @(
+            '-C', $Fixture, 'switch', 'feat/recovery-self-test')
+        $PriorState = Get-RecoveryState -Root $Fixture
+        if (-not (Test-CleanTargetAncestor `
+            -Root $Fixture `
+            -State $PriorState `
+            -RequiredBranch 'feat/recovery-self-test' `
+            -TargetCommit $TargetCandidate)) {
+            throw 'Recovery rejected a clean prior candidate ancestor.'
+        }
+        if (Test-CleanTargetAncestor `
+            -Root $Fixture `
+            -State $PriorState `
+            -RequiredBranch 'feat/recovery-self-test' `
+            -TargetCommit $FixtureHead) {
+            throw 'Recovery accepted a target that was behind the candidate.'
+        }
+
+        $CanonicalScript = Join-Path $FixtureRoot 'canonical-script.ps1'
+        $ConvertedScript = Join-Path $FixtureRoot 'converted-script.ps1'
+        $CanonicalText = "#requires -version 5.1`nWrite-Host 'PINNED'`n"
+        [System.IO.File]::WriteAllText(
+            $CanonicalScript,
+            $CanonicalText,
+            (New-Object System.Text.UTF8Encoding($false)))
+        [System.IO.File]::WriteAllText(
+            $ConvertedScript,
+            $CanonicalText.Replace("`n", "`r`n"),
+            (New-Object System.Text.UTF8Encoding($false)))
+        $CanonicalHash = (
+            Get-FileHash -LiteralPath $CanonicalScript -Algorithm SHA256
+        ).Hash
+        Assert-PinnedPowerShellScript `
+            -LiteralPath $CanonicalScript `
+            -ExpectedSha256 $CanonicalHash `
+            -Label 'Canonical self-test script'
+        $ConvertedRejected = $false
+        try {
+            Assert-PinnedPowerShellScript `
+                -LiteralPath $ConvertedScript `
+                -ExpectedSha256 $CanonicalHash `
+                -Label 'Line-ending-converted self-test script'
+        }
+        catch {
+            $ConvertedRejected = $true
+        }
+        if (-not $ConvertedRejected) {
+            throw 'Pinned-script verification accepted converted bytes.'
+        }
     }
     finally {
         if (Test-Path -LiteralPath $FixtureRoot -PathType Container) {
             Remove-Item -LiteralPath $FixtureRoot -Recurse -Force
         }
     }
-    Write-Host 'MECHOFLY_RECOVERY_GUARD_AND_RESUME_SELF_TEST=PASS'
+    Write-Host 'MECHOFLY_RECOVERY_GUARD_RESUME_AND_PIN_SELF_TEST=PASS'
 }
 
 $GitCommand = Get-Command 'git.exe' -ErrorAction SilentlyContinue
@@ -657,9 +834,15 @@ else {
         [string]$State.branch -eq $TargetBranch -and
         [string]$State.head -eq $TargetCommit -and
         [string]$State.index_tree -eq $RemoteTree)
-    if (-not $AtPreservedBase -and -not $AtExactTarget) {
+    $AtCleanTargetAncestor = Test-CleanTargetAncestor `
+        -Root $RepositoryRoot `
+        -State $State `
+        -RequiredBranch $TargetBranch `
+        -TargetCommit $TargetCommit
+    if (-not $AtPreservedBase -and -not $AtCleanTargetAncestor) {
         throw ('Recovery cannot resume because the checkout is clean but is ' +
-            'neither the preserved base nor the exact target. Branch=' +
+            'neither the preserved base, the exact target, nor a clean ' +
+            'ancestor on the target branch. Branch=' +
             [string]$State.branch + '; HEAD=' + [string]$State.head +
             '; tree=' + [string]$State.index_tree)
     }
@@ -669,7 +852,15 @@ else {
         -DownloadRoot $Downloads `
         -RequiredHead $ExpectedDirtyHead `
         -RequiredIndexTree $ExpectedDirtyIndexTree
-    $RecoveryMode = 'RESUMED_AFTER_PRESERVATION'
+    if ($AtPreservedBase) {
+        $RecoveryMode = 'RESUMED_AFTER_PRESERVATION'
+    }
+    elseif ($AtExactTarget) {
+        $RecoveryMode = 'RESUMED_AT_EXACT_TARGET'
+    }
+    else {
+        $RecoveryMode = 'RESUMED_FROM_CLEAN_TARGET_ANCESTOR'
+    }
 }
 
 $StashCommit = $Preservation.stash_commit
@@ -696,24 +887,11 @@ $SetupPath = Join-Path ([System.IO.Path]::GetTempPath()) (
     'Setup-AI100-MechoFly-' + $TargetCommit.Substring(0, 12) + '.ps1')
 $SetupUri = 'https://raw.githubusercontent.com/yaelkroy/MechoFly/' +
     $TargetCommit + '/tools/Setup-AI100-MechoFly.ps1'
-Invoke-WebRequest -UseBasicParsing -Uri $SetupUri -OutFile $SetupPath
-$SetupHash = (Get-FileHash -LiteralPath $SetupPath -Algorithm SHA256).Hash
-if ($SetupHash -ne $ExpectedSetupHash) {
-    throw ('Setup hash mismatch. Expected ' + $ExpectedSetupHash +
-        '; received ' + $SetupHash)
-}
-Unblock-File -LiteralPath $SetupPath -ErrorAction SilentlyContinue
-
-$Tokens = $null
-$ParseErrors = $null
-[System.Management.Automation.Language.Parser]::ParseFile(
-    $SetupPath,
-    [ref]$Tokens,
-    [ref]$ParseErrors) | Out-Null
-if (@($ParseErrors).Count -gt 0) {
-    $ParseErrors | Format-List Message, ErrorId, Extent -Force
-    throw 'Pinned setup failed the Windows PowerShell 5.1 parser.'
-}
+$SetupPath = Get-PinnedPowerShellScript `
+    -Uri $SetupUri `
+    -Destination $SetupPath `
+    -ExpectedSha256 $ExpectedSetupHash `
+    -Label 'Pinned setup'
 
 & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
     -NoLogo `
@@ -728,15 +906,15 @@ if ($SetupExitCode -ne 0) {
         [string]$SetupExitCode + '. Preserved bundle: ' + $BundlePath)
 }
 
-$Collector = Join-Path $RepositoryRoot 'tools\Capture-AI100-Evidence.ps1'
-if (-not (Test-Path -LiteralPath $Collector -PathType Leaf)) {
-    throw ('Evidence collector was not found after setup: ' + $Collector)
-}
-$CollectorHash = (Get-FileHash -LiteralPath $Collector -Algorithm SHA256).Hash
-if ($CollectorHash -ne $ExpectedCollectorHash) {
-    throw ('Evidence collector hash mismatch. Expected ' +
-        $ExpectedCollectorHash + '; received ' + $CollectorHash)
-}
+$Collector = Join-Path ([System.IO.Path]::GetTempPath()) (
+    'Capture-AI100-Evidence-' + $TargetCommit.Substring(0, 12) + '.ps1')
+$CollectorUri = 'https://raw.githubusercontent.com/yaelkroy/MechoFly/' +
+    $TargetCommit + '/tools/Capture-AI100-Evidence.ps1'
+$Collector = Get-PinnedPowerShellScript `
+    -Uri $CollectorUri `
+    -Destination $Collector `
+    -ExpectedSha256 $ExpectedCollectorHash `
+    -Label 'Pinned evidence collector'
 
 $CaptureStartedUtc = [DateTime]::UtcNow
 & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
