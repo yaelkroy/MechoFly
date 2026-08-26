@@ -22,6 +22,10 @@ param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$')]
     [string] $ExpectedDirtyBranch = 'main',
 
+    [ValidatePattern('^[0-9a-fA-F]{40}$')]
+    [string] $ExpectedInterruptedCommit =
+        'e75c417d8fbee70f1789f7299399ed157ff232fc',
+
     [switch] $Launch,
 
     [switch] $GuardSelfTest
@@ -175,7 +179,7 @@ function Assert-ExactRecoverableState {
     if ([string]$State.index_tree -ne
         $RequiredIndexTree.ToLowerInvariant()) {
         throw ('Recovery refused because the staged tree differs from the ' +
-            'reviewed Rust candidate. Expected ' +
+            'required exact state. Expected ' +
             $RequiredIndexTree.ToLowerInvariant() + '; received ' +
             [string]$State.index_tree)
     }
@@ -190,18 +194,11 @@ function Get-VerifiedPreservation {
         [string] $DownloadRoot,
 
         [Parameter(Mandatory = $true)]
-        [object] $State,
-
-        [Parameter(Mandatory = $true)]
         [string] $RequiredHead,
 
         [Parameter(Mandatory = $true)]
         [string] $RequiredIndexTree
     )
-
-    if (-not [string]::IsNullOrWhiteSpace([string]$State.status)) {
-        throw 'Preservation-resume verification requires a clean checkout.'
-    }
 
     $BackupRefs = Invoke-RecoveryGit -Arguments @(
         '-C', $Root, 'for-each-ref',
@@ -267,6 +264,90 @@ function Get-VerifiedPreservation {
     }
 }
 
+function Save-ExactStagedState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Root,
+
+        [Parameter(Mandatory = $true)]
+        [string] $DownloadRoot,
+
+        [Parameter(Mandatory = $true)]
+        [object] $State,
+
+        [Parameter(Mandatory = $true)]
+        [string] $RequiredHead,
+
+        [Parameter(Mandatory = $true)]
+        [string] $RequiredIndexTree,
+
+        [Parameter(Mandatory = $true)]
+        [string] $RequiredBranch,
+
+        [Parameter(Mandatory = $true)]
+        [string] $BackupBranchPrefix,
+
+        [Parameter(Mandatory = $true)]
+        [string] $BundleFilePrefix,
+
+        [Parameter(Mandatory = $true)]
+        [string] $StashMessagePrefix
+    )
+
+    Assert-ExactRecoverableState `
+        -State $State `
+        -RequiredHead $RequiredHead `
+        -RequiredIndexTree $RequiredIndexTree `
+        -RequiredBranch $RequiredBranch
+
+    $Stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
+    $BackupBranch = $BackupBranchPrefix + $Stamp.ToLowerInvariant()
+    $BundlePath = Join-Path $DownloadRoot (
+        $BundleFilePrefix + '_' + $Stamp + '_' +
+        $RequiredIndexTree.Substring(0, 12) + '.bundle')
+    $StashMessage = $StashMessagePrefix + ' ' + $Stamp
+
+    Invoke-RecoveryGit -Arguments @(
+        '-C', $Root, 'stash', 'push', '--include-untracked',
+        '--message', $StashMessage)
+    $StashCommit = Invoke-RecoveryGit -Arguments @(
+        '-C', $Root, 'rev-parse', 'refs/stash') -Capture
+    $StashTree = Invoke-RecoveryGit -Arguments @(
+        '-C', $Root, 'rev-parse', ($StashCommit + '^{tree}')) -Capture
+    $StashFirstParent = Invoke-RecoveryGit -Arguments @(
+        '-C', $Root, 'rev-parse', ($StashCommit + '^1')) -Capture
+    if ($StashTree -ne $RequiredIndexTree.ToLowerInvariant() -or
+        $StashFirstParent -ne $RequiredHead.ToLowerInvariant()) {
+        throw ('Preserved stash identity mismatch. The stash remains at ' +
+            $StashCommit + '; expected tree ' +
+            $RequiredIndexTree.ToLowerInvariant() + ' with first parent ' +
+            $RequiredHead.ToLowerInvariant() + '; received tree ' +
+            $StashTree + ' with first parent ' + $StashFirstParent)
+    }
+
+    Invoke-RecoveryGit -Arguments @(
+        '-C', $Root, 'branch', $BackupBranch, $StashCommit)
+    Invoke-RecoveryGit -Arguments @(
+        '-C', $Root, 'bundle', 'create', $BundlePath,
+        ('refs/heads/' + $BackupBranch))
+    Invoke-RecoveryGit -Arguments @(
+        '-C', $Root, 'bundle', 'verify', $BundlePath)
+
+    $CleanStatus = Invoke-RecoveryGit -Arguments @(
+        '-C', $Root, 'status', '--porcelain=v1',
+        '--untracked-files=all') -Capture
+    if (-not [string]::IsNullOrWhiteSpace($CleanStatus)) {
+        throw ('Preservation did not leave a clean checkout.' +
+            [Environment]::NewLine + $CleanStatus)
+    }
+
+    return [pscustomobject][ordered]@{
+        stash_commit = $StashCommit
+        backup_branch = $BackupBranch
+        bundle = $BundlePath
+    }
+}
+
 function Invoke-RecoveryGuardSelfTest {
     $FixtureRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
         'MechoFly-Recovery-SelfTest-' + [Guid]::NewGuid().ToString('N'))
@@ -327,34 +408,98 @@ function Invoke-RecoveryGuardSelfTest {
         }
 
         Remove-Item -LiteralPath (Join-Path $Fixture 'unexpected.txt') -Force
-        $SelfTestStamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
-        $SelfTestBranch = 'backup/ai100-pre-sync-' +
-            $SelfTestStamp.ToLowerInvariant()
-        $SelfTestBundle = Join-Path $FixtureDownloads (
-            'PRESERVED_MechoFly_AI100_PreSync_' + $SelfTestStamp +
-            '_selftest.bundle')
-        Invoke-RecoveryGit -Arguments @(
-            '-C', $Fixture, 'stash', 'push', '--message',
-            'recovery resume self-test')
-        $SelfTestStash = Invoke-RecoveryGit -Arguments @(
-            '-C', $Fixture, 'rev-parse', 'refs/stash') -Capture
-        Invoke-RecoveryGit -Arguments @(
-            '-C', $Fixture, 'branch', $SelfTestBranch, $SelfTestStash)
-        Invoke-RecoveryGit -Arguments @(
-            '-C', $Fixture, 'bundle', 'create', $SelfTestBundle,
-            ('refs/heads/' + $SelfTestBranch))
+        $MissingPreservationRejected = $false
+        try {
+            Get-VerifiedPreservation `
+                -Root $Fixture `
+                -DownloadRoot $FixtureDownloads `
+                -RequiredHead $FixtureHead `
+                -RequiredIndexTree $FixtureTree | Out-Null
+        }
+        catch {
+            $MissingPreservationRejected = $true
+        }
+        if (-not $MissingPreservationRejected) {
+            throw 'Recovery accepted residue without an original preservation.'
+        }
 
-        $CleanState = Get-RecoveryState -Root $Fixture
-        $Preservation = Get-VerifiedPreservation `
+        $OriginalPreservation = Save-ExactStagedState `
             -Root $Fixture `
             -DownloadRoot $FixtureDownloads `
-            -State $CleanState `
+            -State (Get-RecoveryState -Root $Fixture) `
+            -RequiredHead $FixtureHead `
+            -RequiredIndexTree $FixtureTree `
+            -RequiredBranch 'main' `
+            -BackupBranchPrefix 'backup/ai100-pre-sync-' `
+            -BundleFilePrefix 'PRESERVED_MechoFly_AI100_PreSync' `
+            -StashMessagePrefix 'recovery resume self-test'
+
+        $FoundOriginal = Get-VerifiedPreservation `
+            -Root $Fixture `
+            -DownloadRoot $FixtureDownloads `
             -RequiredHead $FixtureHead `
             -RequiredIndexTree $FixtureTree
-        if ($Preservation.stash_commit -ne $SelfTestStash -or
-            $Preservation.backup_branch -ne $SelfTestBranch -or
-            $Preservation.bundle -ne $SelfTestBundle) {
+        if ($FoundOriginal.stash_commit -ne
+                $OriginalPreservation.stash_commit -or
+            $FoundOriginal.backup_branch -ne
+                $OriginalPreservation.backup_branch -or
+            $FoundOriginal.bundle -ne $OriginalPreservation.bundle) {
             throw 'Recovery resume did not select the exact preservation.'
+        }
+
+        [System.IO.File]::WriteAllText(
+            $FixtureFile,
+            'interrupted branch switch residue' + [Environment]::NewLine,
+            (New-Object System.Text.UTF8Encoding($false)))
+        Invoke-RecoveryGit -Arguments @('-C', $Fixture, 'add', 'candidate.txt')
+        $InterruptedTree = Invoke-RecoveryGit -Arguments @(
+            '-C', $Fixture, 'write-tree') -Capture
+        if ($InterruptedTree -eq $FixtureTree) {
+            throw 'Interrupted-switch fixture did not produce a distinct tree.'
+        }
+
+        # The original backup must be verifiable before the generated residue
+        # is moved out of the index and working tree.
+        $FoundWhileDirty = Get-VerifiedPreservation `
+            -Root $Fixture `
+            -DownloadRoot $FixtureDownloads `
+            -RequiredHead $FixtureHead `
+            -RequiredIndexTree $FixtureTree
+        if ($FoundWhileDirty.stash_commit -ne
+            $OriginalPreservation.stash_commit) {
+            throw 'Original preservation was unavailable while residue existed.'
+        }
+
+        $InterruptedPreservation = Save-ExactStagedState `
+            -Root $Fixture `
+            -DownloadRoot $FixtureDownloads `
+            -State (Get-RecoveryState -Root $Fixture) `
+            -RequiredHead $FixtureHead `
+            -RequiredIndexTree $InterruptedTree `
+            -RequiredBranch 'main' `
+            -BackupBranchPrefix 'backup/ai100-interrupted-switch-' `
+            -BundleFilePrefix 'PRESERVED_MechoFly_AI100_InterruptedSwitch' `
+            -StashMessagePrefix 'interrupted branch switch self-test'
+        if (-not (Test-Path -LiteralPath $InterruptedPreservation.bundle `
+            -PathType Leaf)) {
+            throw 'Interrupted-switch preservation bundle was not created.'
+        }
+
+        $FinalState = Get-RecoveryState -Root $Fixture
+        if (-not [string]::IsNullOrWhiteSpace([string]$FinalState.status) -or
+            [string]$FinalState.branch -ne 'main' -or
+            [string]$FinalState.head -ne $FixtureHead) {
+            throw 'Interrupted-switch recovery did not restore the clean base.'
+        }
+
+        $FoundAfterResidue = Get-VerifiedPreservation `
+            -Root $Fixture `
+            -DownloadRoot $FixtureDownloads `
+            -RequiredHead $FixtureHead `
+            -RequiredIndexTree $FixtureTree
+        if ($FoundAfterResidue.stash_commit -ne
+            $OriginalPreservation.stash_commit) {
+            throw 'Original preservation changed after residue preservation.'
         }
     }
     finally {
@@ -385,6 +530,7 @@ if ([string]::IsNullOrWhiteSpace($TargetCommit)) {
 $TargetCommit = $TargetCommit.ToLowerInvariant()
 $ExpectedDirtyHead = $ExpectedDirtyHead.ToLowerInvariant()
 $ExpectedDirtyIndexTree = $ExpectedDirtyIndexTree.ToLowerInvariant()
+$ExpectedInterruptedCommit = $ExpectedInterruptedCommit.ToLowerInvariant()
 
 if (-not (Test-Path -LiteralPath $RepositoryRoot -PathType Container) -or
     -not (Test-Path -LiteralPath (Join-Path $RepositoryRoot '.git') `
@@ -429,54 +575,78 @@ if ($RemoteCommit -ne $TargetCommit) {
 $RemoteTree = Invoke-RecoveryGit -Arguments @(
     '-C', $RepositoryRoot, 'rev-parse',
     ('origin/' + $TargetBranch + '^{tree}')) -Capture
+Invoke-RecoveryGit -Arguments @(
+    '-C', $RepositoryRoot, 'merge-base', '--is-ancestor',
+    $ExpectedInterruptedCommit, $TargetCommit)
+$ExpectedInterruptedTree = Invoke-RecoveryGit -Arguments @(
+    '-C', $RepositoryRoot, 'rev-parse',
+    ($ExpectedInterruptedCommit + '^{tree}')) -Capture
 $ExpectedBaseTree = Invoke-RecoveryGit -Arguments @(
     '-C', $RepositoryRoot, 'rev-parse',
     ($ExpectedDirtyHead + '^{tree}')) -Capture
 
 $State = Get-RecoveryState -Root $RepositoryRoot
 $RecoveryMode = ''
+$InterruptedPreservation = $null
 if (-not [string]::IsNullOrWhiteSpace([string]$State.status)) {
-    Assert-ExactRecoverableState `
-        -State $State `
-        -RequiredHead $ExpectedDirtyHead `
-        -RequiredIndexTree $ExpectedDirtyIndexTree `
-        -RequiredBranch $ExpectedDirtyBranch
-
-    $Stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
-    $BackupBranch = 'backup/ai100-pre-sync-' + $Stamp.ToLowerInvariant()
-    $BundlePath = Join-Path $Downloads (
-        'PRESERVED_MechoFly_AI100_PreSync_' + $Stamp + '_' +
-        $ExpectedDirtyIndexTree.Substring(0, 12) + '.bundle')
-    $StashMessage = 'AI100 exact candidate pre-sync preservation ' + $Stamp
-
-    Invoke-RecoveryGit -Arguments @(
-        '-C', $RepositoryRoot, 'stash', 'push', '--include-untracked',
-        '--message', $StashMessage)
-    $StashCommit = Invoke-RecoveryGit -Arguments @(
-        '-C', $RepositoryRoot, 'rev-parse', 'refs/stash') -Capture
-    $StashTree = Invoke-RecoveryGit -Arguments @(
-        '-C', $RepositoryRoot, 'rev-parse', ($StashCommit + '^{tree}')) -Capture
-    if ($StashTree -ne $ExpectedDirtyIndexTree) {
-        throw ('Preserved stash tree mismatch. The stash remains available at ' +
-            $StashCommit + '; expected tree ' + $ExpectedDirtyIndexTree +
-            '; received ' + $StashTree)
+    if ([string]$State.index_tree -eq $ExpectedDirtyIndexTree) {
+        $Preservation = Save-ExactStagedState `
+            -Root $RepositoryRoot `
+            -DownloadRoot $Downloads `
+            -State $State `
+            -RequiredHead $ExpectedDirtyHead `
+            -RequiredIndexTree $ExpectedDirtyIndexTree `
+            -RequiredBranch $ExpectedDirtyBranch `
+            -BackupBranchPrefix 'backup/ai100-pre-sync-' `
+            -BundleFilePrefix 'PRESERVED_MechoFly_AI100_PreSync' `
+            -StashMessagePrefix 'AI100 exact candidate pre-sync preservation'
+        $RecoveryMode = 'PRESERVED_NOW'
     }
-    Invoke-RecoveryGit -Arguments @(
-        '-C', $RepositoryRoot, 'branch', $BackupBranch, $StashCommit)
-    Invoke-RecoveryGit -Arguments @(
-        '-C', $RepositoryRoot, 'bundle', 'create', $BundlePath,
-        ('refs/heads/' + $BackupBranch))
-    Invoke-RecoveryGit -Arguments @(
-        '-C', $RepositoryRoot, 'bundle', 'verify', $BundlePath)
+    elseif ([string]$State.index_tree -eq $ExpectedInterruptedTree) {
+        Assert-ExactRecoverableState `
+            -State $State `
+            -RequiredHead $ExpectedDirtyHead `
+            -RequiredIndexTree $ExpectedInterruptedTree `
+            -RequiredBranch $ExpectedDirtyBranch
 
-    $CleanStatus = Invoke-RecoveryGit -Arguments @(
-        '-C', $RepositoryRoot, 'status', '--porcelain=v1',
-        '--untracked-files=all') -Capture
-    if (-not [string]::IsNullOrWhiteSpace($CleanStatus)) {
-        throw ('Recovery preservation did not leave a clean checkout.' +
-            [Environment]::NewLine + $CleanStatus)
+        # Refuse to touch the generated residue unless the user's original
+        # staged tree is already independently recoverable from both a local
+        # backup branch and a complete standalone Downloads bundle.
+        $OriginalBefore = Get-VerifiedPreservation `
+            -Root $RepositoryRoot `
+            -DownloadRoot $Downloads `
+            -RequiredHead $ExpectedDirtyHead `
+            -RequiredIndexTree $ExpectedDirtyIndexTree
+
+        $InterruptedPreservation = Save-ExactStagedState `
+            -Root $RepositoryRoot `
+            -DownloadRoot $Downloads `
+            -State $State `
+            -RequiredHead $ExpectedDirtyHead `
+            -RequiredIndexTree $ExpectedInterruptedTree `
+            -RequiredBranch $ExpectedDirtyBranch `
+            -BackupBranchPrefix 'backup/ai100-interrupted-switch-' `
+            -BundleFilePrefix 'PRESERVED_MechoFly_AI100_InterruptedSwitch' `
+            -StashMessagePrefix 'AI100 interrupted branch-switch residue'
+
+        $Preservation = Get-VerifiedPreservation `
+            -Root $RepositoryRoot `
+            -DownloadRoot $Downloads `
+            -RequiredHead $ExpectedDirtyHead `
+            -RequiredIndexTree $ExpectedDirtyIndexTree
+        if ($Preservation.stash_commit -ne $OriginalBefore.stash_commit -or
+            $Preservation.bundle -ne $OriginalBefore.bundle) {
+            throw 'Original preservation identity changed during residue repair.'
+        }
+        $RecoveryMode = 'RECOVERED_INTERRUPTED_BRANCH_SWITCH'
     }
-    $RecoveryMode = 'PRESERVED_NOW'
+    else {
+        Assert-ExactRecoverableState `
+            -State $State `
+            -RequiredHead $ExpectedDirtyHead `
+            -RequiredIndexTree $ExpectedDirtyIndexTree `
+            -RequiredBranch $ExpectedDirtyBranch
+    }
 }
 else {
     $AtPreservedBase = (
@@ -497,19 +667,30 @@ else {
     $Preservation = Get-VerifiedPreservation `
         -Root $RepositoryRoot `
         -DownloadRoot $Downloads `
-        -State $State `
         -RequiredHead $ExpectedDirtyHead `
         -RequiredIndexTree $ExpectedDirtyIndexTree
-    $StashCommit = $Preservation.stash_commit
-    $BackupBranch = $Preservation.backup_branch
-    $BundlePath = $Preservation.bundle
     $RecoveryMode = 'RESUMED_AFTER_PRESERVATION'
 }
 
+$StashCommit = $Preservation.stash_commit
+$BackupBranch = $Preservation.backup_branch
+$BundlePath = $Preservation.bundle
 Write-Host ('MECHOFLY_RECOVERY_MODE=' + $RecoveryMode)
 Write-Host ('MECHOFLY_PRESERVED_STASH=' + $StashCommit)
 Write-Host ('MECHOFLY_PRESERVED_BRANCH=' + $BackupBranch)
 Write-Host ('MECHOFLY_PRESERVED_BUNDLE=' + $BundlePath)
+if ($null -ne $InterruptedPreservation) {
+    Write-Host ('MECHOFLY_INTERRUPTED_SWITCH_COMMIT=' +
+        $ExpectedInterruptedCommit)
+    Write-Host ('MECHOFLY_INTERRUPTED_SWITCH_TREE=' +
+        $ExpectedInterruptedTree)
+    Write-Host ('MECHOFLY_INTERRUPTED_SWITCH_STASH=' +
+        $InterruptedPreservation.stash_commit)
+    Write-Host ('MECHOFLY_INTERRUPTED_SWITCH_BRANCH=' +
+        $InterruptedPreservation.backup_branch)
+    Write-Host ('MECHOFLY_INTERRUPTED_SWITCH_BUNDLE=' +
+        $InterruptedPreservation.bundle)
+}
 
 $SetupPath = Join-Path ([System.IO.Path]::GetTempPath()) (
     'Setup-AI100-MechoFly-' + $TargetCommit.Substring(0, 12) + '.ps1')

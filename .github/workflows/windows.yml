@@ -54,7 +54,7 @@ jobs:
             -File $scriptPath `
             -BranchSwitchSelfTest
           if ($LASTEXITCODE -ne 0) { throw "Single-branch switch self-test exited $LASTEXITCODE" }
-      - name: Exercise guarded AI100 dirty-tree recovery
+      - name: Exercise guarded AI100 preservation and interrupted-switch recovery
         shell: powershell
         run: |
           $scriptPath = (Resolve-Path .\tools\Recover-AI100-ExactCandidate.ps1).Path
