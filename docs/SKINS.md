@@ -32,8 +32,8 @@ removes nonessential animation but does not alter model timing.
 
 The Windows host draws either skin into a supersampled premultiplied-alpha
 bitmap and presents it through `UpdateLayeredWindow`. Transparent pixels are
-not painted; there is no rectangular control panel, color key, or magenta
-background.
+not painted and pass mouse hit tests through to the desktop; there is no
+rectangular control panel, color key, or magenta background.
 
 Skin names describe artwork only. They do not imply that synthetic topology or
 modeled activity belongs to the pictured species.

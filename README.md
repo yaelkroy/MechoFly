@@ -58,6 +58,8 @@ The dark Neural Observatory interface has:
 On Windows the pet is not an `eframe` swap-chain window. Rust supplies a small
 premultiplied BGRA bitmap to the native layered-window compositor, so zero-alpha
 pixels are real desktop holes and no black rectangle or chroma key is exposed.
+Per-pixel hit testing also passes clicks through those holes, so only visible
+insect pixels capture interaction.
 All visible pet controls live in the tray; the desktop surface contains only
 the fly.
 

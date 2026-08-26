@@ -60,9 +60,12 @@ One `MechoFly.exe` process owns:
 
 All artwork is procedural. The Windows pet is supersampled in Rust into
 premultiplied BGRA and sent to `UpdateLayeredWindow`; zero-alpha pixels are
-desktop holes. `eframe` remains hidden at the root and owns the opaque Brain
-Lab viewport plus portable `wgpu` compute. No magenta/chroma-key transparency
-is used. Visual repaint timing is independent from the fixed 33 ms model step.
+desktop holes. `WM_NCHITTEST` samples the same alpha mask and returns
+`HTTRANSPARENT` for a hole, preventing the invisible bounds from swallowing
+desktop interaction. `eframe` remains hidden at the root and owns the opaque
+Brain Lab viewport plus portable `wgpu` compute. No magenta/chroma-key
+transparency is used. Visual repaint timing is independent from the fixed 33
+ms model step.
 
 ## Safety limits
 

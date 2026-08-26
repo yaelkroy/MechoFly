@@ -7,7 +7,7 @@
 //! holes in the desktop surface.
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     ffi::c_void,
     mem::{size_of, zeroed},
     ptr::{copy_nonoverlapping, null, null_mut},
@@ -32,14 +32,16 @@ use windows_sys::Win32::{
             RegisterClassExW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
             SM_YVIRTUALSCREEN, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE,
             SetWindowLongPtrW, SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow,
-            WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
-            WM_RBUTTONUP, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-            WS_EX_TOPMOST, WS_POPUP,
+            HTCLIENT, HTTRANSPARENT, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+            WM_MOUSEMOVE, WM_NCCREATE, WM_NCHITTEST, WM_RBUTTONUP, WNDCLASSEXW,
+            WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
 };
 
 use crate::pet::{PET_HEIGHT, PET_WIDTH, Skin, render_pet_bgra};
+
+const HIT_ALPHA_THRESHOLD: u8 = 12;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PetEvents {
@@ -56,6 +58,7 @@ struct OverlayShared {
     dragging: Cell<bool>,
     drag_cursor: Cell<(i32, i32)>,
     drag_window: Cell<(i32, i32)>,
+    hit_alpha: RefCell<Vec<u8>>,
 }
 
 impl OverlayShared {
@@ -66,7 +69,29 @@ impl OverlayShared {
             dragging: Cell::new(false),
             drag_cursor: Cell::new((0, 0)),
             drag_window: Cell::new((0, 0)),
+            hit_alpha: RefCell::new(vec![0; PET_WIDTH * PET_HEIGHT]),
         }
+    }
+
+    fn update_hit_alpha(&self, pixels: &[u8]) {
+        let mut hit_alpha = self.hit_alpha.borrow_mut();
+        for (destination, pixel) in hit_alpha.iter_mut().zip(pixels.as_chunks::<4>().0) {
+            *destination = pixel[3];
+        }
+    }
+
+    fn hit_test_screen(&self, screen_x: i32, screen_y: i32, rect: &RECT) -> bool {
+        let local_x = screen_x - rect.left;
+        let local_y = screen_y - rect.top;
+        if local_x < 0
+            || local_y < 0
+            || local_x >= PET_WIDTH as i32
+            || local_y >= PET_HEIGHT as i32
+        {
+            return false;
+        }
+        let index = local_y as usize * PET_WIDTH + local_x as usize;
+        self.hit_alpha.borrow()[index] >= HIT_ALPHA_THRESHOLD
     }
 }
 
@@ -200,6 +225,7 @@ impl PetOverlay {
             facing,
             reduced_motion,
         );
+        self.shared.update_hit_alpha(&self.pixels);
         // SAFETY: `bitmap_bits` points to a live PET_WIDTH × PET_HEIGHT 32-bit
         // DIB owned by this instance, and both buffers have exactly that size.
         unsafe {
@@ -247,7 +273,7 @@ impl PetOverlay {
             open_lab: self.shared.open_lab.swap(false, Ordering::AcqRel),
             interacted: self.shared.interacted.swap(false, Ordering::AcqRel),
             dragging: self.shared.dragging.get(),
-            hovered: self.cursor_inside_window(),
+            hovered: self.cursor_hits_pet(),
             position,
         }
     }
@@ -282,7 +308,7 @@ impl PetOverlay {
         }
     }
 
-    fn cursor_inside_window(&self) -> bool {
+    fn cursor_hits_pet(&self) -> bool {
         // SAFETY: `hwnd` is live and both output structures are valid for the
         // duration of these synchronous calls.
         unsafe {
@@ -290,8 +316,7 @@ impl PetOverlay {
             let mut rect: RECT = zeroed();
             GetCursorPos(&mut cursor) != 0
                 && GetWindowRect(self.hwnd, &mut rect) != 0
-                && (rect.left..rect.right).contains(&cursor.x)
-                && (rect.top..rect.bottom).contains(&cursor.y)
+                && self.shared.hit_test_screen(cursor.x, cursor.y, &rect)
         }
     }
 }
@@ -332,6 +357,24 @@ unsafe extern "system" fn window_proc(
         // and atomics because callbacks and polling share the allocation.
         let shared = unsafe { &*shared_pointer };
         match message {
+            WM_NCHITTEST => {
+                // lParam stores signed 16-bit screen coordinates. Returning
+                // HTTRANSPARENT for an alpha hole lets the real desktop or
+                // application below receive the interaction.
+                let packed = lparam as u32;
+                let screen_x = (packed as u16 as i16) as i32;
+                let screen_y = ((packed >> 16) as u16 as i16) as i32;
+                // SAFETY: `hwnd` is live for the duration of this callback and
+                // `rect` is a valid synchronous output buffer.
+                let mut rect: RECT = unsafe { zeroed() };
+                let hit = unsafe { GetWindowRect(hwnd, &mut rect) != 0 }
+                    && shared.hit_test_screen(screen_x, screen_y, &rect);
+                return if hit {
+                    HTCLIENT as LRESULT
+                } else {
+                    HTTRANSPARENT as LRESULT
+                };
+            }
             WM_LBUTTONDOWN => {
                 // SAFETY: valid HWND and stack-allocated output structures.
                 unsafe {
