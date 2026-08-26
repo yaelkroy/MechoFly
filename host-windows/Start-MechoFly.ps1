@@ -33,6 +33,18 @@ if (Test-Path -LiteralPath $ProfilePath -PathType Leaf) {
     }
 }
 
+# AI100 launches only a binary that can be traced byte-for-byte to the clean
+# checkout recorded by setup. This is an offline identity check; the Sync
+# shortcut and evidence collector additionally confirm the current GitHub ref.
+if ($null -ne $Profile -and
+    $Profile.PSObject.Properties['machine_role'] -and
+    [string]$Profile.machine_role -eq 'ai100-development') {
+    $RepositoryRoot = Split-Path -Parent $PSScriptRoot
+    & (Join-Path $RepositoryRoot 'tools\Assert-AI100-SourceIdentity.ps1') `
+        -RepositoryRoot $RepositoryRoot `
+        -ProfilePath $ProfilePath
+}
+
 if (-not $PSBoundParameters.ContainsKey('Skin')) {
     $Skin = 'drosophila'
     if ($null -ne $Profile -and $Profile.PSObject.Properties['skin'] -and

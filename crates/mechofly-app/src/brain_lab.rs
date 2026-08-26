@@ -177,6 +177,11 @@ impl BrainLabState {
                                 .color(INK),
                         );
                         key_value(ui, "ID", session.short_session_id());
+                        key_value(
+                            ui,
+                            "Started (Unix ms)",
+                            &session.started_unix_millis.to_string(),
+                        );
                         key_value(ui, "Skin", skin.label());
                         key_value(ui, "Compute", session.assessment.selected.label());
                         key_value(ui, "Capacity", session.assessment.tier.label());

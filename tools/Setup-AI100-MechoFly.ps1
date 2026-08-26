@@ -3,7 +3,13 @@
 param(
     [switch] $Launch,
 
-    [switch] $GitCaptureSelfTest
+    [switch] $GitCaptureSelfTest,
+
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$')]
+    [string] $Branch = 'main',
+
+    [ValidatePattern('^(|[0-9a-fA-F]{40})$')]
+    [string] $ExpectedCommit = ''
 )
 
 Set-StrictMode -Version Latest
@@ -173,6 +179,9 @@ if ($null -eq $GitCommand) {
 }
 $script:GitExecutable = $GitCommand.Source
 $script:Target = $Target
+Invoke-MechoFlyGit -Arguments @('check-ref-format', '--branch', $Branch)
+$RemoteRef = 'origin/' + $Branch
+$FetchRef = 'refs/heads/' + $Branch + ':refs/remotes/origin/' + $Branch
 
 if (-not (Test-Path -LiteralPath 'D:\' -PathType Container)) {
     throw 'AI100 setup requires the D: drive.'
@@ -192,7 +201,7 @@ if (-not $RepositoryExists -and (Test-Path -LiteralPath $Target -PathType Contai
 if (-not $RepositoryExists) {
     Invoke-MechoFlyGit -Arguments @(
         'clone',
-        '--branch', 'main',
+        '--branch', $Branch,
         '--single-branch',
         $CanonicalRepository,
         $Target
@@ -210,41 +219,52 @@ else {
         throw ('Refusing to sync a dirty working tree in ' + $Target)
     }
 
-    $Branch = Invoke-MechoFlyGit -Arguments @('-C', $Target, 'rev-parse', '--abbrev-ref', 'HEAD') -Capture
-    if ($Branch -ne 'main') {
-        throw ('Refusing to sync branch ' + $Branch + '; AI100 must remain on main.')
+    Invoke-MechoFlyGit -Arguments @(
+        '-C', $Target, 'fetch', '--prune', 'origin', $FetchRef)
+    $RemoteCommitBeforeSwitch = Invoke-MechoFlyGit -Arguments @(
+        '-C', $Target, 'rev-parse', $RemoteRef) -Capture
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and
+        $RemoteCommitBeforeSwitch -ne $ExpectedCommit.ToLowerInvariant()) {
+        throw ('GitHub branch ' + $Branch + ' is at ' +
+            $RemoteCommitBeforeSwitch + '; expected pinned commit ' +
+            $ExpectedCommit.ToLowerInvariant() + '.')
     }
 
-    Invoke-MechoFlyGit -Arguments @('-C', $Target, 'fetch', '--prune', 'origin', 'main')
-    Invoke-MechoFlyGit -Arguments @('-C', $Target, 'merge', '--ff-only', 'origin/main')
+    $CurrentBranch = Invoke-MechoFlyGit -Arguments @(
+        '-C', $Target, 'rev-parse', '--abbrev-ref', 'HEAD') -Capture
+    if ($CurrentBranch -ne $Branch) {
+        $ExistingBranch = Invoke-MechoFlyGit -Arguments @(
+            '-C', $Target, 'branch', '--list', '--format=%(refname:short)', $Branch) -Capture
+        if ([string]::IsNullOrWhiteSpace($ExistingBranch)) {
+            Invoke-MechoFlyGit -Arguments @(
+                '-C', $Target, 'switch', '--create', $Branch,
+                '--track', $RemoteRef)
+        }
+        else {
+            Invoke-MechoFlyGit -Arguments @('-C', $Target, 'switch', $Branch)
+        }
+    }
+    Invoke-MechoFlyGit -Arguments @(
+        '-C', $Target, 'merge', '--ff-only', $RemoteRef)
 }
 
 $LocalCommit = Invoke-MechoFlyGit -Arguments @('-C', $Target, 'rev-parse', 'HEAD') -Capture
-$RemoteCommit = Invoke-MechoFlyGit -Arguments @('-C', $Target, 'rev-parse', 'origin/main') -Capture
+$RemoteCommit = Invoke-MechoFlyGit -Arguments @('-C', $Target, 'rev-parse', $RemoteRef) -Capture
 if ($LocalCommit -ne $RemoteCommit) {
-    throw 'AI100 did not converge to the exact origin/main commit.'
+    throw ('AI100 did not converge to the exact ' + $RemoteRef + ' commit.')
 }
-
-$ProfileDirectory = Join-Path $env:LOCALAPPDATA 'MechoFly'
-$ProfilePath = Join-Path $ProfileDirectory 'runtime-profile.json'
-if (-not (Test-Path -LiteralPath $ProfileDirectory -PathType Container)) {
-    New-Item -ItemType Directory -Path $ProfileDirectory -Force | Out-Null
+$LocalTree = Invoke-MechoFlyGit -Arguments @(
+    '-C', $Target, 'rev-parse', 'HEAD^{tree}') -Capture
+$RemoteTree = Invoke-MechoFlyGit -Arguments @(
+    '-C', $Target, 'rev-parse', ($RemoteRef + '^{tree}')) -Capture
+if ($LocalTree -ne $RemoteTree) {
+    throw ('AI100 tree does not match the exact ' + $RemoteRef + ' tree.')
 }
-$Profile = [ordered]@{
-    schema_version = 2
-    machine_role = 'ai100-development'
-    skin = 'firefly'
-    compute = 'auto'
-    reduced_motion = $false
-    canonical_repository = $CanonicalRepository
-    workspace = $Target
-    main_commit = $LocalCommit
-    live_hardware_authority = 'NONE'
-    generated_utc = [DateTime]::UtcNow.ToString('o')
+if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and
+    $LocalCommit -ne $ExpectedCommit.ToLowerInvariant()) {
+    throw ('AI100 commit ' + $LocalCommit + ' differs from pinned commit ' +
+        $ExpectedCommit.ToLowerInvariant() + '.')
 }
-$ProfileJson = $Profile | ConvertTo-Json -Depth 3
-[System.IO.File]::WriteAllText($ProfilePath, $ProfileJson + [Environment]::NewLine,
-    (New-Object System.Text.UTF8Encoding($false)))
 
 & (Join-Path $Target 'tools\Verify-Tree.ps1')
 & (Join-Path $Target 'host-windows\build.ps1')
@@ -275,6 +295,94 @@ if ($Receipt.status -ne 'PASS' -or -not $Receipt.live_state_unchanged -or
     $Receipt.implementation -ne 'independent-rust-rebuild') {
     throw 'MechoFly self-test receipt did not satisfy the AI100 safety checks.'
 }
+
+# Recheck GitHub after the build so the receipt cannot silently describe a
+# branch that advanced while AI100 was compiling. No tracked source file may
+# have changed during the build.
+Invoke-MechoFlyGit -Arguments @(
+    '-C', $Target, 'fetch', '--prune', 'origin', $FetchRef)
+$FinalBranch = Invoke-MechoFlyGit -Arguments @(
+    '-C', $Target, 'rev-parse', '--abbrev-ref', 'HEAD') -Capture
+$FinalCommit = Invoke-MechoFlyGit -Arguments @(
+    '-C', $Target, 'rev-parse', 'HEAD') -Capture
+$FinalTree = Invoke-MechoFlyGit -Arguments @(
+    '-C', $Target, 'rev-parse', 'HEAD^{tree}') -Capture
+$FinalRemoteCommit = Invoke-MechoFlyGit -Arguments @(
+    '-C', $Target, 'rev-parse', $RemoteRef) -Capture
+$FinalRemoteTree = Invoke-MechoFlyGit -Arguments @(
+    '-C', $Target, 'rev-parse', ($RemoteRef + '^{tree}')) -Capture
+$FinalStatus = Invoke-MechoFlyGit -Arguments @(
+    '-C', $Target, 'status', '--porcelain=v1', '--untracked-files=all') -Capture
+if ($FinalBranch -ne $Branch -or
+    $FinalCommit -ne $LocalCommit -or
+    $FinalTree -ne $LocalTree -or
+    $FinalRemoteCommit -ne $LocalCommit -or
+    $FinalRemoteTree -ne $LocalTree -or
+    -not [string]::IsNullOrWhiteSpace($FinalStatus)) {
+    throw ('AI100 source identity changed during the build. Rerun setup; ' +
+        'no unverified executable will be installed.')
+}
+
+$ExecutableHash = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash
+$ProfileDirectory = Join-Path $env:LOCALAPPDATA 'MechoFly'
+$ProfilePath = Join-Path $ProfileDirectory 'runtime-profile.json'
+if (-not (Test-Path -LiteralPath $ProfileDirectory -PathType Container)) {
+    New-Item -ItemType Directory -Path $ProfileDirectory -Force | Out-Null
+}
+$GeneratedUtc = [DateTime]::UtcNow.ToString('o')
+$Profile = [ordered]@{
+    schema_version = 3
+    machine_role = 'ai100-development'
+    skin = 'firefly'
+    compute = 'auto'
+    reduced_motion = $false
+    canonical_repository = $CanonicalRepository
+    workspace = $Target
+    source_branch = $Branch
+    source_commit = $LocalCommit
+    source_tree = $LocalTree
+    source_dirty = $false
+    executable_sha256 = $ExecutableHash
+    live_hardware_authority = 'NONE'
+    generated_utc = $GeneratedUtc
+}
+$ProfileJson = $Profile | ConvertTo-Json -Depth 4
+[System.IO.File]::WriteAllText(
+    $ProfilePath,
+    $ProfileJson + [Environment]::NewLine,
+    (New-Object System.Text.UTF8Encoding($false)))
+
+$SourceIdentityPath = Join-Path $ArtifactDirectory 'ai100-source-identity.json'
+$SourceIdentity = [ordered]@{
+    schema_version = 1
+    status = 'PASS'
+    canonical_repository = $CanonicalRepository
+    workspace = $Target
+    source_branch = $Branch
+    source_commit = $LocalCommit
+    source_tree = $LocalTree
+    source_dirty = $false
+    remote_commit = $FinalRemoteCommit
+    remote_tree = $FinalRemoteTree
+    remote_exact_match = $true
+    executable = $Executable
+    executable_sha256 = $ExecutableHash
+    self_test_receipt = $ReceiptPath
+    self_test_status = [string]$Receipt.status
+    live_state_unchanged = [bool]$Receipt.live_state_unchanged
+    live_hardware_authority = 'NONE'
+    generated_utc = $GeneratedUtc
+}
+$SourceIdentityJson = $SourceIdentity | ConvertTo-Json -Depth 5
+[System.IO.File]::WriteAllText(
+    $SourceIdentityPath,
+    $SourceIdentityJson + [Environment]::NewLine,
+    (New-Object System.Text.UTF8Encoding($false)))
+
+& (Join-Path $Target 'tools\Assert-AI100-SourceIdentity.ps1') `
+    -RepositoryRoot $Target `
+    -ProfilePath $ProfilePath `
+    -RefreshRemote
 
 $DesktopDirectories = @(
     [Environment]::GetFolderPath('Desktop'),
@@ -320,6 +428,19 @@ try {
         -IconLocation $IconLocation
     $CreatedShortcuts.Add($StartShortcut)
 
+    $SyncShortcut = Join-Path $UserDesktop 'Sync MechoFly with GitHub.lnk'
+    New-MechoFlyShortcut `
+        -Shell $Shell `
+        -ShortcutPath $SyncShortcut `
+        -TargetPath $WindowsPowerShell `
+        -Arguments ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' +
+            (Join-Path $Target 'tools\Setup-AI100-MechoFly.ps1') +
+            '" -Branch "' + $Branch + '"') `
+        -Description ('Fast-forward, rebuild, and verify MechoFly from origin/' +
+            $Branch + '.') `
+        -IconLocation $IconLocation
+    $CreatedShortcuts.Add($SyncShortcut)
+
     $StopShortcut = Join-Path $UserDesktop 'Stop MechoFly.lnk'
     New-MechoFlyShortcut `
         -Shell $Shell `
@@ -351,9 +472,12 @@ if ($Launch) {
     & (Join-Path $Target 'host-windows\Start-MechoFly-AI100.ps1')
 }
 
-Write-Host ('MECHOFLY_AI100_SYNC=PASS commit=' + $LocalCommit)
+Write-Host ('MECHOFLY_AI100_SYNC=PASS branch=' + $Branch +
+    ' commit=' + $LocalCommit + ' tree=' + $LocalTree)
 Write-Host ('MECHOFLY_AI100_WORKSPACE=' + $Target)
 Write-Host ('MECHOFLY_AI100_PROFILE=' + $ProfilePath)
+Write-Host ('MECHOFLY_AI100_SOURCE_IDENTITY=' + $SourceIdentityPath)
+Write-Host ('MECHOFLY_EXECUTABLE_SHA256=' + $ExecutableHash)
 Write-Host ('MECHOFLY_LEGACY_SHORTCUTS_REMOVED=' + [string]$RemovedShortcutCount)
 $CreatedShortcuts | ForEach-Object { Write-Host ('MECHOFLY_SHORTCUT=' + $_) }
 Write-Host ('MECHOFLY_SELF_TEST_RECEIPT=' + $ReceiptPath)

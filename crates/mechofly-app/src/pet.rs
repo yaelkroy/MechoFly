@@ -1017,7 +1017,7 @@ mod tests {
         );
         let mut transparent = 0;
         let mut visible = 0;
-        for pixel in pixels.chunks_exact(4) {
+        for pixel in pixels.as_chunks::<4>().0 {
             let alpha = pixel[3];
             if alpha == 0 {
                 transparent += 1;
