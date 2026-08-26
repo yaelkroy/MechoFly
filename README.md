@@ -137,7 +137,9 @@ performs a guarded fast-forward and rebuild.
 Auto, captures only MechoFly windows (not the full desktop), and creates one
 upload ZIP in Downloads for runtime and design review.
 
-See [architecture](docs/ARCHITECTURE.md),
+See the [product and science roadmap](docs/ROADMAP.md),
+[DesktopFly parity and beyond contract](docs/DESKTOPFLY_PARITY.md),
+[architecture](docs/ARCHITECTURE.md),
 [compute profiles](docs/COMPUTE_PROFILES.md),
 [Brain Lab v3](docs/BRAIN_LAB_V3.md),
 [connectome and learning](docs/LEARNING_AND_CONNECTOME.md),
