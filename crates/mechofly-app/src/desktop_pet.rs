@@ -24,15 +24,18 @@ use windows_sys::Win32::{
         SelectObject,
     },
     System::LibraryLoader::GetModuleHandleW,
-    UI::WindowsAndMessaging::{
-        CS_DBLCLKS, CreateWindowExW, DefWindowProcW, DestroyWindow,
-        GWLP_USERDATA, GetCursorPos, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
-        HWND_TOPMOST, RegisterClassExW, ReleaseCapture, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-        SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE,
-        SetCapture, SetWindowLongPtrW, SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow,
-        WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
-        WM_RBUTTONUP, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-        WS_EX_TOPMOST, WS_POPUP,
+    UI::{
+        Input::KeyboardAndMouse::{ReleaseCapture, SetCapture},
+        WindowsAndMessaging::{
+            CS_DBLCLKS, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
+            GetCursorPos, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
+            RegisterClassExW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+            SM_YVIRTUALSCREEN, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE,
+            SetWindowLongPtrW, SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow,
+            WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
+            WM_RBUTTONUP, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+            WS_EX_TOPMOST, WS_POPUP,
+        },
     },
 };
 
@@ -150,9 +153,9 @@ impl PetOverlay {
                 DestroyWindow(hwnd);
                 return Err(last_error("CreateDIBSection"));
             }
-            let old_bitmap = SelectObject(memory_dc, bitmap as HGDIOBJ);
+            let old_bitmap = SelectObject(memory_dc, bitmap);
             if old_bitmap.is_null() {
-                DeleteObject(bitmap as HGDIOBJ);
+                DeleteObject(bitmap);
                 DeleteDC(memory_dc);
                 DestroyWindow(hwnd);
                 return Err(last_error("SelectObject"));
@@ -275,7 +278,7 @@ impl PetOverlay {
         unsafe {
             let mut rect: RECT = zeroed();
             (GetWindowRect(self.hwnd, &mut rect) != 0)
-                .then(|| Pos2::new(rect.left as f32, rect.top as f32))
+                .then_some(Pos2::new(rect.left as f32, rect.top as f32))
         }
     }
 
@@ -287,10 +290,8 @@ impl PetOverlay {
             let mut rect: RECT = zeroed();
             GetCursorPos(&mut cursor) != 0
                 && GetWindowRect(self.hwnd, &mut rect) != 0
-                && cursor.x >= rect.left
-                && cursor.x < rect.right
-                && cursor.y >= rect.top
-                && cursor.y < rect.bottom
+                && (rect.left..rect.right).contains(&cursor.x)
+                && (rect.top..rect.bottom).contains(&cursor.y)
         }
     }
 }
@@ -302,7 +303,7 @@ impl Drop for PetOverlay {
         unsafe {
             SetWindowLongPtrW(self.hwnd, GWLP_USERDATA, 0);
             SelectObject(self.memory_dc, self.old_bitmap);
-            DeleteObject(self.bitmap as HGDIOBJ);
+            DeleteObject(self.bitmap);
             DeleteDC(self.memory_dc);
             DestroyWindow(self.hwnd);
         }

@@ -1103,7 +1103,7 @@ mod tests {
     #[test]
     fn population_sampling_preserves_alternating_hemispheres() {
         for count in [4_096_usize, 12_615, 65_536, 139_255] {
-            assert_eq!(display_stride(count) % 2, 1);
+            assert!(!display_stride(count).is_multiple_of(2));
         }
     }
 
