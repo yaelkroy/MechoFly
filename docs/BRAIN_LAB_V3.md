@@ -17,8 +17,10 @@ scientific claim and safety boundaries remain continuously visible.
 - **Counterfactual composer:** targets, amplitude, duration, frame count,
   authored purpose, and the immutable preview boundary appear directly above
   the comparison rather than in an unrelated rail.
-- **Right trust layer:** claim badges, graph identity and digest, adapter/API,
-  neuron lookup, and the separate software-learning digest.
+- **Right trust layer:** claim badges, graph identity and digest, AI100 source
+  branch/commit/tree and executable SHA-256, adapter/API, neuron lookup, and
+  the separate software-learning digest. Builds without a complete runtime
+  receipt are labeled as unrecorded development builds.
 - **Bottom signal timeline:** retained-frame spike activity, behavior state,
   runtime warning, and the most recent user-facing event.
 

@@ -3,7 +3,10 @@ use std::{sync::Arc, time::Duration};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 use mechofly_core::{ComparisonResult, Feedback, PetPolicy, StimulationPolicy, StimulationRequest};
 
-use crate::{compute::ComputePreference, pet::Skin, runtime::SimulationSession};
+use crate::{
+    app::RuntimeSourceIdentity, compute::ComputePreference, pet::Skin,
+    runtime::SimulationSession,
+};
 
 const CANVAS: Color32 = Color32::from_rgb(5, 9, 15);
 const SURFACE: Color32 = Color32::from_rgb(10, 17, 27);
@@ -85,6 +88,7 @@ impl BrainLabState {
         session: &SimulationSession,
         policy: &PetPolicy,
         skin: Skin,
+        source_identity: &RuntimeSourceIdentity,
     ) -> Vec<LabCommand> {
         let mut commands = Vec::new();
         style_context(ui.ctx());
@@ -122,6 +126,14 @@ impl BrainLabState {
                             WARNING,
                         );
                         status_chip(ui, "MODEL RUNNING", ACTUAL_SOFT, ACTUAL);
+                        if let Some(commit) = source_identity.short_commit() {
+                            status_chip(
+                                ui,
+                                &format!("BUILD {commit}"),
+                                Color32::from_rgb(38, 31, 59),
+                                VIOLET,
+                            );
+                        }
                     });
                 });
                 ui.add_space(5.0);
@@ -289,6 +301,37 @@ impl BrainLabState {
                         key_value(ui, "Product", &session.graph.identity.product);
                         ui.label(egui::RichText::new("Graph SHA-256").color(MUTED));
                         ui.monospace(&session.graph.identity.sha256);
+                        ui.separator();
+                        ui.label(egui::RichText::new("Software build identity").strong());
+                        if source_identity.is_complete() {
+                            key_value(
+                                ui,
+                                "Branch",
+                                source_identity.branch.as_deref().unwrap_or_default(),
+                            );
+                            ui.label(egui::RichText::new("Commit").color(MUTED));
+                            ui.monospace(
+                                source_identity.commit.as_deref().unwrap_or_default(),
+                            );
+                            ui.label(egui::RichText::new("Git tree").color(MUTED));
+                            ui.monospace(
+                                source_identity.tree.as_deref().unwrap_or_default(),
+                            );
+                            ui.label(egui::RichText::new("Executable SHA-256").color(MUTED));
+                            ui.monospace(
+                                source_identity
+                                    .executable_sha256
+                                    .as_deref()
+                                    .unwrap_or_default(),
+                            );
+                        } else {
+                            claim_badge(
+                                ui,
+                                "UNRECORDED DEVELOPMENT BUILD",
+                                Color32::from_rgb(45, 33, 38),
+                                WARNING,
+                            );
+                        }
                         ui.separator();
                         ui.label(egui::RichText::new("Capacity decision").strong());
                         ui.label(&session.assessment.reason);

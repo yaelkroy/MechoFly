@@ -25,6 +25,30 @@ pub struct AppConfig {
     pub compute: ComputePreference,
     pub open_brain_lab: bool,
     pub reduced_motion: bool,
+    pub source_identity: RuntimeSourceIdentity,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RuntimeSourceIdentity {
+    pub branch: Option<String>,
+    pub commit: Option<String>,
+    pub tree: Option<String>,
+    pub executable_sha256: Option<String>,
+}
+
+impl RuntimeSourceIdentity {
+    pub fn short_commit(&self) -> Option<&str> {
+        self.commit
+            .as_deref()
+            .map(|commit| commit.get(..12).unwrap_or(commit))
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.branch.is_some()
+            && self.commit.is_some()
+            && self.tree.is_some()
+            && self.executable_sha256.is_some()
+    }
 }
 
 pub struct MechoFlyApp {
@@ -33,6 +57,7 @@ pub struct MechoFlyApp {
     pub lab: BrainLabState,
     pub policy: PetPolicy,
     pub skin: Skin,
+    source_identity: RuntimeSourceIdentity,
     pet: PetMotion,
     #[cfg(windows)]
     desktop_pet: Option<crate::desktop_pet::PetOverlay>,
@@ -101,6 +126,7 @@ impl MechoFlyApp {
             lab: BrainLabState::new(config.open_brain_lab, config.compute),
             policy,
             skin: config.skin,
+            source_identity: config.source_identity,
             pet,
             #[cfg(windows)]
             desktop_pet,
@@ -427,6 +453,7 @@ impl eframe::App for MechoFlyApp {
                 let session = &self.session;
                 let policy = &self.policy;
                 let skin = self.skin;
+                let source_identity = &self.source_identity;
                 ui.ctx().show_viewport_immediate(
                     egui::ViewportId::from_hash_of("mechofly-brain-lab-v3"),
                     egui::ViewportBuilder::default()
@@ -440,7 +467,7 @@ impl eframe::App for MechoFlyApp {
                         if lab_ui.input(|input| input.viewport().close_requested()) {
                             lab.open = false;
                         }
-                        lab.draw(lab_ui, session, policy, skin)
+                        lab.draw(lab_ui, session, policy, skin, source_identity)
                     },
                 )
             };

@@ -13,7 +13,7 @@ mod tray;
 
 use std::{path::PathBuf, str::FromStr};
 
-use app::{AppConfig, MechoFlyApp};
+use app::{AppConfig, MechoFlyApp, RuntimeSourceIdentity};
 use compute::ComputePreference;
 #[cfg(not(windows))]
 use pet::{PET_HEIGHT, PET_WIDTH};
@@ -95,6 +95,10 @@ struct RuntimeProfile {
     skin: Option<String>,
     compute: Option<ComputePreference>,
     reduced_motion: Option<bool>,
+    source_branch: Option<String>,
+    source_commit: Option<String>,
+    source_tree: Option<String>,
+    executable_sha256: Option<String>,
 }
 
 impl AppConfig {
@@ -110,6 +114,12 @@ impl AppConfig {
             open_brain_lab: args.iter().any(|arg| arg == "--brain-lab"),
             reduced_motion: profile.reduced_motion.unwrap_or(false)
                 || args.iter().any(|arg| arg == "--reduced-motion"),
+            source_identity: RuntimeSourceIdentity {
+                branch: profile.source_branch,
+                commit: profile.source_commit,
+                tree: profile.source_tree,
+                executable_sha256: profile.executable_sha256,
+            },
         };
         if let Some(value) = option_value(args, "--skin") {
             config.skin = Skin::from_str(value)?;
