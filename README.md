@@ -101,14 +101,19 @@ and validation warnings before starting a pinned imported-graph session.
 
 ## AI100
 
-`tools\Setup-AI100-MechoFly.ps1` synchronizes the clean `main` checkout at
-`D:\Projects\MechoFly`, writes the machine-local Firefly/Auto profile, builds
-the Rust executable, runs the safety self-test, and maintains the Start, Stop,
-and Emergency Stop shortcuts.
+`tools\Setup-AI100-MechoFly.ps1` synchronizes a clean selected GitHub branch at
+`D:\Projects\MechoFly`, builds and tests it, and records the exact branch,
+commit, Git tree, and executable SHA-256. AI100 defaults to Firefly/Auto. Start
+refuses a checkout or binary that differs from that receipt; the Sync shortcut
+performs a guarded fast-forward and rebuild.
 
 ```powershell
 .\tools\Setup-AI100-MechoFly.ps1 -Launch
 ```
+
+`tools\Capture-AI100-Evidence.ps1` rechecks GitHub identity, exercises CPU and
+Auto, captures only MechoFly windows (not the full desktop), and creates one
+upload ZIP in Downloads for runtime and design review.
 
 See [architecture](docs/ARCHITECTURE.md),
 [compute profiles](docs/COMPUTE_PROFILES.md),

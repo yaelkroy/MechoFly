@@ -365,6 +365,7 @@ $SourceIdentity = [ordered]@{
     remote_commit = $FinalRemoteCommit
     remote_tree = $FinalRemoteTree
     remote_exact_match = $true
+    failure = $null
     executable = $Executable
     executable_sha256 = $ExecutableHash
     self_test_receipt = $ReceiptPath
@@ -379,10 +380,25 @@ $SourceIdentityJson = $SourceIdentity | ConvertTo-Json -Depth 5
     $SourceIdentityJson + [Environment]::NewLine,
     (New-Object System.Text.UTF8Encoding($false)))
 
-& (Join-Path $Target 'tools\Assert-AI100-SourceIdentity.ps1') `
-    -RepositoryRoot $Target `
-    -ProfilePath $ProfilePath `
-    -RefreshRemote
+try {
+    & (Join-Path $Target 'tools\Assert-AI100-SourceIdentity.ps1') `
+        -RepositoryRoot $Target `
+        -ProfilePath $ProfilePath `
+        -RefreshRemote
+}
+catch {
+    # If the branch moved during the final network check, leave an explicit
+    # FAIL receipt so the Start shortcut cannot run the now-stale build.
+    $SourceIdentity['status'] = 'FAIL'
+    $SourceIdentity['remote_exact_match'] = $false
+    $SourceIdentity['failure'] = $_.Exception.Message
+    $SourceIdentityJson = $SourceIdentity | ConvertTo-Json -Depth 5
+    [System.IO.File]::WriteAllText(
+        $SourceIdentityPath,
+        $SourceIdentityJson + [Environment]::NewLine,
+        (New-Object System.Text.UTF8Encoding($false)))
+    throw
+}
 
 $DesktopDirectories = @(
     [Environment]::GetFolderPath('Desktop'),
@@ -440,6 +456,17 @@ try {
             $Branch + '.') `
         -IconLocation $IconLocation
     $CreatedShortcuts.Add($SyncShortcut)
+
+    $EvidenceShortcut = Join-Path $UserDesktop 'Capture MechoFly Evidence.lnk'
+    New-MechoFlyShortcut `
+        -Shell $Shell `
+        -ShortcutPath $EvidenceShortcut `
+        -TargetPath $WindowsPowerShell `
+        -Arguments ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' +
+            (Join-Path $Target 'tools\Capture-AI100-Evidence.ps1') + '"') `
+        -Description 'Capture exact-source logs and cropped design screenshots.' `
+        -IconLocation $IconLocation
+    $CreatedShortcuts.Add($EvidenceShortcut)
 
     $StopShortcut = Join-Path $UserDesktop 'Stop MechoFly.lnk'
     New-MechoFlyShortcut `
