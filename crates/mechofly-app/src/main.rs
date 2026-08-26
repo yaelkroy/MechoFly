@@ -15,9 +15,9 @@ use std::{path::PathBuf, str::FromStr};
 
 use app::{AppConfig, MechoFlyApp, RuntimeSourceIdentity};
 use compute::ComputePreference;
+use pet::Skin;
 #[cfg(not(windows))]
 use pet::{PET_HEIGHT, PET_WIDTH};
-use pet::Skin;
 use serde::Deserialize;
 
 fn main() {

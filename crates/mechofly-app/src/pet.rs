@@ -193,12 +193,7 @@ impl SceneBuilder {
         });
     }
 
-    fn polygon(
-        &mut self,
-        points: &[[f32; 2]],
-        fill: Rgba,
-        stroke: Option<(Rgba, f32)>,
-    ) {
+    fn polygon(&mut self, points: &[[f32; 2]], fill: Rgba, stroke: Option<(Rgba, f32)>) {
         let points = points
             .iter()
             .map(|point| self.point(point[0], point[1]))
@@ -311,9 +306,7 @@ fn pet_scene(
     };
     let offset_y = match behavior {
         Behavior::Walk | Behavior::Reverse if animated => (phase * 9.0).sin().abs() * -2.2,
-        Behavior::Flight | Behavior::PreEscape if animated => {
-            -12.0 + (phase * 5.0).sin() * 4.0
-        }
+        Behavior::Flight | Behavior::PreEscape if animated => -12.0 + (phase * 5.0).sin() * 4.0,
         Behavior::Landing => 3.0,
         _ => 0.0,
     };
@@ -361,12 +354,7 @@ fn draw_legs(scene: &mut SceneBuilder, behavior: Behavior, gait: f32, color: Rgb
     ];
     for (index, (anchor, swing)) in pairs.into_iter().enumerate() {
         let far = Rgba(color.0, color.1, color.2, 150);
-        scene.line(
-            [anchor, 122.0],
-            [anchor - 20.0 + swing, 157.0],
-            3.0,
-            far,
-        );
+        scene.line([anchor, 122.0], [anchor - 20.0 + swing, 157.0], 3.0, far);
         scene.line(
             [anchor - 20.0 + swing, 157.0],
             [anchor - 43.0 + swing, 178.0],
@@ -429,21 +417,11 @@ fn draw_wings(
             Some((edge, 1.8)),
         );
         for y in [77.0_f32, 108.0, 139.0] {
-            scene.line(
-                [42.0, y],
-                [15.0, y + 3.0],
-                2.0,
-                Rgba(95, 189, 181, 105),
-            );
+            scene.line([42.0, y], [15.0, y + 3.0], 2.0, Rgba(95, 189, 181, 105));
         }
     } else {
         scene.polygon(
-            &[
-                [197.0, 104.0],
-                [163.0, 70.0],
-                [86.0, 62.0],
-                [118.0, 106.0],
-            ],
+            &[[197.0, 104.0], [163.0, 70.0], [86.0, 62.0], [118.0, 106.0]],
             fill,
             Some((edge, 1.7)),
         );
@@ -516,19 +494,9 @@ fn draw_firefly_scene(scene: &mut SceneBuilder, behavior: Behavior) {
         Some((Rgba::rgb(13, 20, 17), 2.0)),
     );
     for x in [91.0_f32, 112.0, 133.0, 154.0] {
-        scene.line(
-            [x, 88.0],
-            [x + 1.0, 144.0],
-            2.0,
-            Rgba(127, 197, 103, 190),
-        );
+        scene.line([x, 88.0], [x + 1.0, 144.0], 2.0, Rgba(127, 197, 103, 190));
     }
-    scene.line(
-        [87.0, 116.0],
-        [164.0, 116.0],
-        1.6,
-        Rgba(135, 208, 121, 190),
-    );
+    scene.line([87.0, 116.0], [164.0, 116.0], 1.6, Rgba(135, 208, 121, 190));
     for (x, y, size) in [
         (101.0, 102.0, 2.5),
         (116.0, 129.0, 2.0),
@@ -536,13 +504,7 @@ fn draw_firefly_scene(scene: &mut SceneBuilder, behavior: Behavior) {
         (149.0, 132.0, 2.2),
         (164.0, 106.0, 1.8),
     ] {
-        scene.ellipse(
-            [x, y],
-            [size, size],
-            0.0,
-            Rgba::rgb(184, 226, 112),
-            None,
-        );
+        scene.ellipse([x, y], [size, size], 0.0, Rgba::rgb(184, 226, 112), None);
     }
     scene.ellipse(
         [250.0, 105.0],
@@ -595,19 +557,9 @@ fn draw_drosophila_scene(scene: &mut SceneBuilder) {
         Some((Rgba::rgb(72, 39, 25), 2.5)),
     );
     for x in [65.0_f32, 86.0, 107.0, 128.0, 149.0] {
-        scene.line(
-            [x, 89.0],
-            [x + 2.0, 143.0],
-            2.5,
-            Rgba(87, 48, 25, 210),
-        );
+        scene.line([x, 89.0], [x + 2.0, 143.0], 2.5, Rgba(87, 48, 25, 210));
     }
-    scene.line(
-        [53.0, 116.0],
-        [157.0, 116.0],
-        1.5,
-        Rgba(234, 166, 75, 130),
-    );
+    scene.line([53.0, 116.0], [157.0, 116.0], 1.5, Rgba(234, 166, 75, 130));
     scene.ellipse(
         [248.0, 104.0],
         [13.0, 15.0],
@@ -628,13 +580,7 @@ fn draw_drosophila_scene(scene: &mut SceneBuilder) {
         (245.0, 124.0),
         (251.0, 130.0),
     ] {
-        scene.ellipse(
-            [x, y],
-            [1.7, 1.7],
-            0.0,
-            Rgba::rgb(255, 177, 95),
-            None,
-        );
+        scene.ellipse([x, y], [1.7, 1.7], 0.0, Rgba::rgb(255, 177, 95), None);
     }
 }
 
@@ -653,24 +599,14 @@ fn draw_front_details(
         0.0
     };
     let lift = if alert { -11.0 } else { 0.0 };
-    scene.line(
-        [248.0, 103.0],
-        [279.0, 82.0 + lift + sway],
-        2.0,
-        leg,
-    );
+    scene.line([248.0, 103.0], [279.0, 82.0 + lift + sway], 2.0, leg);
     scene.line(
         [279.0, 82.0 + lift + sway],
         [305.0, 78.0 + lift + sway],
         1.5,
         leg,
     );
-    scene.line(
-        [248.0, 129.0],
-        [280.0, 146.0 - lift - sway],
-        2.0,
-        leg,
-    );
+    scene.line([248.0, 129.0], [280.0, 146.0 - lift - sway], 2.0, leg);
     scene.line(
         [280.0, 146.0 - lift - sway],
         [305.0, 150.0 - lift - sway],
@@ -693,12 +629,7 @@ fn draw_front_details(
     }
 }
 
-fn ellipse_points(
-    center: [f32; 2],
-    radii: [f32; 2],
-    angle: f32,
-    count: usize,
-) -> Vec<[f32; 2]> {
+fn ellipse_points(center: [f32; 2], radii: [f32; 2], angle: f32, count: usize) -> Vec<[f32; 2]> {
     let cosine = angle.cos();
     let sine = angle.sin();
     (0..count)
@@ -798,17 +729,15 @@ impl RasterCanvas {
         );
         let cosine = angle.cos();
         let sine = angle.sin();
-        let inner = stroke.map(|(_, width)| {
-            (1.0 - width / radii[0].min(radii[1]).max(1.0)).max(0.0)
-        });
+        let inner =
+            stroke.map(|(_, width)| (1.0 - width / radii[0].min(radii[1]).max(1.0)).max(0.0));
         for y in bounds.1..=bounds.3 {
             for x in bounds.0..=bounds.2 {
                 let dx = x as f32 + 0.5 - center[0];
                 let dy = y as f32 + 0.5 - center[1];
                 let local_x = dx * cosine + dy * sine;
                 let local_y = -dx * sine + dy * cosine;
-                let distance =
-                    (local_x / radii[0]).powi(2) + (local_y / radii[1]).powi(2);
+                let distance = (local_x / radii[0]).powi(2) + (local_y / radii[1]).powi(2);
                 if distance <= 1.0 {
                     let color = match (stroke, inner) {
                         (Some((stroke_color, _)), Some(inner_radius))
@@ -839,8 +768,8 @@ impl RasterCanvas {
             for x in bounds.0..=bounds.2 {
                 let px = x as f32 + 0.5;
                 let py = y as f32 + 0.5;
-                let t = (((px - from[0]) * dx + (py - from[1]) * dy) / length_squared)
-                    .clamp(0.0, 1.0);
+                let t =
+                    (((px - from[0]) * dx + (py - from[1]) * dy) / length_squared).clamp(0.0, 1.0);
                 let nearest_x = from[0] + t * dx;
                 let nearest_y = from[1] + t * dy;
                 let distance_squared = (px - nearest_x).powi(2) + (py - nearest_y).powi(2);
@@ -881,20 +810,11 @@ impl RasterCanvas {
         }
     }
 
-    fn bounds(
-        &self,
-        left: f32,
-        top: f32,
-        right: f32,
-        bottom: f32,
-    ) -> (usize, usize, usize, usize) {
+    fn bounds(&self, left: f32, top: f32, right: f32, bottom: f32) -> (usize, usize, usize, usize) {
         let x0 = left.floor().max(0.0) as usize;
         let y0 = top.floor().max(0.0) as usize;
         let x1 = right.ceil().min((self.width - 1) as f32).max(0.0) as usize;
-        let y1 = bottom
-            .ceil()
-            .min((self.height - 1) as f32)
-            .max(0.0) as usize;
+        let y1 = bottom.ceil().min((self.height - 1) as f32).max(0.0) as usize;
         (x0.min(x1), y0.min(y1), x1, y1)
     }
 

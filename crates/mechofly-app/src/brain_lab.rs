@@ -4,8 +4,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Str
 use mechofly_core::{ComparisonResult, Feedback, PetPolicy, StimulationPolicy, StimulationRequest};
 
 use crate::{
-    app::RuntimeSourceIdentity, compute::ComputePreference, pet::Skin,
-    runtime::SimulationSession,
+    app::RuntimeSourceIdentity, compute::ComputePreference, pet::Skin, runtime::SimulationSession,
 };
 
 const CANVAS: Color32 = Color32::from_rgb(5, 9, 15);
@@ -310,13 +309,9 @@ impl BrainLabState {
                                 source_identity.branch.as_deref().unwrap_or_default(),
                             );
                             ui.label(egui::RichText::new("Commit").color(MUTED));
-                            ui.monospace(
-                                source_identity.commit.as_deref().unwrap_or_default(),
-                            );
+                            ui.monospace(source_identity.commit.as_deref().unwrap_or_default());
                             ui.label(egui::RichText::new("Git tree").color(MUTED));
-                            ui.monospace(
-                                source_identity.tree.as_deref().unwrap_or_default(),
-                            );
+                            ui.monospace(source_identity.tree.as_deref().unwrap_or_default());
                             ui.label(egui::RichText::new("Executable SHA-256").color(MUTED));
                             ui.monospace(
                                 source_identity
@@ -375,7 +370,11 @@ impl BrainLabState {
                         key_value(
                             ui,
                             "Policy",
-                            if policy.enabled { "enabled" } else { "disabled" },
+                            if policy.enabled {
+                                "enabled"
+                            } else {
+                                "disabled"
+                            },
                         );
                         key_value(ui, "Explicit updates", &policy.ledger.len().to_string());
                         ui.monospace(policy.digest());
@@ -491,12 +490,7 @@ fn section_title(ui: &mut egui::Ui, label: &str, accent: Color32) {
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(3.0, 17.0), Sense::hover());
         ui.painter().rect_filled(rect, 2, accent);
-        ui.label(
-            egui::RichText::new(label)
-                .strong()
-                .size(12.0)
-                .color(INK),
-        );
+        ui.label(egui::RichText::new(label).strong().size(12.0).color(INK));
     });
     ui.add_space(4.0);
 }
@@ -561,12 +555,7 @@ fn overview(ui: &mut egui::Ui, session: &SimulationSession) {
                 &session.last_summary.spike_count.to_string(),
                 POSITIVE,
             );
-            metric_card(
-                ui,
-                "FRAME",
-                &session.last_summary.frame.to_string(),
-                ACTUAL,
-            );
+            metric_card(ui, "FRAME", &session.last_summary.frame.to_string(), ACTUAL);
         });
     });
     ui.add_space(10.0);
@@ -669,11 +658,7 @@ fn metric_card(ui: &mut egui::Ui, label: &str, value: &str, accent: Color32) {
         });
 }
 
-fn comparison_view(
-    ui: &mut egui::Ui,
-    state: &mut BrainLabState,
-    commands: &mut Vec<LabCommand>,
-) {
+fn comparison_view(ui: &mut egui::Ui, state: &mut BrainLabState, commands: &mut Vec<LabCommand>) {
     preview_composer(ui, state, commands);
     ui.add_space(10.0);
     if state.comparison.is_none() {
@@ -759,11 +744,7 @@ fn comparison_view(
     });
 }
 
-fn preview_composer(
-    ui: &mut egui::Ui,
-    state: &mut BrainLabState,
-    commands: &mut Vec<LabCommand>,
-) {
+fn preview_composer(ui: &mut egui::Ui, state: &mut BrainLabState, commands: &mut Vec<LabCommand>) {
     egui::Frame::new()
         .fill(Color32::from_rgb(19, 18, 25))
         .stroke(Stroke::new(1.0, ALTERNATIVE.gamma_multiply(0.55)))
@@ -806,8 +787,7 @@ fn preview_composer(
                 if columns[1]
                     .add_sized(
                         [columns[1].available_width(), 31.0],
-                        egui::Button::new("Generate isolated comparison")
-                            .fill(ALTERNATIVE_SOFT),
+                        egui::Button::new("Generate isolated comparison").fill(ALTERNATIVE_SOFT),
                     )
                     .clicked()
                 {

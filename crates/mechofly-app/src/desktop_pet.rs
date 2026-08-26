@@ -28,13 +28,13 @@ use windows_sys::Win32::{
         Input::KeyboardAndMouse::{ReleaseCapture, SetCapture},
         WindowsAndMessaging::{
             CS_DBLCLKS, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
-            GetCursorPos, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
-            RegisterClassExW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
-            SM_YVIRTUALSCREEN, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE,
+            GetCursorPos, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, HTCLIENT,
+            HTTRANSPARENT, HWND_TOPMOST, RegisterClassExW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOSIZE,
             SetWindowLongPtrW, SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow,
-            HTCLIENT, HTTRANSPARENT, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
-            WM_MOUSEMOVE, WM_NCCREATE, WM_NCHITTEST, WM_RBUTTONUP, WNDCLASSEXW,
-            WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+            WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE,
+            WM_NCHITTEST, WM_RBUTTONUP, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
 };
@@ -83,10 +83,7 @@ impl OverlayShared {
     fn hit_test_screen(&self, screen_x: i32, screen_y: i32, rect: &RECT) -> bool {
         let local_x = screen_x - rect.left;
         let local_y = screen_y - rect.top;
-        if local_x < 0
-            || local_y < 0
-            || local_x >= PET_WIDTH as i32
-            || local_y >= PET_HEIGHT as i32
+        if local_x < 0 || local_y < 0 || local_x >= PET_WIDTH as i32 || local_y >= PET_HEIGHT as i32
         {
             return false;
         }
@@ -165,14 +162,8 @@ impl PetOverlay {
             info.bmiHeader.biBitCount = 32;
             info.bmiHeader.biCompression = BI_RGB;
             let mut bits: *mut c_void = null_mut();
-            let bitmap = CreateDIBSection(
-                memory_dc,
-                &info,
-                DIB_RGB_COLORS,
-                &mut bits,
-                null_mut(),
-                0,
-            );
+            let bitmap =
+                CreateDIBSection(memory_dc, &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
             if bitmap.is_null() || bits.is_null() {
                 DeleteDC(memory_dc);
                 DestroyWindow(hwnd);
@@ -195,14 +186,7 @@ impl PetOverlay {
                 shared,
                 pixels: vec![0; PET_WIDTH * PET_HEIGHT * 4],
             };
-            overlay.update(
-                position,
-                Skin::default(),
-                Behavior::Rest,
-                0.0,
-                1.0,
-                false,
-            )?;
+            overlay.update(position, Skin::default(), Behavior::Rest, 0.0, 1.0, false)?;
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             Ok(overlay)
         }
@@ -229,11 +213,7 @@ impl PetOverlay {
         // SAFETY: `bitmap_bits` points to a live PET_WIDTH × PET_HEIGHT 32-bit
         // DIB owned by this instance, and both buffers have exactly that size.
         unsafe {
-            copy_nonoverlapping(
-                self.pixels.as_ptr(),
-                self.bitmap_bits,
-                self.pixels.len(),
-            );
+            copy_nonoverlapping(self.pixels.as_ptr(), self.bitmap_bits, self.pixels.len());
             let destination = POINT {
                 x: position.x.round() as i32,
                 y: position.y.round() as i32,

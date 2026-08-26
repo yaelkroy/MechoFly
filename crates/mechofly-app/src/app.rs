@@ -93,27 +93,31 @@ impl MechoFlyApp {
             ..PetMotion::default()
         };
         #[cfg(windows)]
-        let (desktop_pet, overlay_warning) = match crate::desktop_pet::PetOverlay::new(
-            pet.screen_position,
-        ) {
-            Ok(overlay) => {
-                diagnostics::mark("native per-pixel-alpha desktop pet initialized");
-                (Some(overlay), None)
-            }
-            Err(error) => {
-                diagnostics::mark("native desktop pet failed; exposing transparent fallback host");
-                cc.egui_ctx
-                    .send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(
-                        PET_WIDTH as f32,
-                        PET_HEIGHT as f32,
-                    )));
-                cc.egui_ctx
-                    .send_viewport_cmd(ViewportCommand::OuterPosition(pet.screen_position));
-                cc.egui_ctx
-                    .send_viewport_cmd(ViewportCommand::Visible(true));
-                (None, Some(format!("Native desktop overlay unavailable: {error}")))
-            }
-        };
+        let (desktop_pet, overlay_warning) =
+            match crate::desktop_pet::PetOverlay::new(pet.screen_position) {
+                Ok(overlay) => {
+                    diagnostics::mark("native per-pixel-alpha desktop pet initialized");
+                    (Some(overlay), None)
+                }
+                Err(error) => {
+                    diagnostics::mark(
+                        "native desktop pet failed; exposing transparent fallback host",
+                    );
+                    cc.egui_ctx
+                        .send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(
+                            PET_WIDTH as f32,
+                            PET_HEIGHT as f32,
+                        )));
+                    cc.egui_ctx
+                        .send_viewport_cmd(ViewportCommand::OuterPosition(pet.screen_position));
+                    cc.egui_ctx
+                        .send_viewport_cmd(ViewportCommand::Visible(true));
+                    (
+                        None,
+                        Some(format!("Native desktop overlay unavailable: {error}")),
+                    )
+                }
+            };
         #[cfg(windows)]
         let tray_warning = match (tray_warning, overlay_warning) {
             (Some(tray), Some(overlay)) => Some(format!("{tray}; {overlay}")),
@@ -407,9 +411,8 @@ impl eframe::App for MechoFlyApp {
             if let Some(error) = update_error {
                 diagnostics::mark("native desktop pet update failed; enabling fallback host");
                 self.desktop_pet = None;
-                self.lab.message = format!(
-                    "Desktop overlay failed and switched to compatibility mode: {error}"
-                );
+                self.lab.message =
+                    format!("Desktop overlay failed and switched to compatibility mode: {error}");
                 ctx.send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(
                     PET_WIDTH as f32,
                     PET_HEIGHT as f32,
@@ -475,9 +478,8 @@ impl eframe::App for MechoFlyApp {
         }
 
         if let Some(warning) = self.tray_warning.take() {
-            self.lab.message = format!(
-                "Desktop host warning: {warning}. Right-click the pet to open Brain Lab."
-            );
+            self.lab.message =
+                format!("Desktop host warning: {warning}. Right-click the pet to open Brain Lab.");
         }
     }
 }

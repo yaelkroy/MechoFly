@@ -238,6 +238,10 @@ try {
         -RepositoryRoot $RepositoryRoot `
         -RefreshRemote `
         -PassThru
+    $ShortCommit = ([string]$Identity.source_commit).Substring(0, 12)
+    $ZipPath = Join-Path $Downloads (
+        'UPLOAD_MechoFly_AI100_ExactSource_Design_' + $Stamp + '_' +
+        $ShortCommit + '.zip')
     Write-JsonFile `
         -LiteralPath (Join-Path $Staging 'exact-source-identity.json') `
         -Value $Identity
