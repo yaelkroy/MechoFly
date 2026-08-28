@@ -58,20 +58,19 @@ jobs:
           cargo fmt --all
           git diff --check
           git diff --stat
-      - name: Publish the repaired candidate
+      - name: Publish source repair and stage workflow bytes
         shell: bash
         run: |
           git config user.name "Yael Demedetskaya"
           git config user.email "31790191+yaelkroy@users.noreply.github.com"
-          git rm \
-            .github/workflows/apply-synchronized-evidence-fix.yml \
-            .github/workflows/recover-synchronized-evidence-fix.yml
+          cp .github/workflows/windows.yml tools/windows-workflow.patched.yml
+          git restore --source=HEAD -- .github/workflows/windows.yml
           git add \
-            .github/workflows/windows.yml \
             crates/mechofly-app/src/app.rs \
             crates/mechofly-app/src/brain_lab.rs \
             crates/mechofly-app/src/desktop_pet.rs \
             crates/mechofly-app/src/live_brain.rs \
-            tools/Test-Windows-GuiStartup.ps1
-          git commit -m "Synchronize Windows visual evidence"
+            tools/Test-Windows-GuiStartup.ps1 \
+            tools/windows-workflow.patched.yml
+          git commit -m "Synchronize Windows visual evidence implementation"
           git push origin HEAD:feat/original-video-parity-rust-v5
