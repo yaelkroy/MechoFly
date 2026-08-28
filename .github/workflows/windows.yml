@@ -128,16 +128,17 @@ jobs:
           }
           if ($process.ExitCode -ne 0) { throw "Self-test exited $($process.ExitCode)" }
           $receipt = Get-Content .\artifacts\self-test.json -Raw | ConvertFrom-Json
+          if ($receipt.schema_version -ne 5) { throw 'Self-test receipt schema is stale.' }
           if ($receipt.status -ne 'PASS') { throw 'Self-test receipt failed.' }
           if (-not $receipt.live_state_unchanged) { throw 'Preview mutated live state.' }
           if (-not $receipt.alternative_differs) { throw 'Alternative trajectory did not differ.' }
-          if ($receipt.default_skin -ne 'drosophila') { throw 'Drosophila is not the default skin.' }
+          if ($receipt.default_skin -ne 'firefly') { throw 'Recording-matched Prism is not the default skin.' }
           if (-not $receipt.cpu_without_gpu_supported) { throw 'CPU fallback invariant failed.' }
           if (-not $receipt.reevaluation_control) { throw 'Capacity reevaluation invariant failed.' }
           if (-not $receipt.global_hotkey_contract_passed) { throw 'Global hotkey contract failed.' }
           if ($receipt.global_hotkey_count -ne 8) { throw 'Expected eight global hotkeys.' }
           if (-not $receipt.asynchronous_hotkey_fallback) { throw 'Global hotkey fallback is absent.' }
-          if ($receipt.firefly_visual_style -ne 'mechofly_prism_glasswing_v5') { throw 'Prism glasswing style is absent.' }
+          if ($receipt.firefly_visual_style -ne 'recorded_legacy_prism_port_v6') { throw 'Recorded Prism renderer is absent.' }
           if (-not $receipt.firefly_visual_contract_passed) { throw 'Firefly Prism visual contract failed.' }
           if (-not $receipt.firefly_rest_temporal_invariant) { throw 'Rest was not exactly stationary.' }
           if (-not $receipt.firefly_escape_wing_responsive) { throw 'Escape wings did not respond.' }
@@ -149,6 +150,9 @@ jobs:
           if (-not $receipt.cursor_loom_neural_escape) { throw 'Cursor loom did not cross the modeled neural escape threshold.' }
           if (-not $receipt.neural_hotkey_behavior_dispatch) { throw 'A behavior hotkey bypassed or failed to reach its modeled population.' }
           if ($receipt.presentation_only_hotkey_path) { throw 'A presentation-only hotkey path remains enabled.' }
+          if ($receipt.presentation_only_autonomy_path) { throw 'A presentation-only autonomy path remains enabled.' }
+          if (-not $receipt.policy_action_neural_dispatch) { throw 'An autonomous action failed to enter through modeled neural drive.' }
+          if (-not $receipt.rendered_behavior_matches_neural_state) { throw 'Rendered behavior differs from modeled neural state.' }
           if (-not $receipt.behavior_controller_authoritative) { throw 'Behavior controller is not authoritative.' }
           if ($receipt.escape_envelope_ms -ne 198) { throw 'Escape timing differs from the recorded controller.' }
           if ($receipt.flight_envelope_ms -ne 3993) { throw 'Flight timing differs from the recorded controller.' }
