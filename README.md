@@ -13,7 +13,7 @@ preview.
 The application has two presentation-only skins:
 
 - **Drosophila Natural** is the repository and application default.
-- **Firefly Lantern** is the alternate skin and AI100 machine-profile default.
+- **Firefly Lantern** is the optional alternate skin.
 
 Skins never change graph structure, dynamics, replay, learning, or scientific
 claims.
@@ -51,13 +51,14 @@ open Brain Lab.
 The dark Neural Observatory interface has:
 
 - a compact left model/replay dock with automatic CPU/GPU re-evaluation;
-- a central FlyWire-derived anatomical context with live modeled spikes,
-  click-synchronized circuit selection, or an aligned comparison filmstrip;
-- a counterfactual composer beside the comparison it authors;
-- a right trust layer with exact identities, claims, root/index lookup, and
-  strongest inbound/outbound modeled neighborhoods; and
-- a multi-lane bottom timeline for spike counts, mean activation, selected
-  neuron spikes, behavior, replay cursor, and per-frame inspection.
+- the restored high-contrast modeled-population field from the accepted
+  `43ba4aa…` Rust experience;
+- an aligned actual-versus-authored comparison with its composer, transport,
+  divergence measures, and immutable receipt;
+- a right trust layer with exact source, graph, compute, neuron, and learning
+  identities; and
+- a compact bottom timeline for retained spikes, behavior, replay context,
+  warnings, and the latest event.
 
 On Windows the pet is not an `eframe` swap-chain window. Rust supplies a small
 premultiplied BGRA bitmap to the native layered-window compositor, so zero-alpha
@@ -113,9 +114,9 @@ the normal setting.
 ## FlyWire FAFB v783
 
 MechoFly does not bundle or redistribute a connectome connection table. It
-does embed a compact set of 23,210 FlyWire-derived soma coordinates solely as
-faint anatomical presentation context; these points are labeled **not
-simulated** and are not identity-mapped to model neurons. After agreeing to
+does embed a compact set of 23,210 FlyWire-derived soma coordinates as a
+validated reference asset. They are not simulated and are not used to place
+unregistered model neurons in the default population view. After agreeing to
 the FlyWire citation guidelines and principles, download the filtered
 connection table from Codex and choose the local CSV or CSV.GZ path in Brain Lab. Import
 records the source URL, snapshot, column mapping, SHA-256, transform, counts,
@@ -125,9 +126,9 @@ and validation warnings before starting a pinned imported-graph session.
 
 `tools\Setup-AI100-MechoFly.ps1` synchronizes a clean selected GitHub branch at
 `D:\Projects\MechoFly`, builds and tests it, and records the exact branch,
-commit, Git tree, and executable SHA-256. AI100 defaults to Firefly/Auto. Start
-refuses a checkout or binary that differs from that receipt; the Sync shortcut
-performs a guarded fast-forward and rebuild.
+commit, Git tree, and executable SHA-256. AI100 defaults to Drosophila/Auto.
+Start refuses a checkout or binary that differs from that receipt; the Sync
+shortcut performs a guarded fast-forward and rebuild.
 
 ```powershell
 .\tools\Setup-AI100-MechoFly.ps1 -Launch

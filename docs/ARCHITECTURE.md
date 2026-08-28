@@ -7,6 +7,9 @@ desktop experience is the user-approved acceptance and visual-geometry
 reference for the companion and observatory, but no earlier runtime, C#
 assembly, or .NET architecture ships in or is invoked by MechoFly. This is a
 repository-design statement, not a legal opinion or a rewrite of Git history.
+The restored presentation is taken from MechoFly's earlier native Rust commit
+`43ba4aa406c5a39f642dace33951fcf10a7c00cf`; it does not copy or invoke the
+upstream SceneKit brain window.
 
 ## Runtime ownership
 

@@ -6,10 +6,11 @@ are visibly labeled `SYNTHETIC_DEMO_TOPOLOGY`.
 
 Brain Lab embeds 23,210 FlyWire-derived soma coordinates from the accepted
 legacy anatomical-context asset. They are a small static point reference, not
-a wiring diagram, activity recording, or simulated population. The UI labels them
-`NOT SIMULATED`. Current model neurons are distributed across those points by
-a deterministic ordinal presentation hash; that display placement is labeled
-`NO IDENTITY MAPPING` and does not claim a root-ID registration.
+a wiring diagram, activity recording, or simulated population. The self-test
+labels them `NOT SIMULATED`. The default Brain Lab population field draws the
+positions owned by the active modeled graph and does not ordinally distribute
+unregistered nodes over the reference points. Anatomical placement requires an
+explicit root-ID registration.
 
 ## Imported connection tables
 

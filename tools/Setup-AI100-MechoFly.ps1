@@ -452,7 +452,7 @@ $GeneratedUtc = [DateTime]::UtcNow.ToString('o')
 $Profile = [ordered]@{
     schema_version = 3
     machine_role = 'ai100-development'
-    skin = 'firefly'
+    skin = 'drosophila'
     compute = 'auto'
     reduced_motion = $false
     canonical_repository = $CanonicalRepository
@@ -559,7 +559,7 @@ try {
         -TargetPath $WindowsPowerShell `
         -Arguments ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' +
             (Join-Path $Target 'host-windows\Start-MechoFly-AI100.ps1') + '"') `
-        -Description 'Start MechoFly with the AI100 Firefly skin.' `
+        -Description 'Start MechoFly with Drosophila Natural.' `
         -IconLocation $IconLocation
     $CreatedShortcuts.Add($StartShortcut)
 
