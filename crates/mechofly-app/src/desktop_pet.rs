@@ -326,6 +326,7 @@ impl PetOverlay {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         position: Pos2,

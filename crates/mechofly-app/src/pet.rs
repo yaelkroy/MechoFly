@@ -394,7 +394,6 @@ struct Palette {
     outline: Rgba,
     highlight: Rgba,
     leg: Rgba,
-    wing_fill: Rgba,
     wing_edge: Rgba,
     head_core: Rgba,
     head_rim: Rgba,
@@ -410,7 +409,6 @@ fn palette(skin: Skin) -> Palette {
             outline: Rgba(26, 67, 45, 245),
             highlight: Rgba(185, 218, 67, 225),
             leg: Rgba(41, 91, 49, 248),
-            wing_fill: Rgba(82, 96, 179, 82),
             wing_edge: Rgba(139, 99, 211, 205),
             head_core: Rgba::rgb(23, 74, 56),
             head_rim: Rgba::rgb(163, 177, 56),
@@ -423,7 +421,6 @@ fn palette(skin: Skin) -> Palette {
             outline: Rgba(63, 35, 25, 240),
             highlight: Rgba(239, 178, 93, 210),
             leg: Rgba(73, 45, 34, 240),
-            wing_fill: Rgba(186, 219, 230, 70),
             wing_edge: Rgba(114, 157, 169, 178),
             head_core: Rgba::rgb(126, 76, 43),
             head_rim: Rgba::rgb(202, 133, 66),
@@ -433,27 +430,6 @@ fn palette(skin: Skin) -> Palette {
             thorax_edge: Rgba::rgb(217, 148, 64),
         },
     }
-}
-
-pub fn draw_pet(
-    painter: &Painter,
-    rect: Rect,
-    skin: Skin,
-    behavior: Behavior,
-    phase: f32,
-    heading: f32,
-    reduced_motion: bool,
-) {
-    draw_pet_at_age(
-        painter,
-        rect,
-        skin,
-        behavior,
-        phase,
-        phase,
-        heading,
-        reduced_motion,
-    );
 }
 
 #[allow(clippy::too_many_arguments)]
