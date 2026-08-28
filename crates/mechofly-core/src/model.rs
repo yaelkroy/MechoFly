@@ -462,6 +462,7 @@ mod tests {
             *value = LOOM_ESCAPE_ACTIVATION_Q15;
         }
         assert_eq!(modeled_behavior(&state, 0), Behavior::PreEscape);
-        assert!((GROOM_HOLD_FRAMES + 1) * crate::MODEL_STEP_MS >= 1_500);
+        let recorded_dwell_frames = std::hint::black_box(GROOM_HOLD_FRAMES);
+        assert!((recorded_dwell_frames + 1) * crate::MODEL_STEP_MS >= 1_500);
     }
 }

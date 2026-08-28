@@ -199,13 +199,13 @@ mod tests {
         let mut stimulus = vec![0; FUNCTIONAL_POPULATION_COUNT * 4];
         apply_population_drive(&mut stimulus, LOOM_POPULATION_OFFSET, 4_096);
         apply_population_drive(&mut stimulus, GROOM_POPULATION_OFFSET, 8_192);
-        for index in 0..stimulus.len() {
+        for (index, value) in stimulus.iter().enumerate() {
             let expected = match index % FUNCTIONAL_POPULATION_COUNT {
                 LOOM_POPULATION_OFFSET => 4_096,
                 GROOM_POPULATION_OFFSET => 8_192,
                 _ => 0,
             };
-            assert_eq!(stimulus[index], expected);
+            assert_eq!(*value, expected);
         }
     }
 }

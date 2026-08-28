@@ -810,12 +810,16 @@ fn counterfactual_panel(
             claim_badge(ui, "NO PREVIEW YET", Color32::from_rgb(45, 33, 38), WARNING);
             paired_summary(
                 ui,
-                session.last_summary.behavior,
-                session.last_summary.behavior,
-                session.last_summary.spike_count,
-                session.last_summary.spike_count,
-                session.last_summary.mean_activation_q15,
-                session.last_summary.mean_activation_q15,
+                (
+                    session.last_summary.behavior,
+                    session.last_summary.spike_count,
+                    session.last_summary.mean_activation_q15,
+                ),
+                (
+                    session.last_summary.behavior,
+                    session.last_summary.spike_count,
+                    session.last_summary.mean_activation_q15,
+                ),
                 0,
             );
             ui.label(
@@ -846,12 +850,16 @@ fn counterfactual_panel(
             let frame = &comparison.frames[state.comparison_cursor];
             paired_summary(
                 ui,
-                frame.actual.behavior,
-                frame.alternative.behavior,
-                frame.actual.spike_count,
-                frame.alternative.spike_count,
-                frame.actual.mean_activation_q15,
-                frame.alternative.mean_activation_q15,
+                (
+                    frame.actual.behavior,
+                    frame.actual.spike_count,
+                    frame.actual.mean_activation_q15,
+                ),
+                (
+                    frame.alternative.behavior,
+                    frame.alternative.spike_count,
+                    frame.alternative.mean_activation_q15,
+                ),
                 frame.differing_neurons,
             );
             ui.add_space(5.0);
@@ -894,14 +902,12 @@ fn counterfactual_panel(
 
 fn paired_summary(
     ui: &mut egui::Ui,
-    actual_behavior: Behavior,
-    alternative_behavior: Behavior,
-    actual_spikes: usize,
-    alternative_spikes: usize,
-    actual_activation: i32,
-    alternative_activation: i32,
+    actual: (Behavior, usize, i32),
+    alternative: (Behavior, usize, i32),
     differing: usize,
 ) {
+    let (actual_behavior, actual_spikes, actual_activation) = actual;
+    let (alternative_behavior, alternative_spikes, alternative_activation) = alternative;
     ui.columns(2, |columns| {
         columns[0].label(egui::RichText::new("ACTUAL").strong().color(ACTUAL));
         columns[0].monospace(format!("{actual_behavior:?}"));
