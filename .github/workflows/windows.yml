@@ -76,6 +76,9 @@ jobs:
             -File $scriptPath `
             -GuardSelfTest
           if ($LASTEXITCODE -ne 0) { throw "Recovery guard self-test exited $LASTEXITCODE" }
+      - name: Check Rust formatting
+        shell: powershell
+        run: cargo fmt --all --check
       - name: Resolve reproducible dependencies
         shell: powershell
         run: cargo generate-lockfile
@@ -85,9 +88,6 @@ jobs:
       - name: Lint all Rust targets
         shell: powershell
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Check Rust formatting
-        shell: powershell
-        run: cargo fmt --all --check
       - name: Compile x64 Windows host
         shell: powershell
         run: .\host-windows\build.ps1
