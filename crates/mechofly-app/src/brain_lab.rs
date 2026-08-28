@@ -776,7 +776,8 @@ fn counterfactual_panel(
     section_title(ui, "PAIRED MODELED COUNTERFACTUAL", ALTERNATIVE);
     ui.small("Actual and authored alternative begin from the same retained full-state checkpoint.");
     ui.add_space(5.0);
-    if state.comparison.is_none() {
+    match state.comparison.as_ref() {
+        None => {
         claim_badge(ui, "NO PREVIEW YET", Color32::from_rgb(45, 33, 38), WARNING);
         paired_summary(
             ui,
@@ -793,11 +794,8 @@ fn counterfactual_panel(
             .small()
             .color(MUTED),
         );
-    } else {
-        let comparison = state
-            .comparison
-            .as_ref()
-            .expect("comparison presence checked");
+        }
+        Some(comparison) => {
         let maximum = comparison.frames.len().saturating_sub(1);
         state.comparison_cursor = state.comparison_cursor.min(maximum);
         if state.playing && !comparison.frames.is_empty() {
@@ -843,6 +841,7 @@ fn counterfactual_panel(
             &comparison.receipt.alternative_differs.to_string(),
         );
         ui.monospace(&comparison.receipt.alternative_final_sha256[..12]);
+        }
     }
     ui.add_space(8.0);
     if ui

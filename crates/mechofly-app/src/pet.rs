@@ -242,6 +242,8 @@ enum Primitive {
     },
 }
 
+type CubicSegment = ([f32; 2], [f32; 2], [f32; 2], [f32; 2]);
+
 struct SceneBuilder {
     rotation: f32,
     screen_offset_y: f32,
@@ -678,7 +680,7 @@ fn draw_wing(
 }
 
 fn cubic_loop(
-    segments: &[([f32; 2], [f32; 2], [f32; 2], [f32; 2])],
+    segments: &[CubicSegment],
     steps: usize,
 ) -> Vec<[f32; 2]> {
     let mut points = Vec::with_capacity(segments.len() * steps);
@@ -1382,8 +1384,10 @@ mod tests {
 
     #[test]
     fn flight_moves_in_two_dimensions_and_turns_away_from_cursor() {
-        let mut motion = PetMotion::default();
-        motion.screen_position = Pos2::new(800.0, 500.0);
+        let mut motion = PetMotion {
+            screen_position: Pos2::new(800.0, 500.0),
+            ..PetMotion::default()
+        };
         let start = motion.screen_position;
         let cursor = Pos2::new(1_000.0, 640.0);
         for _ in 0..60 {
