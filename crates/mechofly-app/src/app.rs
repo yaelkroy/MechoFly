@@ -14,6 +14,7 @@ use crate::{
     brain_lab::{BrainLabState, LabCommand},
     compute::ComputePreference,
     diagnostics,
+    live_brain::{LiveBrainCommand, LiveBrainState},
     pet::{PET_HEIGHT, PET_WIDTH, PetMotion, Skin, draw_pet, transparent_frame},
     runtime::SimulationSession,
     tray::{TrayAction, TrayController},
@@ -84,6 +85,7 @@ impl RuntimeSourceIdentity {
 pub struct MechoFlyApp {
     render_state: Option<eframe::egui_wgpu::RenderState>,
     pub session: SimulationSession,
+    pub live_brain: LiveBrainState,
     pub lab: BrainLabState,
     pub policy: PetPolicy,
     pub skin: Skin,
@@ -161,6 +163,7 @@ impl MechoFlyApp {
         let app = Self {
             render_state,
             session,
+            live_brain: LiveBrainState::new(config.open_brain_lab),
             lab: BrainLabState::new(config.open_brain_lab, config.compute),
             policy,
             skin: config.skin,
@@ -194,7 +197,7 @@ impl MechoFlyApp {
             .unwrap_or_default();
         for action in actions {
             match action {
-                TrayAction::OpenBrainLab => self.lab.open = true,
+                TrayAction::OpenBrainLab => self.live_brain.open = true,
                 TrayAction::DrosophilaSkin => self.skin = Skin::Drosophila,
                 TrayAction::FireflySkin => self.skin = Skin::Firefly,
                 TrayAction::Reevaluate => {
@@ -257,8 +260,8 @@ impl MechoFlyApp {
             );
         }
         if events.hotkey(HotkeyAction::BrainLab) {
-            self.lab.open = !self.lab.open;
-            self.lab.message = "Global hotkey Ctrl+Alt+N: Brain Lab toggled.".to_owned();
+            self.live_brain.open = !self.live_brain.open;
+            self.lab.message = "Global hotkey Ctrl+Alt+N: Live Brain toggled.".to_owned();
         }
         if events.hotkey(HotkeyAction::Loom) {
             self.manual_presentation = Some(ManualPresentation::Loom {
@@ -454,6 +457,7 @@ impl eframe::App for MechoFlyApp {
                 .unwrap_or(Vec2::new(1_920.0, 1_080.0))
         });
         let mut held = ctx.input(|input| input.pointer.hover_pos().is_some());
+        let mut cursor_position = None;
         #[cfg(windows)]
         if let Some(events) = self
             .desktop_pet
@@ -467,11 +471,12 @@ impl eframe::App for MechoFlyApp {
             screen_origin = overlay.screen_origin();
             screen_size = overlay.screen_size();
             held = events.dragging || events.hovered;
+            cursor_position = events.cursor_position;
             if let Some(position) = events.position {
                 self.pet.screen_position = position;
             }
             if events.open_lab {
-                self.lab.open = true;
+                self.live_brain.open = true;
             }
             if events.interacted {
                 self.last_interaction = Some(Instant::now());
@@ -485,19 +490,20 @@ impl eframe::App for MechoFlyApp {
             screen_origin,
             screen_size,
             held,
+            cursor_position,
         );
         #[cfg(windows)]
         {
             let behavior = self.display_behavior();
             let update_error = self.desktop_pet.as_mut().and_then(|overlay| {
-                overlay.set_observatory_open(self.lab.open);
+                overlay.set_observatory_open(self.live_brain.open || self.lab.open);
                 overlay
                     .update(
                         self.pet.screen_position,
                         self.skin,
                         behavior,
                         self.pet.animation_seconds,
-                        self.pet.facing,
+                        self.pet.heading_radians,
                         self.pet.reduced_motion,
                     )
                     .err()
@@ -544,6 +550,36 @@ impl eframe::App for MechoFlyApp {
                 .show(ui, |_ui| {});
         }
 
+        if self.live_brain.open {
+            let behavior = self.display_behavior();
+            let commands = {
+                let live_brain = &mut self.live_brain;
+                let session = &self.session;
+                let source_identity = &self.source_identity;
+                ui.ctx().show_viewport_immediate(
+                    egui::ViewportId::from_hash_of("mechofly-live-brain-v5"),
+                    egui::ViewportBuilder::default()
+                        .with_title("MechoFly Prism — Live Brain")
+                        .with_inner_size([1_120.0, 760.0])
+                        .with_min_inner_size([840.0, 620.0])
+                        .with_resizable(true)
+                        .with_transparent(false)
+                        .with_taskbar(true),
+                    |brain_ui, _class| {
+                        if brain_ui.input(|input| input.viewport().close_requested()) {
+                            live_brain.open = false;
+                        }
+                        live_brain.draw(brain_ui, session, behavior, source_identity)
+                    },
+                )
+            };
+            for command in commands {
+                match command {
+                    LiveBrainCommand::OpenLab => self.lab.open = true,
+                }
+            }
+        }
+
         if self.lab.open {
             let commands = {
                 let lab = &mut self.lab;
@@ -552,11 +588,11 @@ impl eframe::App for MechoFlyApp {
                 let skin = self.skin;
                 let source_identity = &self.source_identity;
                 ui.ctx().show_viewport_immediate(
-                    egui::ViewportId::from_hash_of("mechofly-brain-lab-v3"),
+                    egui::ViewportId::from_hash_of("mechofly-brain-lab-v5"),
                     egui::ViewportBuilder::default()
-                        .with_title("MechoFly Brain Lab — Neural Observatory")
-                        .with_inner_size([1_420.0, 900.0])
-                        .with_min_inner_size([1_150.0, 720.0])
+                        .with_title("MechoFly Prism — Brain Lab")
+                        .with_inner_size([1_580.0, 820.0])
+                        .with_min_inner_size([1_260.0, 720.0])
                         .with_resizable(true)
                         .with_transparent(false)
                         .with_taskbar(true),
@@ -595,7 +631,7 @@ impl MechoFlyApp {
                     self.skin,
                     behavior,
                     self.pet.animation_seconds,
-                    self.pet.facing,
+                    self.pet.heading_radians,
                     self.pet.reduced_motion,
                 );
                 let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -604,7 +640,7 @@ impl MechoFlyApp {
                     self.last_interaction = Some(Instant::now());
                 }
                 if response.double_clicked() || response.secondary_clicked() {
-                    self.lab.open = true;
+                    self.live_brain.open = true;
                     self.last_interaction = Some(Instant::now());
                 } else if response.clicked() {
                     self.last_interaction = Some(Instant::now());

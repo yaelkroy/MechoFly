@@ -12,7 +12,7 @@ runtime dependency.
   policy, provenance, and learning receipts.
 - The Windows host uses `eframe`/`egui` with `wgpu`. There is no CUDA path and
   no vendor-name allowlist.
-- Drosophila Natural is the repository default. Firefly Lantern is an alternate
+- Drosophila Natural is the repository default. MechoFly Prism is an alternate
   presentation-only skin. AI100 also defaults to Drosophila Natural.
 - A fixed 33 ms model clock is independent of visual repaint timing.
 - Rest has no translation or decorative bob. Walking advances in floating

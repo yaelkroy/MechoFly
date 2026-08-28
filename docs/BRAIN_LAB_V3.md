@@ -1,5 +1,8 @@
 # Brain Lab v3 — restored Neural Observatory
 
+> Historical design note. The active recording-parity interface is documented
+> in [Rust v5 recording parity](VIDEO_PARITY_V5.md).
+
 Brain Lab v3 restores the accepted Rust interface from commit
 `43ba4aa406c5a39f642dace33951fcf10a7c00cf`. The restoration is deliberate:
 the later anatomical-canvas redesign reduced the contrast of modeled activity,

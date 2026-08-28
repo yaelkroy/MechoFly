@@ -13,7 +13,8 @@ preview.
 The application has two presentation-only skins:
 
 - **Drosophila Natural** is the repository and application default.
-- **Firefly Lantern** is the optional alternate skin.
+- **MechoFly Prism** is the optional recording-matched alternate skin (the
+  existing `firefly` CLI value remains compatible).
 
 Skins never change graph structure, dynamics, replay, learning, or scientific
 claims.
@@ -44,21 +45,27 @@ GPU work uses portable WGSL through `wgpu`; there is no CUDA dependency and no
 vendor allowlist. Brain Lab's **Re-evaluate capacity** button repeats the
 benchmarks and starts a new identified session if the backend or tier changes.
 
-## Brain Lab v3
+## Live Brain and Brain Lab v5
 
 Double-click or right-click the pet, use `Ctrl+Alt+N`, or use its tray menu to
-open Brain Lab.
-The dark Neural Observatory interface has:
+open the compact Live Brain. Its Brain Lab button opens the separate
+experiment window.
 
-- a compact left model/replay dock with automatic CPU/GPU re-evaluation;
-- the restored high-contrast modeled-population field from the accepted
-  `43ba4aa…` Rust experience;
-- an aligned actual-versus-authored comparison with its composer, transport,
-  divergence measures, and immutable receipt;
-- a right trust layer with exact source, graph, compute, neuron, and learning
-  identities; and
-- a compact bottom timeline for retained spikes, behavior, replay context,
-  warnings, and the latest event.
+Live Brain restores the recording's dense anatomical context, modeled-neuron
+overlay, pathway summary, relative-activity scale, nine population bars, top
+active neurons, selected-neuron detail, and five-second spike raster.
+
+Brain Lab restores four simultaneous work areas:
+
+- neuron search;
+- selected structural neighborhood;
+- paired modeled counterfactual; and
+- bounded replay and stimulation preview.
+
+The bottom strip shows the macro motor program and behavior substate timeline.
+Exact graph/build identity, compute selection, connectome import, policy
+learning controls, safety limits, and non-mutating receipts remain available
+without replacing those four core work areas.
 
 On Windows the pet is not an `eframe` swap-chain window. Rust supplies a small
 premultiplied BGRA bitmap to the native layered-window compositor, so zero-alpha
@@ -70,7 +77,7 @@ the fly.
 
 Global shortcuts preserve the accepted legacy control contract:
 
-- `Ctrl+Alt+N` toggles Brain Lab;
+- `Ctrl+Alt+N` toggles Live Brain;
 - `Ctrl+Alt+H` hides or shows the pet;
 - `Ctrl+Alt+L` presents loom → escape → landing;
 - `Ctrl+Alt+G`, `Ctrl+Alt+B`, and `Ctrl+Alt+W` present grooming, reverse, and
@@ -140,7 +147,7 @@ upload ZIP in Downloads for runtime and design review.
 
 See [architecture](docs/ARCHITECTURE.md),
 [compute profiles](docs/COMPUTE_PROFILES.md),
-[Brain Lab v3](docs/BRAIN_LAB_V3.md),
+[recording-parity contract](docs/VIDEO_PARITY_V5.md),
 [connectome and learning](docs/LEARNING_AND_CONNECTOME.md),
 [data provenance](docs/DATA_PROVENANCE.md), and
 [AI100 setup](docs/AI100.md).

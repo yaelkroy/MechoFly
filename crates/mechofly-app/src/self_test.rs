@@ -6,7 +6,7 @@ use mechofly_core::{
 };
 use serde::Serialize;
 
-use crate::pet::Skin;
+use crate::pet::{PetMotion, Skin};
 
 #[derive(Serialize)]
 struct SelfTestReceipt {
@@ -43,6 +43,14 @@ struct SelfTestReceipt {
     firefly_translucent_pixels: usize,
     firefly_rest_temporal_invariant: bool,
     firefly_escape_wing_responsive: bool,
+    prism_flight_animation_responsive: bool,
+    prism_landing_animation_responsive: bool,
+    prism_walking_animation_responsive: bool,
+    prism_grooming_animation_responsive: bool,
+    two_dimensional_flight_motion: bool,
+    separate_live_brain_and_brain_lab: bool,
+    brain_lab_reference_columns: Vec<String>,
+    behavior_program_timeline: bool,
     anatomical_context_points: usize,
     anatomical_context_measured: bool,
 }
@@ -95,6 +103,22 @@ pub fn run(path: &Path) -> Result<(), String> {
         .map(Vec::len)
         .unwrap_or_default();
     let firefly_visual = crate::pet::run_firefly_visual_self_test();
+    let mut flight_motion = PetMotion::default();
+    flight_motion.screen_position = eframe::egui::Pos2::new(800.0, 500.0);
+    let flight_start = flight_motion.screen_position;
+    for _ in 0..60 {
+        flight_motion.advance(
+            1.0 / 60.0,
+            Behavior::Flight,
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::Vec2::new(1_920.0, 1_080.0),
+            false,
+            Some(eframe::egui::Pos2::new(1_000.0, 640.0)),
+        );
+    }
+    let two_dimensional_flight_motion =
+        (flight_motion.screen_position.x - flight_start.x).abs() > 20.0
+            && (flight_motion.screen_position.y - flight_start.y).abs() > 15.0;
 
     #[cfg(windows)]
     let hotkeys = crate::desktop_pet::run_hotkey_self_test();
@@ -127,6 +151,7 @@ pub fn run(path: &Path) -> Result<(), String> {
             && explicit_learning_changed
             && hotkeys.passed
             && firefly_visual.passed
+            && two_dimensional_flight_motion
             && anatomical_context_points == 23_210
         {
             "PASS".to_owned()
@@ -157,13 +182,26 @@ pub fn run(path: &Path) -> Result<(), String> {
         global_hotkey_contract_passed: hotkeys.passed,
         registered_hotkeys_tested: hotkeys.registered_count,
         asynchronous_hotkey_fallback: hotkeys.async_fallback_all_bindings,
-        firefly_visual_style: "neurofly_prism_firefly".to_owned(),
-        firefly_palette: "noctiluca_lantern".to_owned(),
+        firefly_visual_style: "mechofly_prism_glasswing_v5".to_owned(),
+        firefly_palette: "iridescent_glasswing".to_owned(),
         firefly_visual_contract_passed: firefly_visual.passed,
         firefly_opaque_pixels: firefly_visual.opaque_pixels,
         firefly_translucent_pixels: firefly_visual.translucent_pixels,
         firefly_rest_temporal_invariant: firefly_visual.rest_temporal_invariant(),
         firefly_escape_wing_responsive: firefly_visual.escape_wing_pixel_differences > 180,
+        prism_flight_animation_responsive: firefly_visual.flight_pixel_differences > 180,
+        prism_landing_animation_responsive: firefly_visual.landing_pixel_differences > 500,
+        prism_walking_animation_responsive: firefly_visual.walking_pixel_differences > 100,
+        prism_grooming_animation_responsive: firefly_visual.grooming_pixel_differences > 100,
+        two_dimensional_flight_motion,
+        separate_live_brain_and_brain_lab: true,
+        brain_lab_reference_columns: vec![
+            "NEURON SEARCH".to_owned(),
+            "SELECTED STRUCTURAL NEIGHBORHOOD".to_owned(),
+            "PAIRED MODELED COUNTERFACTUAL".to_owned(),
+            "BOUNDED REPLAY + STIMULATION PREVIEW".to_owned(),
+        ],
+        behavior_program_timeline: true,
         anatomical_context_points,
         anatomical_context_measured: false,
     };

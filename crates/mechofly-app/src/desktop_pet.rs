@@ -157,6 +157,7 @@ pub struct PetEvents {
     pub dragging: bool,
     pub hovered: bool,
     pub position: Option<Pos2>,
+    pub cursor_position: Option<Pos2>,
     hotkeys: u32,
 }
 
@@ -311,7 +312,7 @@ impl PetOverlay {
                 observatory_open: false,
             };
             overlay.register_hotkeys();
-            overlay.update(position, Skin::default(), Behavior::Rest, 0.0, 1.0, false)?;
+            overlay.update(position, Skin::default(), Behavior::Rest, 0.0, 0.0, false)?;
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             Ok(overlay)
         }
@@ -323,7 +324,7 @@ impl PetOverlay {
         skin: Skin,
         behavior: Behavior,
         phase: f32,
-        facing: f32,
+        heading_radians: f32,
         reduced_motion: bool,
     ) -> Result<(), String> {
         render_pet_bgra(
@@ -331,7 +332,7 @@ impl PetOverlay {
             skin,
             behavior,
             phase,
-            facing,
+            heading_radians,
             reduced_motion,
         );
         self.shared.update_hit_alpha(&self.pixels);
@@ -381,6 +382,7 @@ impl PetOverlay {
             dragging: self.shared.dragging.get(),
             hovered: self.cursor_hits_pet(),
             position,
+            cursor_position: self.cursor_position(),
             hotkeys: self.shared.hotkeys.swap(0, Ordering::AcqRel),
         }
     }
@@ -490,6 +492,15 @@ impl PetOverlay {
             let mut rect: RECT = zeroed();
             (GetWindowRect(self.hwnd, &mut rect) != 0)
                 .then_some(Pos2::new(rect.left as f32, rect.top as f32))
+        }
+    }
+
+    fn cursor_position(&self) -> Option<Pos2> {
+        // SAFETY: GetCursorPos writes synchronously to the valid stack value.
+        unsafe {
+            let mut cursor: POINT = zeroed();
+            (GetCursorPos(&mut cursor) != 0)
+                .then_some(Pos2::new(cursor.x as f32, cursor.y as f32))
         }
     }
 

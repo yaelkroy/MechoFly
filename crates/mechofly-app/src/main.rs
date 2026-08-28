@@ -6,6 +6,7 @@ mod compute;
 #[cfg(windows)]
 mod desktop_pet;
 mod diagnostics;
+mod live_brain;
 mod pet;
 mod runtime;
 mod self_test;

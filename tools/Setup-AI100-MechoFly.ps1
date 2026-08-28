@@ -405,10 +405,18 @@ if ($Receipt.status -ne 'PASS' -or -not $Receipt.live_state_unchanged -or
     -not $Receipt.global_hotkey_contract_passed -or
     $Receipt.global_hotkey_count -ne 8 -or
     -not $Receipt.asynchronous_hotkey_fallback -or
-    $Receipt.firefly_visual_style -ne 'neurofly_prism_firefly' -or
+    $Receipt.firefly_visual_style -ne 'mechofly_prism_glasswing_v5' -or
     -not $Receipt.firefly_visual_contract_passed -or
     -not $Receipt.firefly_rest_temporal_invariant -or
     -not $Receipt.firefly_escape_wing_responsive -or
+    -not $Receipt.prism_flight_animation_responsive -or
+    -not $Receipt.prism_landing_animation_responsive -or
+    -not $Receipt.prism_walking_animation_responsive -or
+    -not $Receipt.prism_grooming_animation_responsive -or
+    -not $Receipt.two_dimensional_flight_motion -or
+    -not $Receipt.separate_live_brain_and_brain_lab -or
+    @($Receipt.brain_lab_reference_columns).Count -ne 4 -or
+    -not $Receipt.behavior_program_timeline -or
     $Receipt.anatomical_context_points -ne 23210 -or
     $Receipt.anatomical_context_measured -or
     $Receipt.implementation -ne 'independent-rust-rebuild') {
