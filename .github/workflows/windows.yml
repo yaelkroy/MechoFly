@@ -84,7 +84,11 @@ jobs:
         run: cargo generate-lockfile
       - name: Test deterministic core and host
         shell: powershell
-        run: cargo test --workspace --locked
+        run: |
+          $fixtureDirectory = Join-Path $PWD 'artifacts\visual-fixtures'
+          New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
+          $env:MECHOFLY_VISUAL_FIXTURE_DIR = $fixtureDirectory
+          cargo test --workspace --locked
       - name: Lint all Rust targets
         shell: powershell
         run: cargo clippy --workspace --all-targets --locked -- -D warnings

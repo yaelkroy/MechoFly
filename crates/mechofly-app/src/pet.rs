@@ -1462,6 +1462,24 @@ mod tests {
             render_pet_bgra(&mut rest, Skin::Firefly, Behavior::Rest, 0.0, 0.0, false);
             write_pam(std::path::Path::new(&path), &rest);
         }
+        if let Some(directory) = std::env::var_os("MECHOFLY_VISUAL_FIXTURE_DIR") {
+            let directory = std::path::PathBuf::from(directory);
+            std::fs::create_dir_all(&directory).expect("visual fixture directory must be writable");
+            for (name, behavior, phase, heading) in [
+                ("rest", Behavior::Rest, 0.0, 0.0),
+                ("walk-a", Behavior::Walk, 0.10, 0.0),
+                ("walk-b", Behavior::Walk, 0.42, 0.0),
+                ("groom-a", Behavior::Groom, 0.10, 0.0),
+                ("groom-b", Behavior::Groom, 0.42, 0.0),
+                ("flight-a", Behavior::Flight, 0.08, 0.55),
+                ("flight-b", Behavior::Flight, 0.30, 0.55),
+                ("landing", Behavior::Landing, 0.34, 0.18),
+            ] {
+                let mut pixels = vec![0; PET_WIDTH * PET_HEIGHT * 4];
+                render_pet_bgra(&mut pixels, Skin::Firefly, behavior, phase, heading, false);
+                write_pam(&directory.join(format!("prism-{name}.pam")), &pixels);
+            }
+        }
     }
 
     fn write_pam(path: &std::path::Path, pixels: &[u8]) {
