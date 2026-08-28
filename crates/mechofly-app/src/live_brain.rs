@@ -155,7 +155,7 @@ impl LiveBrainState {
                     .fill(BACKGROUND)
                     .inner_margin(egui::Margin::same(8)),
             )
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(format!("{:?}", behavior).to_ascii_uppercase())
@@ -454,7 +454,7 @@ fn draw_raster(ui: &mut egui::Ui, session: &SimulationSession, history_floor: u6
         );
         return;
     }
-    for row in 0..54 {
+    for row in 0_usize..54 {
         let y = rect.top() + (row as f32 + 0.5) / 54.0 * rect.height();
         if row.is_multiple_of(6) {
             painter.line_segment(
@@ -539,7 +539,8 @@ fn panel_frame() -> egui::Frame {
 }
 
 fn style(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
+    ctx.set_theme(egui::Theme::Dark);
+    let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
     style.visuals.dark_mode = true;
     style.visuals.panel_fill = PANEL;
     style.visuals.window_fill = PANEL_RAISED;
@@ -548,7 +549,7 @@ fn style(ctx: &egui::Context) {
     style.visuals.widgets.active.bg_fill = Color32::from_rgb(78, 53, 101);
     style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
     style.spacing.item_spacing = Vec2::new(6.0, 4.0);
-    ctx.set_style(style);
+    ctx.set_style_of(egui::Theme::Dark, style);
 }
 
 #[cfg(test)]

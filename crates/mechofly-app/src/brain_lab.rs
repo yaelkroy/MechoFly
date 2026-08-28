@@ -554,7 +554,7 @@ fn reference_layout(
                 .fill(CANVAS)
                 .inner_margin(egui::Margin::same(6)),
         )
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.columns(4, |columns| {
                 column_frame(&mut columns[0], |ui| {
                     neuron_search_panel(state, ui, session);
