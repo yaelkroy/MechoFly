@@ -8,6 +8,15 @@ pub const PET_WIDTH: usize = 420;
 pub const PET_HEIGHT: usize = 280;
 const CENTER: [f32; 2] = [PET_WIDTH as f32 * 0.5, PET_HEIGHT as f32 * 0.5];
 const RASTER_SCALE: usize = 2;
+const REFERENCE_TICK_SECONDS: f32 = 0.033;
+const WALK_SPEED_PIXELS_PER_SECOND: f32 = 1.85 / REFERENCE_TICK_SECONDS;
+const REVERSE_SPEED_PIXELS_PER_SECOND: f32 = -2.2 / REFERENCE_TICK_SECONDS;
+const ESCAPE_SPEED_PIXELS_PER_SECOND: f32 = 18.0 / REFERENCE_TICK_SECONDS;
+const FLIGHT_SPEED_PIXELS_PER_SECOND: f32 = 8.4 / REFERENCE_TICK_SECONDS;
+const LANDING_SPEED_PIXELS_PER_SECOND: f32 = 3.8 / REFERENCE_TICK_SECONDS;
+const LANDING_CONTACT_SPEED_PIXELS_PER_SECOND: f32 = 0.8 / REFERENCE_TICK_SECONDS;
+const NERVOUS_SPEED_PIXELS_PER_SECOND: f32 = 3.0 / REFERENCE_TICK_SECONDS;
+const LANDING_COMPLETION_SECONDS: f32 = 0.495;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -51,7 +60,6 @@ pub struct PetMotion {
     pub screen_position: Pos2,
     /// Direction in screen coordinates. Zero points right; positive turns down.
     pub heading_radians: f32,
-    target_heading_radians: f32,
     speed_pixels_per_second: f32,
     pub animation_seconds: f32,
     pub behavior_age_seconds: f32,
@@ -65,7 +73,6 @@ impl Default for PetMotion {
         Self {
             screen_position: Pos2::new(96.0, 640.0),
             heading_radians: 0.0,
-            target_heading_radians: 0.0,
             speed_pixels_per_second: 0.0,
             animation_seconds: 0.0,
             behavior_age_seconds: 0.0,
@@ -97,86 +104,74 @@ impl PetMotion {
         self.animation_seconds += dt;
         self.behavior_age_seconds += dt;
 
-        let center = self.screen_position + Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * 0.5;
-        let mut cursor_guided = false;
-        if matches!(behavior, Behavior::PreEscape | Behavior::Flight)
-            && let Some(cursor) = cursor_position
-        {
-            let away = center - cursor;
-            if away.length_sq() > 1.0 && away.length() < 560.0 {
-                let weave = if behavior == Behavior::Flight {
-                    (self.animation_seconds * 2.1).sin() * 0.28
-                } else {
-                    0.0
-                };
-                self.target_heading_radians = wrapped_angle(away.y.atan2(away.x) + weave);
-                cursor_guided = true;
-            }
-        }
-        if behavior == Behavior::Flight && !cursor_guided {
-            // Deterministic free-flight curvature, independent of refresh rate.
-            self.target_heading_radians += (self.animation_seconds * 0.73).sin() * dt * 0.62;
-        }
-
-        let target_speed = match behavior {
-            Behavior::Walk => 72.0,
-            Behavior::Reverse => -48.0,
-            Behavior::PreEscape => {
-                if self.behavior_age_seconds < 0.16 {
-                    0.0
-                } else {
-                    225.0
-                }
-            }
-            Behavior::Flight => 185.0,
-            Behavior::Landing => (108.0 * (1.0 - self.behavior_age_seconds / 0.9)).max(0.0),
-            _ => 0.0,
-        };
-        let response = if matches!(behavior, Behavior::PreEscape | Behavior::Flight) {
-            8.5
-        } else {
-            5.5
-        };
-        let old_speed = self.speed_pixels_per_second;
-        let decay = (-response * dt).exp();
-        self.speed_pixels_per_second = target_speed + (old_speed - target_speed) * decay;
-        // Integrate the first-order speed response analytically. Using the new
-        // endpoint speed as an Euler step makes a walking fly cover a different
-        // distance at 30 Hz and 120 Hz, which is visible as poor timing.
-        let step_distance =
-            target_speed * dt + (old_speed - target_speed) * (1.0 - decay) / response;
-
-        if matches!(
-            behavior,
-            Behavior::Walk | Behavior::Reverse | Behavior::Landing
-        ) {
-            self.target_heading_radians = if self.heading_radians.cos() < 0.0 {
-                PI
-            } else {
-                0.0
-            };
-        }
-        let turn_rate = if behavior == Behavior::PreEscape {
-            12.0
-        } else {
-            4.8
-        };
-        let delta = wrapped_angle(self.target_heading_radians - self.heading_radians);
-        self.heading_radians =
-            wrapped_angle(self.heading_radians + delta.clamp(-turn_rate * dt, turn_rate * dt));
-
-        let mut displacement = Vec2::angled(self.heading_radians) * step_distance;
-        if !matches!(behavior, Behavior::PreEscape | Behavior::Flight) {
-            displacement.y = 0.0;
-        }
-        self.screen_position += displacement;
-
         let width = screen_size.x.max(480.0);
         let height = screen_size.y.max(320.0);
         let left = screen_origin.x + 8.0;
         let top = screen_origin.y + 8.0;
         let right = (screen_origin.x + width - PET_WIDTH as f32 - 8.0).max(left);
         let bottom = (screen_origin.y + height - PET_HEIGHT as f32 - 8.0).max(top);
+        let center = self.screen_position + Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * 0.5;
+        if behavior == Behavior::PreEscape
+            && let Some(cursor) = cursor_position
+        {
+            let away = center - cursor;
+            if away.length_sq() > 1.0 {
+                self.heading_radians = wrapped_angle(away.y.atan2(away.x));
+            }
+        }
+
+        self.speed_pixels_per_second = match behavior {
+            Behavior::Walk => {
+                self.heading_radians = wrapped_angle(
+                    self.heading_radians
+                        + (self.animation_seconds * 0.53).sin()
+                            * (0.025 / REFERENCE_TICK_SECONDS)
+                            * dt,
+                );
+                WALK_SPEED_PIXELS_PER_SECOND
+            }
+            Behavior::Reverse => REVERSE_SPEED_PIXELS_PER_SECOND,
+            Behavior::PreEscape => ESCAPE_SPEED_PIXELS_PER_SECOND,
+            Behavior::Flight => {
+                self.heading_radians = wrapped_angle(
+                    self.heading_radians
+                        + (self.animation_seconds * 1.7).sin()
+                            * (0.065 / REFERENCE_TICK_SECONDS)
+                            * dt,
+                );
+                FLIGHT_SPEED_PIXELS_PER_SECOND
+            }
+            Behavior::Landing => {
+                let descent = (bottom - self.screen_position.y).max(0.0);
+                if descent > 12.0 {
+                    self.heading_radians = PI * 0.5;
+                    LANDING_SPEED_PIXELS_PER_SECOND
+                } else {
+                    LANDING_CONTACT_SPEED_PIXELS_PER_SECOND
+                }
+            }
+            Behavior::Alert => {
+                self.heading_radians = wrapped_angle(
+                    self.heading_radians
+                        + (self.animation_seconds * 19.0).sin()
+                            * (0.18 / REFERENCE_TICK_SECONDS)
+                            * dt,
+                );
+                NERVOUS_SPEED_PIXELS_PER_SECOND
+            }
+            Behavior::Rest | Behavior::Quiet | Behavior::Groom => 0.0,
+        };
+
+        self.screen_position +=
+            Vec2::angled(self.heading_radians) * self.speed_pixels_per_second * dt;
+        if behavior == Behavior::Landing
+            && self.behavior_age_seconds >= LANDING_COMPLETION_SECONDS
+        {
+            self.screen_position.y = bottom;
+            self.heading_radians = PI * 0.5;
+            self.speed_pixels_per_second = 0.0;
+        }
+
         let mut bounced_x = false;
         let mut bounced_y = false;
         if self.screen_position.x < left {
@@ -195,17 +190,115 @@ impl PetMotion {
         }
         if bounced_x {
             self.heading_radians = wrapped_angle(PI - self.heading_radians);
-            self.target_heading_radians = self.heading_radians;
         }
         if bounced_y {
-            self.heading_radians = wrapped_angle(-self.heading_radians);
-            self.target_heading_radians = self.heading_radians;
+            if behavior == Behavior::Landing && self.screen_position.y >= bottom {
+                self.heading_radians = PI * 0.5;
+                self.speed_pixels_per_second = 0.0;
+            } else {
+                self.heading_radians = wrapped_angle(-self.heading_radians);
+            }
         }
     }
 }
 
 fn wrapped_angle(angle: f32) -> f32 {
     (angle + PI).rem_euclid(PI * 2.0) - PI
+}
+
+#[derive(Clone, Debug)]
+pub struct MotionSelfTest {
+    pub passed: bool,
+    pub walking_translation_pixels: f32,
+    pub escape_translation_pixels: f32,
+    pub flight_path_pixels: f32,
+    pub flight_horizontal_pixels: f32,
+    pub flight_vertical_pixels: f32,
+    pub landing_descent_pixels: f32,
+    pub landing_reached_surface: bool,
+}
+
+pub fn run_motion_self_test() -> MotionSelfTest {
+    let origin = Pos2::ZERO;
+    let screen = Vec2::new(1_920.0, 1_080.0);
+    let bottom = screen.y - PET_HEIGHT as f32 - 8.0;
+
+    let mut walking = PetMotion {
+        screen_position: Pos2::new(220.0, bottom),
+        ..PetMotion::default()
+    };
+    let walking_start = walking.screen_position;
+    for _ in 0..120 {
+        walking.advance(1.0 / 60.0, Behavior::Walk, origin, screen, false, None);
+    }
+    let walking_translation_pixels = walking.screen_position.distance(walking_start);
+
+    let mut airborne = PetMotion {
+        screen_position: Pos2::new(760.0, 610.0),
+        ..PetMotion::default()
+    };
+    let cursor = Pos2::new(1_030.0, 900.0);
+    let escape_start = airborne.screen_position;
+    for _ in 0..12 {
+        airborne.advance(
+            1.0 / 60.0,
+            Behavior::PreEscape,
+            origin,
+            screen,
+            false,
+            Some(cursor),
+        );
+    }
+    let escape_translation_pixels = airborne.screen_position.distance(escape_start);
+
+    let flight_start = airborne.screen_position;
+    let mut flight_path_pixels = 0.0;
+    for _ in 0..72 {
+        let before = airborne.screen_position;
+        airborne.advance(
+            1.0 / 60.0,
+            Behavior::Flight,
+            origin,
+            screen,
+            false,
+            None,
+        );
+        flight_path_pixels += airborne.screen_position.distance(before);
+    }
+    let flight_horizontal_pixels = (airborne.screen_position.x - flight_start.x).abs();
+    let flight_vertical_pixels = (airborne.screen_position.y - flight_start.y).abs();
+
+    airborne.screen_position.y = bottom - 48.0;
+    let landing_start_y = airborne.screen_position.y;
+    for _ in 0..30 {
+        airborne.advance(
+            1.0 / 60.0,
+            Behavior::Landing,
+            origin,
+            screen,
+            false,
+            None,
+        );
+    }
+    let landing_descent_pixels = airborne.screen_position.y - landing_start_y;
+    let landing_reached_surface = (airborne.screen_position.y - bottom).abs() < 0.01;
+
+    MotionSelfTest {
+        passed: walking_translation_pixels > 100.0
+            && escape_translation_pixels > 90.0
+            && flight_path_pixels > 250.0
+            && flight_horizontal_pixels > 40.0
+            && flight_vertical_pixels > 20.0
+            && landing_descent_pixels > 45.0
+            && landing_reached_surface,
+        walking_translation_pixels,
+        escape_translation_pixels,
+        flight_path_pixels,
+        flight_horizontal_pixels,
+        flight_vertical_pixels,
+        landing_descent_pixels,
+        landing_reached_surface,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1387,6 +1480,17 @@ pub fn transparent_frame() -> egui::Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct TrajectorySample {
+        time_seconds: f32,
+        behavior: String,
+        x: f32,
+        y: f32,
+        heading_radians: f32,
+        phase: f32,
+    }
 
     #[test]
     fn heading_points_the_head_along_the_velocity_vector() {
@@ -1445,13 +1549,12 @@ mod tests {
     }
 
     #[test]
-    fn flight_moves_in_two_dimensions_and_turns_away_from_cursor() {
+    fn flight_moves_in_two_dimensions_with_recorded_free_flight_curvature() {
         let mut motion = PetMotion {
             screen_position: Pos2::new(800.0, 500.0),
             ..PetMotion::default()
         };
         let start = motion.screen_position;
-        let cursor = Pos2::new(1_000.0, 640.0);
         for _ in 0..60 {
             motion.advance(
                 1.0 / 60.0,
@@ -1459,12 +1562,18 @@ mod tests {
                 Pos2::ZERO,
                 Vec2::new(1_920.0, 1_080.0),
                 false,
-                Some(cursor),
+                None,
             );
         }
         assert!((motion.screen_position.x - start.x).abs() > 20.0);
         assert!((motion.screen_position.y - start.y).abs() > 15.0);
         assert!(motion.heading_radians.abs() > 0.2);
+    }
+
+    #[test]
+    fn recorded_motion_contract_covers_run_escape_flight_and_touchdown() {
+        let result = run_motion_self_test();
+        assert!(result.passed, "{result:#?}");
     }
 
     #[test]
@@ -1543,7 +1652,216 @@ mod tests {
                 render_pet_bgra(&mut pixels, Skin::Firefly, behavior, phase, heading, false);
                 write_pam(&directory.join(format!("prism-{name}.pam")), &pixels);
             }
+            write_trajectory_fixtures(&directory);
         }
+    }
+
+    fn write_trajectory_fixtures(directory: &std::path::Path) {
+        let width = 1_920_usize;
+        let height = 1_080_usize;
+        let origin = Pos2::ZERO;
+        let screen = Vec2::new(width as f32, height as f32);
+        let bottom = height as f32 - PET_HEIGHT as f32 - 8.0;
+        let mut motion = PetMotion {
+            screen_position: Pos2::new(240.0, bottom),
+            ..PetMotion::default()
+        };
+        let mut elapsed = 0.0_f32;
+        let mut samples = Vec::new();
+        let mut record = |motion: &PetMotion, behavior: Behavior, elapsed: f32| {
+            samples.push(TrajectorySample {
+                time_seconds: elapsed,
+                behavior: format!("{behavior:?}"),
+                x: motion.screen_position.x,
+                y: motion.screen_position.y,
+                heading_radians: motion.heading_radians,
+                phase: motion.animation_seconds,
+            });
+        };
+
+        record(&motion, Behavior::Walk, elapsed);
+        for frame in 1..=120 {
+            motion.advance(1.0 / 60.0, Behavior::Walk, origin, screen, false, None);
+            elapsed += 1.0 / 60.0;
+            if frame.is_multiple_of(60) {
+                record(&motion, Behavior::Walk, elapsed);
+            }
+        }
+        let cursor = motion.screen_position + Vec2::new(390.0, 330.0);
+        for _ in 0..12 {
+            motion.advance(
+                1.0 / 60.0,
+                Behavior::PreEscape,
+                origin,
+                screen,
+                false,
+                Some(cursor),
+            );
+            elapsed += 1.0 / 60.0;
+        }
+        record(&motion, Behavior::PreEscape, elapsed);
+        for frame in 1_u32..=240 {
+            motion.advance(
+                1.0 / 60.0,
+                Behavior::Flight,
+                origin,
+                screen,
+                false,
+                None,
+            );
+            elapsed += 1.0 / 60.0;
+            if frame.is_multiple_of(48) {
+                record(&motion, Behavior::Flight, elapsed);
+            }
+        }
+        for _ in 0..30 {
+            motion.advance(
+                1.0 / 60.0,
+                Behavior::Landing,
+                origin,
+                screen,
+                false,
+                None,
+            );
+            elapsed += 1.0 / 60.0;
+        }
+        record(&motion, Behavior::Landing, elapsed);
+        for _ in 0..90 {
+            motion.advance(1.0 / 60.0, Behavior::Groom, origin, screen, false, None);
+            elapsed += 1.0 / 60.0;
+        }
+        record(&motion, Behavior::Groom, elapsed);
+
+        for (name, skin) in [
+            ("drosophila", Skin::Drosophila),
+            ("prism", Skin::Firefly),
+        ] {
+            let mut canvas = desktop_canvas(width, height);
+            for (index, sample) in samples.iter().enumerate() {
+                let behavior = match sample.behavior.as_str() {
+                    "Walk" => Behavior::Walk,
+                    "PreEscape" => Behavior::PreEscape,
+                    "Flight" => Behavior::Flight,
+                    "Landing" => Behavior::Landing,
+                    "Groom" => Behavior::Groom,
+                    _ => Behavior::Rest,
+                };
+                let mut pet = vec![0; PET_WIDTH * PET_HEIGHT * 4];
+                render_pet_bgra(
+                    &mut pet,
+                    skin,
+                    behavior,
+                    sample.phase,
+                    sample.heading_radians,
+                    false,
+                );
+                stamp_bgra(
+                    &mut canvas,
+                    width,
+                    height,
+                    &pet,
+                    sample.x.round() as i32,
+                    sample.y.round() as i32,
+                    if index + 1 == samples.len() { 255 } else { 176 },
+                );
+            }
+            write_bmp(
+                &directory.join(format!("behavior-trajectory-{name}.bmp")),
+                width,
+                height,
+                &canvas,
+            );
+        }
+
+        let json = serde_json::to_string_pretty(&samples).expect("trajectory must serialize");
+        std::fs::write(
+            directory.join("behavior-trajectory.json"),
+            format!("{json}\n"),
+        )
+        .expect("trajectory receipt must be writable");
+    }
+
+    fn desktop_canvas(width: usize, height: usize) -> Vec<u8> {
+        let mut canvas = vec![0_u8; width * height * 4];
+        for y in 0..height {
+            for x in 0..width {
+                let offset = (y * width + x) * 4;
+                let glow = ((x as f32 / width as f32) * 22.0) as u8;
+                canvas[offset] = 26_u8.saturating_add(glow / 3);
+                canvas[offset + 1] = 12_u8.saturating_add(glow / 2);
+                canvas[offset + 2] = 13_u8.saturating_add(glow);
+                canvas[offset + 3] = 255;
+                if y + 10 >= height && y + 8 < height {
+                    canvas[offset] = 54;
+                    canvas[offset + 1] = 70;
+                    canvas[offset + 2] = 92;
+                }
+            }
+        }
+        canvas
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn stamp_bgra(
+        canvas: &mut [u8],
+        canvas_width: usize,
+        canvas_height: usize,
+        pet: &[u8],
+        left: i32,
+        top: i32,
+        opacity: u8,
+    ) {
+        for pet_y in 0..PET_HEIGHT {
+            let canvas_y = top + pet_y as i32;
+            if !(0..canvas_height as i32).contains(&canvas_y) {
+                continue;
+            }
+            for pet_x in 0..PET_WIDTH {
+                let canvas_x = left + pet_x as i32;
+                if !(0..canvas_width as i32).contains(&canvas_x) {
+                    continue;
+                }
+                let source = (pet_y * PET_WIDTH + pet_x) * 4;
+                let source_alpha = pet[source + 3] as u32 * opacity as u32 / 255;
+                if source_alpha == 0 {
+                    continue;
+                }
+                let target = (canvas_y as usize * canvas_width + canvas_x as usize) * 4;
+                let inverse = 255 - source_alpha;
+                for channel in 0..3 {
+                    let source_channel = pet[source + channel] as u32 * opacity as u32 / 255;
+                    canvas[target + channel] = (source_channel
+                        + canvas[target + channel] as u32 * inverse / 255)
+                        .min(255) as u8;
+                }
+            }
+        }
+    }
+
+    fn write_bmp(path: &std::path::Path, width: usize, height: usize, pixels: &[u8]) {
+        let pixel_bytes = width * height * 4;
+        let file_size = 14 + 40 + pixel_bytes;
+        let mut bytes = Vec::with_capacity(file_size);
+        bytes.extend_from_slice(b"BM");
+        bytes.extend_from_slice(&(file_size as u32).to_le_bytes());
+        bytes.extend_from_slice(&[0; 4]);
+        bytes.extend_from_slice(&54_u32.to_le_bytes());
+        bytes.extend_from_slice(&40_u32.to_le_bytes());
+        bytes.extend_from_slice(&(width as i32).to_le_bytes());
+        bytes.extend_from_slice(&(height as i32).to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&32_u16.to_le_bytes());
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&(pixel_bytes as u32).to_le_bytes());
+        bytes.extend_from_slice(&2_835_i32.to_le_bytes());
+        bytes.extend_from_slice(&2_835_i32.to_le_bytes());
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        bytes.extend_from_slice(&0_u32.to_le_bytes());
+        for row in (0..height).rev() {
+            let start = row * width * 4;
+            bytes.extend_from_slice(&pixels[start..start + width * 4]);
+        }
+        std::fs::write(path, bytes).expect("trajectory bitmap must be writable");
     }
 
     fn write_pam(path: &std::path::Path, pixels: &[u8]) {

@@ -22,34 +22,6 @@ use crate::{
 
 const MODEL_INTERVAL: Duration = Duration::from_millis(mechofly_core::MODEL_STEP_MS as u64);
 
-#[derive(Clone, Copy, Debug)]
-enum ManualPresentation {
-    Loom {
-        started: Instant,
-    },
-    Behavior {
-        behavior: Behavior,
-        started: Instant,
-    },
-}
-
-impl ManualPresentation {
-    fn behavior(self) -> Option<Behavior> {
-        match self {
-            Self::Loom { started } => match started.elapsed().as_secs_f32() {
-                elapsed if elapsed < 0.42 => Some(Behavior::PreEscape),
-                elapsed if elapsed < 2.15 => Some(Behavior::Flight),
-                elapsed if elapsed < 3.0 => Some(Behavior::Landing),
-                _ => None,
-            },
-            Self::Behavior { behavior, started } if started.elapsed() < Duration::from_secs(5) => {
-                Some(behavior)
-            }
-            Self::Behavior { .. } => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub skin: Skin,
@@ -102,7 +74,6 @@ pub struct MechoFlyApp {
     accumulator: Duration,
     seed: u64,
     exit_requested: bool,
-    manual_presentation: Option<ManualPresentation>,
 }
 
 impl MechoFlyApp {
@@ -181,7 +152,6 @@ impl MechoFlyApp {
             accumulator: Duration::ZERO,
             seed,
             exit_requested: false,
-            manual_presentation: None,
         };
         diagnostics::mark("eframe application construction completed");
         app
@@ -223,17 +193,17 @@ impl MechoFlyApp {
     }
 
     fn display_behavior(&self) -> Behavior {
-        if let Some(behavior) = self
-            .manual_presentation
-            .and_then(ManualPresentation::behavior)
-        {
-            return behavior;
-        }
         match self.session.engine.state.behavior {
-            Behavior::Alert | Behavior::PreEscape | Behavior::Flight | Behavior::Landing => {
+            Behavior::Walk
+            | Behavior::Reverse
+            | Behavior::Groom
+            | Behavior::Alert
+            | Behavior::PreEscape
+            | Behavior::Flight
+            | Behavior::Landing => {
                 self.session.engine.state.behavior
             }
-            _ => match self.current_action {
+            Behavior::Rest | Behavior::Quiet => match self.current_action {
                 Action::Pause => Behavior::Rest,
                 Action::Explore => Behavior::Walk,
                 Action::Inspect => Behavior::Alert,
@@ -262,25 +232,27 @@ impl MechoFlyApp {
             self.lab.message = "Global hotkey Ctrl+Alt+N: Live Brain toggled.".to_owned();
         }
         if events.hotkey(HotkeyAction::Loom) {
-            self.manual_presentation = Some(ManualPresentation::Loom {
-                started: Instant::now(),
-            });
-            self.lab.message =
-                "Global hotkey Ctrl+Alt+L: authored loom presentation started.".to_owned();
+            let accepted = self.session.stimulate_behavior(Behavior::PreEscape, 594);
+            self.lab.message = format!(
+                "Global hotkey Ctrl+Alt+L: bounded loom sensory drive {}.",
+                if accepted { "accepted" } else { "rejected" }
+            );
         }
-        for (action, behavior, label) in [
-            (HotkeyAction::Groom, Behavior::Groom, "Ctrl+Alt+G"),
-            (HotkeyAction::Reverse, Behavior::Reverse, "Ctrl+Alt+B"),
-            (HotkeyAction::Walk, Behavior::Walk, "Ctrl+Alt+W"),
+        for (action, behavior, duration_ms, label) in [
+            (HotkeyAction::Groom, Behavior::Groom, 500, "Ctrl+Alt+G"),
+            (
+                HotkeyAction::Reverse,
+                Behavior::Reverse,
+                400,
+                "Ctrl+Alt+B",
+            ),
+            (HotkeyAction::Walk, Behavior::Walk, 500, "Ctrl+Alt+W"),
         ] {
             if events.hotkey(action) {
-                self.manual_presentation = Some(ManualPresentation::Behavior {
-                    behavior,
-                    started: Instant::now(),
-                });
+                let accepted = self.session.stimulate_behavior(behavior, duration_ms);
                 self.lab.message = format!(
-                    "Global hotkey {label}: temporary authored {:?} presentation. Model state unchanged.",
-                    behavior
+                    "Global hotkey {label}: bounded {behavior:?} population drive {}; animation waits for controller selection.",
+                    if accepted { "accepted" } else { "rejected" }
                 );
             }
         }
@@ -591,6 +563,8 @@ impl eframe::App for MechoFlyApp {
                     LiveBrainCommand::OpenLab => self.lab.open = true,
                 }
             }
+            self.lab
+                .set_selected_neuron_index(self.live_brain.selected_neuron());
         }
 
         if self.lab.open {
@@ -618,6 +592,8 @@ impl eframe::App for MechoFlyApp {
                 )
             };
             self.handle_lab_commands(commands);
+            self.live_brain
+                .set_selected_neuron(self.lab.selected_neuron_index());
         }
 
         if let Some(warning) = self.tray_warning.take() {

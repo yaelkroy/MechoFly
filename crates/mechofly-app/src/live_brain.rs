@@ -41,6 +41,14 @@ impl LiveBrainState {
         }
     }
 
+    pub fn selected_neuron(&self) -> usize {
+        self.selected_neuron
+    }
+
+    pub fn set_selected_neuron(&mut self, index: usize) {
+        self.selected_neuron = index;
+    }
+
     pub fn draw(
         &mut self,
         ui: &mut egui::Ui,
@@ -140,7 +148,7 @@ impl LiveBrainState {
                         ui.separator();
                         draw_population_bars(ui, session);
                         ui.separator();
-                        draw_top_neurons(ui, session, self.selected_neuron);
+                        draw_top_neurons(ui, session, &mut self.selected_neuron);
                     });
             });
 
@@ -370,7 +378,7 @@ fn draw_population_bars(ui: &mut egui::Ui, session: &SimulationSession) {
     }
 }
 
-fn draw_top_neurons(ui: &mut egui::Ui, session: &SimulationSession, selected: usize) {
+fn draw_top_neurons(ui: &mut egui::Ui, session: &SimulationSession, selected: &mut usize) {
     heading(ui, "TOP ACTIVE NEURONS");
     let mut active: Vec<_> = session
         .engine
@@ -382,17 +390,26 @@ fn draw_top_neurons(ui: &mut egui::Ui, session: &SimulationSession, selected: us
         .collect();
     active.sort_unstable_by_key(|(_, activation)| std::cmp::Reverse(*activation));
     for (rank, (index, activation)) in active.into_iter().take(8).enumerate() {
-        ui.monospace(format!(
-            "{:>2}. {:<8} #{:<7} {:+6}",
-            rank + 1,
-            POPULATIONS[index % POPULATIONS.len()],
-            session.graph.neuron_ids[index],
-            activation
-        ));
+        if ui
+            .selectable_label(
+                *selected == index,
+                egui::RichText::new(format!(
+                    "{:>2}. {:<8} #{:<7} {:+6}",
+                    rank + 1,
+                    POPULATIONS[index % POPULATIONS.len()],
+                    session.graph.neuron_ids[index],
+                    activation
+                ))
+                .monospace(),
+            )
+            .clicked()
+        {
+            *selected = index;
+        }
     }
     ui.add_space(5.0);
     heading(ui, "SELECTED NEURON");
-    let index = selected.min(session.graph.neuron_ids.len().saturating_sub(1));
+    let index = (*selected).min(session.graph.neuron_ids.len().saturating_sub(1));
     key_value(ui, "Index", &index.to_string());
     key_value(ui, "Root ID", &session.graph.neuron_ids[index].to_string());
     key_value(ui, "Role", POPULATIONS[index % POPULATIONS.len()]);

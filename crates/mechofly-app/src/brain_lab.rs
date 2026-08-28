@@ -86,6 +86,18 @@ impl BrainLabState {
         }
     }
 
+    pub fn selected_neuron_index(&self) -> usize {
+        self.selected_index
+    }
+
+    pub fn set_selected_neuron_index(&mut self, index: usize) {
+        if self.selected_index != index {
+            self.selected_index = index;
+            self.selected_neuron = index.to_string();
+            self.targets = index.to_string();
+        }
+    }
+
     pub fn draw(
         &mut self,
         ui: &mut egui::Ui,
@@ -712,8 +724,11 @@ fn structural_panel(state: &mut BrainLabState, ui: &mut egui::Ui, session: &Simu
         })
         .collect();
     incoming.sort_unstable_by_key(|(_, weight)| std::cmp::Reverse(weight.abs()));
+    let mut next_selected = None;
     for (source, weight) in incoming.into_iter().take(14) {
-        structural_row(ui, session, source, selected, weight, true);
+        if structural_row(ui, session, source, selected, weight, true) {
+            next_selected = Some(source);
+        }
     }
 
     ui.separator();
@@ -730,7 +745,12 @@ fn structural_panel(state: &mut BrainLabState, ui: &mut egui::Ui, session: &Simu
     }
     outgoing.sort_unstable_by_key(|(_, weight)| std::cmp::Reverse(weight.abs()));
     for (target, weight) in outgoing.into_iter().take(14) {
-        structural_row(ui, session, selected, target, weight, false);
+        if structural_row(ui, session, selected, target, weight, false) {
+            next_selected = Some(target);
+        }
+    }
+    if let Some(index) = next_selected {
+        state.set_selected_neuron_index(index);
     }
     ui.separator();
     claim_badge(
@@ -749,9 +769,10 @@ fn structural_row(
     target: usize,
     weight: i32,
     show_source: bool,
-) {
+) -> bool {
     let neuron = if show_source { source } else { target };
-    ui.horizontal(|ui| {
+    let response = ui
+        .horizontal(|ui| {
         ui.colored_label(
             if weight >= 0 { POSITIVE } else { WARNING },
             if weight >= 0 { "+" } else { "−" },
@@ -764,7 +785,13 @@ fn structural_row(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.monospace(format!("{:+}", weight));
         });
-    });
+    })
+        .response
+        .interact(Sense::click());
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    response.clicked()
 }
 
 fn counterfactual_panel(

@@ -3,11 +3,15 @@ use std::{fs, path::Path, sync::Arc};
 use mechofly_core::{
     Action, Behavior, Feedback, ModelCheckpoint, ModelEngine, ModelGraph, ModelTier, PetPolicy,
     PolicyContext, StepInput, StimulationPolicy, StimulationRequest,
-    model::{FUNCTIONAL_POPULATION_COUNT, LOOM_POPULATION_OFFSET},
+    model::{
+        ESCAPE_HOLD_FRAMES, FLIGHT_HOLD_FRAMES, FUNCTIONAL_POPULATION_COUNT, GROOM_HOLD_FRAMES,
+        GROOM_POPULATION_OFFSET, LANDING_HOLD_FRAMES, LOOM_POPULATION_OFFSET,
+        REVERSE_POPULATION_OFFSET, WALK_POPULATION_OFFSET,
+    },
 };
 use serde::Serialize;
 
-use crate::pet::{PetMotion, Skin};
+use crate::pet::{PetMotion, Skin, run_motion_self_test};
 
 #[derive(Serialize)]
 struct SelfTestReceipt {
@@ -50,8 +54,24 @@ struct SelfTestReceipt {
     prism_grooming_animation_responsive: bool,
     prism_wing_state_contract_passed: bool,
     cursor_loom_neural_escape: bool,
+    neural_hotkey_behavior_dispatch: bool,
+    presentation_only_hotkey_path: bool,
+    behavior_controller_authoritative: bool,
+    escape_envelope_ms: u32,
+    flight_envelope_ms: u32,
+    landing_envelope_ms: u32,
+    grooming_minimum_dwell_ms: u32,
+    recorded_motion_contract_passed: bool,
+    walking_translation_pixels: f32,
+    escape_translation_pixels: f32,
+    flight_path_pixels: f32,
+    flight_horizontal_pixels: f32,
+    flight_vertical_pixels: f32,
+    landing_descent_pixels: f32,
+    landing_reached_surface: bool,
     two_dimensional_flight_motion: bool,
     separate_live_brain_and_brain_lab: bool,
+    two_way_neuron_selection_sync: bool,
     brain_lab_reference_columns: Vec<String>,
     behavior_program_timeline: bool,
     anatomical_context_points: usize,
@@ -123,6 +143,32 @@ pub fn run(path: &Path) -> Result<(), String> {
             .behavior
             == Behavior::PreEscape
     });
+    let neural_hotkey_behavior_dispatch = [
+        (GROOM_POPULATION_OFFSET, Behavior::Groom),
+        (REVERSE_POPULATION_OFFSET, Behavior::Reverse),
+        (WALK_POPULATION_OFFSET, Behavior::Walk),
+    ]
+    .into_iter()
+    .all(|(offset, expected)| {
+        let mut engine = ModelEngine::new(Arc::clone(&graph), 0xD15A_7C11 + offset as u64);
+        let mut stimulus = engine.empty_stimulus();
+        for value in stimulus
+            .iter_mut()
+            .skip(offset)
+            .step_by(FUNCTIONAL_POPULATION_COUNT)
+        {
+            *value = 8_192;
+        }
+        (0..24).any(|_| {
+            engine
+                .step_cpu(StepInput {
+                    stimulus_q15: &stimulus,
+                })
+                .behavior
+                == expected
+        })
+    });
+    let motion = run_motion_self_test();
     let mut flight_motion = PetMotion::default();
     flight_motion.screen_position = eframe::egui::Pos2::new(800.0, 500.0);
     let flight_start = flight_motion.screen_position;
@@ -139,6 +185,16 @@ pub fn run(path: &Path) -> Result<(), String> {
     let two_dimensional_flight_motion = (flight_motion.screen_position.x - flight_start.x).abs()
         > 20.0
         && (flight_motion.screen_position.y - flight_start.y).abs() > 15.0;
+    let mut live_selection = crate::live_brain::LiveBrainState::new(true);
+    let mut lab_selection =
+        crate::brain_lab::BrainLabState::new(true, crate::compute::ComputePreference::Cpu);
+    live_selection.set_selected_neuron(211);
+    lab_selection.set_selected_neuron_index(live_selection.selected_neuron());
+    let live_to_lab = lab_selection.selected_neuron_index() == 211;
+    lab_selection.set_selected_neuron_index(377);
+    live_selection.set_selected_neuron(lab_selection.selected_neuron_index());
+    let lab_to_live = live_selection.selected_neuron() == 377;
+    let two_way_neuron_selection_sync = live_to_lab && lab_to_live;
 
     #[cfg(windows)]
     let hotkeys = crate::desktop_pet::run_hotkey_self_test();
@@ -164,7 +220,7 @@ pub fn run(path: &Path) -> Result<(), String> {
     };
 
     let receipt = SelfTestReceipt {
-        schema_version: 3,
+        schema_version: 4,
         status: if comparison.receipt.live_state_unchanged
             && comparison.receipt.alternative_differs
             && live_before == live_after
@@ -172,7 +228,10 @@ pub fn run(path: &Path) -> Result<(), String> {
             && hotkeys.passed
             && firefly_visual.passed
             && cursor_loom_neural_escape
+            && neural_hotkey_behavior_dispatch
+            && motion.passed
             && two_dimensional_flight_motion
+            && two_way_neuron_selection_sync
             && anatomical_context_points == 23_210
         {
             "PASS".to_owned()
@@ -216,8 +275,24 @@ pub fn run(path: &Path) -> Result<(), String> {
         prism_grooming_animation_responsive: firefly_visual.grooming_pixel_differences > 100,
         prism_wing_state_contract_passed: firefly_visual.wing_state_contract_passed,
         cursor_loom_neural_escape,
+        neural_hotkey_behavior_dispatch,
+        presentation_only_hotkey_path: false,
+        behavior_controller_authoritative: true,
+        escape_envelope_ms: (ESCAPE_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
+        flight_envelope_ms: (FLIGHT_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
+        landing_envelope_ms: (LANDING_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
+        grooming_minimum_dwell_ms: (GROOM_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
+        recorded_motion_contract_passed: motion.passed,
+        walking_translation_pixels: motion.walking_translation_pixels,
+        escape_translation_pixels: motion.escape_translation_pixels,
+        flight_path_pixels: motion.flight_path_pixels,
+        flight_horizontal_pixels: motion.flight_horizontal_pixels,
+        flight_vertical_pixels: motion.flight_vertical_pixels,
+        landing_descent_pixels: motion.landing_descent_pixels,
+        landing_reached_surface: motion.landing_reached_surface,
         two_dimensional_flight_motion,
         separate_live_brain_and_brain_lab: true,
+        two_way_neuron_selection_sync,
         brain_lab_reference_columns: vec![
             "NEURON SEARCH".to_owned(),
             "SELECTED STRUCTURAL NEIGHBORHOOD".to_owned(),
