@@ -302,7 +302,7 @@ pub fn run(path: &Path) -> Result<(), String> {
         global_hotkey_contract_passed: hotkeys.passed,
         registered_hotkeys_tested: hotkeys.registered_count,
         asynchronous_hotkey_fallback: hotkeys.async_fallback_all_bindings,
-        firefly_visual_style: "desktopfly_prism_recording_port_v6".to_owned(),
+        firefly_visual_style: "recorded_legacy_prism_port_v6".to_owned(),
         firefly_palette: "iridescent_glasswing".to_owned(),
         firefly_visual_contract_passed: firefly_visual.passed,
         firefly_opaque_pixels: firefly_visual.opaque_pixels,

@@ -405,7 +405,7 @@ if ($Receipt.status -ne 'PASS' -or -not $Receipt.live_state_unchanged -or
     -not $Receipt.global_hotkey_contract_passed -or
     $Receipt.global_hotkey_count -ne 8 -or
     -not $Receipt.asynchronous_hotkey_fallback -or
-    $Receipt.firefly_visual_style -ne 'desktopfly_prism_recording_port_v6' -or
+    $Receipt.firefly_visual_style -ne 'recorded_legacy_prism_port_v6' -or
     -not $Receipt.firefly_visual_contract_passed -or
     -not $Receipt.firefly_rest_temporal_invariant -or
     -not $Receipt.firefly_escape_wing_responsive -or

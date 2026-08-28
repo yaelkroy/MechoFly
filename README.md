@@ -13,7 +13,7 @@ preview.
 The application has two presentation-only skins:
 
 - **MechoFly Prism** is the repository, application, and AI100 default because
-  it matches the supplied DesktopFly recording (the existing `firefly` CLI
+  it matches the supplied reference recording (the existing `firefly` CLI
   value remains compatible).
 - **Drosophila Natural** remains an explicit alternate skin.
 
