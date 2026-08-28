@@ -503,7 +503,7 @@ fn reference_layout(
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.label(
-                        egui::RichText::new("MECHOFLY PRISM  —  BRAIN LAB")
+                        egui::RichText::new(format!("{}  —  BRAIN LAB", skin.label().to_ascii_uppercase()))
                             .strong()
                             .size(17.0)
                             .color(INK),

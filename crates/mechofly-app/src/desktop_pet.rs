@@ -45,6 +45,7 @@ use windows_sys::Win32::{
 use crate::pet::{PET_HEIGHT, PET_WIDTH, Skin};
 
 const HIT_ALPHA_THRESHOLD: u8 = 12;
+const EVIDENCE_HOLD_MESSAGE: u32 = 0x804D;
 
 const HOTKEY_QUIT: i32 = 0x4D01;
 const HOTKEY_VISIBILITY: i32 = 0x4D02;
@@ -156,6 +157,7 @@ pub struct PetEvents {
     pub interacted: bool,
     pub dragging: bool,
     pub hovered: bool,
+    pub evidence_hold: bool,
     pub position: Option<Pos2>,
     pub cursor_position: Option<Pos2>,
     hotkeys: u32,
@@ -170,6 +172,7 @@ impl PetEvents {
 struct OverlayShared {
     open_lab: AtomicBool,
     interacted: AtomicBool,
+    evidence_hold: AtomicBool,
     dragging: Cell<bool>,
     drag_cursor: Cell<(i32, i32)>,
     drag_window: Cell<(i32, i32)>,
@@ -183,6 +186,7 @@ impl OverlayShared {
         Self {
             open_lab: AtomicBool::new(false),
             interacted: AtomicBool::new(false),
+            evidence_hold: AtomicBool::new(false),
             dragging: Cell::new(false),
             drag_cursor: Cell::new((0, 0)),
             drag_window: Cell::new((0, 0)),
@@ -392,6 +396,7 @@ impl PetOverlay {
             interacted: self.shared.interacted.swap(false, Ordering::AcqRel),
             dragging: self.shared.dragging.get(),
             hovered: self.cursor_hits_pet(),
+            evidence_hold: self.shared.evidence_hold.load(Ordering::Acquire),
             position,
             cursor_position: self.cursor_position(),
             hotkeys: self.shared.hotkeys.swap(0, Ordering::AcqRel),
@@ -566,6 +571,10 @@ unsafe extern "system" fn window_proc(
         // and atomics because callbacks and polling share the allocation.
         let shared = unsafe { &*shared_pointer };
         match message {
+            EVIDENCE_HOLD_MESSAGE => {
+                shared.evidence_hold.store(wparam != 0, Ordering::Release);
+                return 0;
+            }
             WM_HOTKEY => {
                 if let Some(binding) = HOTKEY_BINDINGS
                     .iter()

@@ -25,6 +25,7 @@ if ($null -eq ('MechoFly.RuntimeSmoke.WindowProbe' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -75,6 +76,19 @@ namespace MechoFly.RuntimeSmoke
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hwnd);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetWindowPos(
+            IntPtr hwnd,
+            IntPtr insertAfter,
+            int x,
+            int y,
+            int width,
+            int height,
+            uint flags);
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmFlush();
+
         [DllImport("user32.dll", EntryPoint = "PostMessageW", SetLastError = true)]
         private static extern bool PostMessage(
             IntPtr hwnd,
@@ -93,6 +107,28 @@ namespace MechoFly.RuntimeSmoke
             return SetForegroundWindow(new IntPtr(handle));
         }
 
+        public static bool SetCaptureLayer(long handle, bool topmost)
+        {
+            const uint NoSize = 0x0001;
+            const uint NoMove = 0x0002;
+            const uint NoActivate = 0x0010;
+            const uint ShowWindow = 0x0040;
+            IntPtr insertAfter = topmost ? new IntPtr(-1) : new IntPtr(1);
+            return SetWindowPos(
+                new IntPtr(handle),
+                insertAfter,
+                0,
+                0,
+                0,
+                0,
+                NoSize | NoMove | NoActivate | ShowWindow);
+        }
+
+        public static bool FlushComposition()
+        {
+            return DwmFlush() == 0;
+        }
+
         public static bool PostHotkey(long handle, int hotkeyId)
         {
             const uint HotkeyMessage = 0x0312;
@@ -103,6 +139,16 @@ namespace MechoFly.RuntimeSmoke
                 IntPtr.Zero);
         }
 
+        public static bool PostEvidenceHold(long handle)
+        {
+            const uint EvidenceHoldMessage = 0x804D;
+            return PostMessage(
+                new IntPtr(handle),
+                EvidenceHoldMessage,
+                new UIntPtr(1),
+                IntPtr.Zero);
+        }
+
         public static bool Print(long handle, IntPtr targetDeviceContext)
         {
             const uint RenderFullContent = 2;
@@ -110,6 +156,72 @@ namespace MechoFly.RuntimeSmoke
                 new IntPtr(handle),
                 targetDeviceContext,
                 RenderFullContent);
+        }
+
+        public static WindowInfo Current(long handle)
+        {
+            IntPtr hwnd = new IntPtr(handle);
+            if (!IsWindowVisible(hwnd))
+            {
+                return null;
+            }
+            Rect rect;
+            if (!GetWindowRect(hwnd, out rect))
+            {
+                return null;
+            }
+            int width = rect.Right - rect.Left;
+            int height = rect.Bottom - rect.Top;
+            if (width < 32 || height < 32)
+            {
+                return null;
+            }
+            StringBuilder title = new StringBuilder(512);
+            StringBuilder className = new StringBuilder(256);
+            GetWindowText(hwnd, title, title.Capacity);
+            GetClassName(hwnd, className, className.Capacity);
+            return new WindowInfo
+            {
+                handle = handle,
+                x = rect.Left,
+                y = rect.Top,
+                width = width,
+                height = height,
+                title = title.ToString(),
+                class_name = className.ToString()
+            };
+        }
+
+        public static int CountDifferentPixels(
+            string firstPath,
+            string secondPath,
+            int threshold)
+        {
+            using (Bitmap first = new Bitmap(firstPath))
+            using (Bitmap second = new Bitmap(secondPath))
+            {
+                if (first.Width != second.Width || first.Height != second.Height)
+                {
+                    return -1;
+                }
+                int different = 0;
+                for (int y = 0; y < first.Height; y++)
+                {
+                    for (int x = 0; x < first.Width; x++)
+                    {
+                        Color left = first.GetPixel(x, y);
+                        Color right = second.GetPixel(x, y);
+                        int delta = Math.Abs(left.R - right.R)
+                            + Math.Abs(left.G - right.G)
+                            + Math.Abs(left.B - right.B);
+                        if (delta > threshold)
+                        {
+                            different++;
+                        }
+                    }
+                }
+                return different;
+            }
         }
 
         public static WindowInfo[] ForProcess(uint expectedProcessId)
@@ -175,6 +287,44 @@ function Write-JsonFile {
         (New-Object System.Text.UTF8Encoding($false)))
 }
 
+function Save-DesktopRectangle {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int] $Left,
+
+        [Parameter(Mandatory = $true)]
+        [int] $Top,
+
+        [Parameter(Mandatory = $true)]
+        [int] $Width,
+
+        [Parameter(Mandatory = $true)]
+        [int] $Height,
+
+        [Parameter(Mandatory = $true)]
+        [string] $LiteralPath
+    )
+
+    $Bitmap = New-Object System.Drawing.Bitmap($Width, $Height)
+    $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
+    try {
+        $Graphics.CopyFromScreen(
+            $Left,
+            $Top,
+            0,
+            0,
+            (New-Object System.Drawing.Size($Width, $Height)),
+            [System.Drawing.CopyPixelOperation]::SourceCopy)
+        $Bitmap.Save(
+            $LiteralPath,
+            [System.Drawing.Imaging.ImageFormat]::Png)
+    }
+    finally {
+        $Graphics.Dispose()
+        $Bitmap.Dispose()
+    }
+}
+
 function Save-WindowCapture {
     param(
         [Parameter(Mandatory = $true)]
@@ -184,9 +334,16 @@ function Save-WindowCapture {
         [string] $LiteralPath
     )
 
-    $CaptureMethod = 'desktop-composition'
+    $Window = [MechoFly.RuntimeSmoke.WindowProbe]::Current(
+        [int64]$Window.handle)
+    if ($null -eq $Window) {
+        throw 'The evidence window disappeared before capture.'
+    }
+
+    $CaptureMethod = 'desktop-composition-current-rect'
     $CaptureWidth = 0
     $CaptureHeight = 0
+    $ForegroundDifferencePixels = 0
     if ([string]$Window.class_name -eq 'Window Class') {
         $CaptureMethod = 'print-window-full-content'
         $CaptureWidth = [int]$Window.width
@@ -219,46 +376,88 @@ function Save-WindowCapture {
         }
     }
     else {
-        [void][MechoFly.RuntimeSmoke.WindowProbe]::Activate(
-            [int64]$Window.handle)
-        Start-Sleep -Milliseconds 250
+        $CaptureMethod = 'desktop-composition-isolated-foreground'
         $Virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
-        $Left = [Math]::Max($Virtual.Left, [int]$Window.x)
-        $Top = [Math]::Max($Virtual.Top, [int]$Window.y)
-        $Right = [Math]::Min(
-            $Virtual.Right,
-            [int]$Window.x + [int]$Window.width)
-        $Bottom = [Math]::Min(
-            $Virtual.Bottom,
-            [int]$Window.y + [int]$Window.height)
-        $CaptureWidth = $Right - $Left
-        $CaptureHeight = $Bottom - $Top
-        if ($CaptureWidth -le 0 -or $CaptureHeight -le 0) {
-            throw ('Visible application window was outside the virtual screen: ' +
-                [string]$Window.title)
-        }
-
-        $Bitmap = New-Object System.Drawing.Bitmap(
-            $CaptureWidth,
-            $CaptureHeight)
-        $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
+        $BackgroundPath = $LiteralPath + '.background.png'
         try {
-            $Graphics.CopyFromScreen(
-                $Left,
-                $Top,
-                0,
-                0,
-                (New-Object System.Drawing.Size(
-                    $CaptureWidth,
-                    $CaptureHeight)),
-                [System.Drawing.CopyPixelOperation]::SourceCopy)
-            $Bitmap.Save(
-                $LiteralPath,
-                [System.Drawing.Imaging.ImageFormat]::Png)
+            if (-not [MechoFly.RuntimeSmoke.WindowProbe]::SetCaptureLayer(
+                [int64]$Window.handle,
+                $false)) {
+                throw 'Could not demote the layered pet for background isolation.'
+            }
+            [void][MechoFly.RuntimeSmoke.WindowProbe]::FlushComposition()
+            Start-Sleep -Milliseconds 80
+
+            $Left = [Math]::Max($Virtual.Left, [int]$Window.x)
+            $Top = [Math]::Max($Virtual.Top, [int]$Window.y)
+            $Right = [Math]::Min(
+                $Virtual.Right,
+                [int]$Window.x + [int]$Window.width)
+            $Bottom = [Math]::Min(
+                $Virtual.Bottom,
+                [int]$Window.y + [int]$Window.height)
+            $CaptureWidth = $Right - $Left
+            $CaptureHeight = $Bottom - $Top
+            if ($CaptureWidth -le 0 -or $CaptureHeight -le 0) {
+                throw 'The layered pet was outside the virtual screen.'
+            }
+            Save-DesktopRectangle `
+                -Left $Left `
+                -Top $Top `
+                -Width $CaptureWidth `
+                -Height $CaptureHeight `
+                -LiteralPath $BackgroundPath
+
+            if (-not [MechoFly.RuntimeSmoke.WindowProbe]::SetCaptureLayer(
+                [int64]$Window.handle,
+                $true)) {
+                throw 'Could not promote the layered pet for foreground capture.'
+            }
+            [void][MechoFly.RuntimeSmoke.WindowProbe]::FlushComposition()
+            Start-Sleep -Milliseconds 80
+            $Window = [MechoFly.RuntimeSmoke.WindowProbe]::Current(
+                [int64]$Window.handle)
+            if ($null -eq $Window) {
+                throw 'The layered pet disappeared after foreground promotion.'
+            }
+
+            $Left = [Math]::Max($Virtual.Left, [int]$Window.x)
+            $Top = [Math]::Max($Virtual.Top, [int]$Window.y)
+            $Right = [Math]::Min(
+                $Virtual.Right,
+                [int]$Window.x + [int]$Window.width)
+            $Bottom = [Math]::Min(
+                $Virtual.Bottom,
+                [int]$Window.y + [int]$Window.height)
+            $CaptureWidth = $Right - $Left
+            $CaptureHeight = $Bottom - $Top
+            Save-DesktopRectangle `
+                -Left $Left `
+                -Top $Top `
+                -Width $CaptureWidth `
+                -Height $CaptureHeight `
+                -LiteralPath $LiteralPath
+            $ForegroundDifferencePixels =
+                [MechoFly.RuntimeSmoke.WindowProbe]::CountDifferentPixels(
+                    $BackgroundPath,
+                    $LiteralPath,
+                    18)
+            if ($ForegroundDifferencePixels -lt 500) {
+                throw (
+                    'The layered-pet capture did not contain a visible ' +
+                    'foreground. differing_pixels=' +
+                    [string]$ForegroundDifferencePixels)
+            }
         }
         finally {
-            $Graphics.Dispose()
-            $Bitmap.Dispose()
+            Remove-Item `
+                -LiteralPath $BackgroundPath `
+                -Force `
+                -ErrorAction SilentlyContinue
+            [void][MechoFly.RuntimeSmoke.WindowProbe]::SetCaptureLayer(
+                [int64]$Window.handle,
+                $true)
+            [void][MechoFly.RuntimeSmoke.WindowProbe]::FlushComposition()
         }
     }
 
@@ -270,6 +469,7 @@ function Save-WindowCapture {
         width = $CaptureWidth
         height = $CaptureHeight
         capture_method = $CaptureMethod
+        foreground_difference_pixels = $ForegroundDifferencePixels
         full_window = (
             $CaptureWidth -eq [int]$Window.width -and
             $CaptureHeight -eq [int]$Window.height)
@@ -284,6 +484,9 @@ function Invoke-GuiCase {
 
         [Parameter(Mandatory = $true)]
         [string[]] $Arguments,
+
+        [Parameter(Mandatory = $true)]
+        [string] $ExpectedSkinLabel,
 
         [int] $StimulusHotkeyId = 0,
 
@@ -367,6 +570,55 @@ function Invoke-GuiCase {
                 [uint32]$Process.Id))
         }
 
+        $PetWindow = @($Windows | Where-Object {
+            [string]$_.title -eq 'MechoFly desktop pet'
+        }) | Select-Object -First 1
+        $EvidenceHoldPosted =
+            [MechoFly.RuntimeSmoke.WindowProbe]::PostEvidenceHold(
+                [int64]$PetWindow.handle)
+        if (-not $EvidenceHoldPosted) {
+            throw 'Could not place the model and presentation in evidence hold.'
+        }
+        $EvidenceSettleMilliseconds = 500
+        Start-Sleep -Milliseconds $EvidenceSettleMilliseconds
+        $Process.Refresh()
+        if ($Process.HasExited) {
+            throw 'MechoFly exited while entering synchronized evidence hold.'
+        }
+        $Windows = @([MechoFly.RuntimeSmoke.WindowProbe]::ForProcess(
+            [uint32]$Process.Id))
+        $NeuralWindows = @($Windows | Where-Object {
+            [string]$_.title -like '*Live Brain*' -or
+            [string]$_.title -like '*Brain Lab*'
+        })
+        if ($NeuralWindows.Count -ne 2) {
+            throw ('Expected exactly two neural evidence windows; found ' +
+                [string]$NeuralWindows.Count + '.')
+        }
+        $ExpectedSkinTitlePassed = @($NeuralWindows | Where-Object {
+            [string]$_.title -notlike ($ExpectedSkinLabel + ' — *')
+        }).Count -eq 0
+        if (-not $ExpectedSkinTitlePassed) {
+            throw ('A neural window title does not match skin ' +
+                $ExpectedSkinLabel + '.')
+        }
+        $NeuralFrames = @($NeuralWindows | ForEach-Object {
+            $Match = [regex]::Match(
+                [string]$_.title,
+                ' — frame (?<frame>[0-9]{8})$')
+            if (-not $Match.Success) {
+                throw ('Neural evidence title has no frozen frame: ' +
+                    [string]$_.title)
+            }
+            [uint64]$Match.Groups['frame'].Value
+        })
+        $UniqueNeuralFrames = @($NeuralFrames | Sort-Object -Unique)
+        if ($UniqueNeuralFrames.Count -ne 1) {
+            throw ('Neural evidence windows are not frame-synchronized: ' +
+                ($NeuralFrames -join ', '))
+        }
+        $NeuralCaptureFrame = [uint64]$UniqueNeuralFrames[0]
+
         $Captures = New-Object System.Collections.Generic.List[object]
         $CaptureIndex = 0
         foreach ($Window in @($Windows | Sort-Object title, handle)) {
@@ -378,8 +630,17 @@ function Invoke-GuiCase {
                 -LiteralPath $CapturePath))
         }
 
+        $PetCaptures = @($Captures | Where-Object {
+            [string]$_.source_window.class_name -eq
+                'MechoFlyDesktopPetLayeredWindowV1'
+        })
+        if ($PetCaptures.Count -ne 1 -or
+            [int]$PetCaptures[0].foreground_difference_pixels -lt 500) {
+            throw 'The normal-scale pet foreground was not captured exactly once.'
+        }
+
         $Result = [ordered]@{
-            schema_version = 2
+            schema_version = 3
             status = 'PASS'
             case = $Name
             executable = $Executable
@@ -391,6 +652,13 @@ function Invoke-GuiCase {
             stimulus_hotkey_id = $StimulusHotkeyId
             stimulus_hotkey_posted = $StimulusPosted
             stimulus_settle_milliseconds = $StimulusSettleMilliseconds
+            evidence_hold_message = '0x804D'
+            evidence_hold_posted = $EvidenceHoldPosted
+            evidence_settle_milliseconds = $EvidenceSettleMilliseconds
+            expected_skin_label = $ExpectedSkinLabel
+            expected_skin_title_passed = $ExpectedSkinTitlePassed
+            neural_capture_frame = $NeuralCaptureFrame
+            neural_capture_frame_synchronized = $true
             process_id = $Process.Id
             survived_startup_boundary = $true
             visible_window_count = $Windows.Count
@@ -427,11 +695,13 @@ try {
         Invoke-GuiCase `
             -Name 'cpu-brain-lab' `
             -Arguments @('--skin', 'drosophila', '--compute', 'cpu', '--brain-lab', '--reduced-motion') `
+            -ExpectedSkinLabel 'Drosophila Natural' `
             -StimulusHotkeyId 0x4D05 `
             -StimulusSettleMilliseconds 500
         Invoke-GuiCase `
             -Name 'auto-brain-lab' `
             -Arguments @('--skin', 'firefly', '--compute', 'auto', '--brain-lab') `
+            -ExpectedSkinLabel 'MechoFly Prism' `
             -StimulusHotkeyId 0x4D03 `
             -StimulusSettleMilliseconds 1000
     )
@@ -450,15 +720,32 @@ $FullWindowCaptures = @($AllCaptures | Where-Object {
 if (-not $FullWindowCaptures) {
     throw 'At least one GUI evidence image was clipped.'
 }
+$PetForegroundCaptured = @($AllCaptures | Where-Object {
+    [string]$_.source_window.class_name -eq
+        'MechoFlyDesktopPetLayeredWindowV1' -and
+    [int]$_.foreground_difference_pixels -ge 500
+}).Count -eq $Cases.Count
+if (-not $PetForegroundCaptured) {
+    throw 'At least one case lacks an isolated visible pet foreground.'
+}
+$NeuralFramesSynchronized = @($Cases | Where-Object {
+    -not [bool]$_.neural_capture_frame_synchronized
+}).Count -eq 0
+$SkinTitlesMatched = @($Cases | Where-Object {
+    -not [bool]$_.expected_skin_title_passed
+}).Count -eq 0
 
 Write-JsonFile `
     -LiteralPath (Join-Path $OutputDirectory 'summary.json') `
     -Value ([ordered]@{
-        schema_version = 2
+        schema_version = 3
         status = 'PASS'
         cases = @($Cases)
         normal_scale_desktop_capture = $true
+        pet_foreground_captured = $PetForegroundCaptured
         comprehensive_neural_window_capture = $true
+        neural_frames_synchronized = $NeuralFramesSynchronized
+        skin_titles_matched = $SkinTitlesMatched
         full_window_captures = $FullWindowCaptures
         source_mutation = $false
         live_hardware_authority = 'NONE'

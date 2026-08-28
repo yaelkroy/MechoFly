@@ -4,7 +4,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Str
 use mechofly_core::Behavior;
 use serde::Deserialize;
 
-use crate::{app::RuntimeSourceIdentity, runtime::SimulationSession};
+use crate::{app::RuntimeSourceIdentity, pet::Skin, runtime::SimulationSession};
 
 const BACKGROUND: Color32 = Color32::from_rgb(7, 8, 13);
 const PANEL: Color32 = Color32::from_rgb(14, 14, 23);
@@ -54,6 +54,7 @@ impl LiveBrainState {
         ui: &mut egui::Ui,
         session: &SimulationSession,
         behavior: Behavior,
+        skin: Skin,
         source_identity: &RuntimeSourceIdentity,
     ) -> Vec<LiveBrainCommand> {
         style(ui.ctx());
@@ -69,9 +70,12 @@ impl LiveBrainState {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new("MECHOFLY PRISM  —  LIVE BRAIN")
-                            .strong()
-                            .color(TEXT),
+                        egui::RichText::new(format!(
+                            "{}  —  LIVE BRAIN",
+                            skin.label().to_ascii_uppercase()
+                        ))
+                        .strong()
+                        .color(TEXT),
                     );
                     ui.separator();
                     if ui

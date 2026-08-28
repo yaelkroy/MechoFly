@@ -75,6 +75,7 @@ pub struct MechoFlyApp {
     last_interaction: Option<Instant>,
     last_wall: Instant,
     accumulator: Duration,
+    evidence_hold: bool,
     seed: u64,
     exit_requested: bool,
 }
@@ -153,6 +154,7 @@ impl MechoFlyApp {
             last_interaction: None,
             last_wall: Instant::now(),
             accumulator: Duration::ZERO,
+            evidence_hold: false,
             seed,
             exit_requested: false,
         };
@@ -381,17 +383,22 @@ impl eframe::App for MechoFlyApp {
             .duration_since(self.last_wall)
             .min(Duration::from_millis(250));
         self.last_wall = now;
-        self.accumulator += elapsed;
         let mut steps = 0;
-        while self.accumulator >= MODEL_INTERVAL && steps < MAX_CATCH_UP_STEPS {
-            self.session.step();
-            self.accumulator -= MODEL_INTERVAL;
-            steps += 1;
-            if self.session.engine.state.frame.is_multiple_of(90) {
-                self.select_policy_action();
+        if self.evidence_hold {
+            self.accumulator = Duration::ZERO;
+        } else {
+            self.accumulator += elapsed;
+            while self.accumulator >= MODEL_INTERVAL && steps < MAX_CATCH_UP_STEPS {
+                self.session.step();
+                self.accumulator -= MODEL_INTERVAL;
+                steps += 1;
+                if self.session.engine.state.frame.is_multiple_of(90) {
+                    self.select_policy_action();
+                }
             }
         }
-        if steps == MAX_CATCH_UP_STEPS && self.accumulator >= MODEL_INTERVAL {
+        if !self.evidence_hold && steps == MAX_CATCH_UP_STEPS && self.accumulator >= MODEL_INTERVAL
+        {
             self.accumulator = Duration::ZERO;
             self.session.runtime_warning = Some(CATCHUP_WARNING.to_owned());
         } else if self.session.runtime_warning.as_deref() == Some(CATCHUP_WARNING) {
@@ -422,6 +429,7 @@ impl eframe::App for MechoFlyApp {
             held = events.dragging;
             cursor_position = events.cursor_position;
             cursor_over_pet = events.hovered;
+            self.evidence_hold = events.evidence_hold;
             if let Some(position) = events.position {
                 self.pet.screen_position = position;
             }
@@ -447,8 +455,13 @@ impl eframe::App for MechoFlyApp {
         } else {
             cursor_loom_strength
         });
+        let presentation_elapsed = if self.evidence_hold {
+            Duration::ZERO
+        } else {
+            elapsed
+        };
         self.pet.advance(
-            elapsed.as_secs_f32(),
+            presentation_elapsed.as_secs_f32(),
             authoritative_display_behavior(self.session.engine.state.behavior),
             screen_origin,
             screen_size,
@@ -516,6 +529,13 @@ impl eframe::App for MechoFlyApp {
 
         if self.live_brain.open {
             let behavior = authoritative_display_behavior(self.session.engine.state.behavior);
+            let skin = self.skin;
+            let title = neural_viewport_title(
+                skin,
+                "Live Brain",
+                self.evidence_hold,
+                self.session.last_summary.frame,
+            );
             let commands = {
                 let live_brain = &mut self.live_brain;
                 let session = &self.session;
@@ -523,17 +543,18 @@ impl eframe::App for MechoFlyApp {
                 ui.ctx().show_viewport_immediate(
                     egui::ViewportId::from_hash_of("mechofly-live-brain-v5"),
                     egui::ViewportBuilder::default()
-                        .with_title("MechoFly Prism — Live Brain")
+                        .with_title(title)
                         .with_inner_size([1_120.0, 760.0])
                         .with_min_inner_size([840.0, 620.0])
                         .with_resizable(true)
                         .with_transparent(false)
                         .with_taskbar(true),
                     |brain_ui, _class| {
+                        brain_ui.ctx().request_repaint();
                         if brain_ui.input(|input| input.viewport().close_requested()) {
                             live_brain.open = false;
                         }
-                        live_brain.draw(brain_ui, session, behavior, source_identity)
+                        live_brain.draw(brain_ui, session, behavior, skin, source_identity)
                     },
                 )
             };
@@ -547,22 +568,29 @@ impl eframe::App for MechoFlyApp {
         }
 
         if self.lab.open {
+            let skin = self.skin;
+            let title = neural_viewport_title(
+                skin,
+                "Brain Lab",
+                self.evidence_hold,
+                self.session.last_summary.frame,
+            );
             let commands = {
                 let lab = &mut self.lab;
                 let session = &self.session;
                 let policy = &self.policy;
-                let skin = self.skin;
                 let source_identity = &self.source_identity;
                 ui.ctx().show_viewport_immediate(
                     egui::ViewportId::from_hash_of("mechofly-brain-lab-v5"),
                     egui::ViewportBuilder::default()
-                        .with_title("MechoFly Prism — Brain Lab")
+                        .with_title(title)
                         .with_inner_size([1_580.0, 820.0])
                         .with_min_inner_size([1_260.0, 720.0])
                         .with_resizable(true)
                         .with_transparent(false)
                         .with_taskbar(true),
                     |lab_ui, _class| {
+                        lab_ui.ctx().request_repaint();
                         if lab_ui.input(|input| input.viewport().close_requested()) {
                             lab.open = false;
                         }
@@ -616,6 +644,14 @@ impl MechoFlyApp {
                     self.select_policy_action();
                 }
             });
+    }
+}
+
+fn neural_viewport_title(skin: Skin, panel: &str, evidence_hold: bool, frame: u64) -> String {
+    if evidence_hold {
+        format!("{} — {panel} — frame {frame:08}", skin.label())
+    } else {
+        format!("{} — {panel}", skin.label())
     }
 }
 
