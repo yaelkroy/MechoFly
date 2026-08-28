@@ -1,0 +1,56 @@
+name: Patch GUI drawing reference
+
+on:
+  push:
+    branches:
+      - feat/original-video-parity-rust-v5
+    paths:
+      - .github/workflows/patch-gui-drawing-reference.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Add explicit drawing assembly references
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('tools/Test-Windows-GuiStartup.ps1')
+          text = path.read_text(encoding='utf-8')
+          old = """Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName System.Windows.Forms
+          if ($null -eq ('MechoFly.RuntimeSmoke.WindowProbe' -as [type])) {
+              Add-Type -TypeDefinition @'
+          """.replace('          ', '')
+          new = """Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName System.Windows.Forms
+          $WindowProbeReferences = @(
+              [System.Drawing.Bitmap].Assembly.Location
+              [System.Windows.Forms.Application].Assembly.Location
+          )
+          if ($null -eq ('MechoFly.RuntimeSmoke.WindowProbe' -as [type])) {
+              Add-Type `
+                  -ReferencedAssemblies $WindowProbeReferences `
+                  -TypeDefinition @'
+          """.replace('          ', '')
+          if text.count(old) != 1:
+              raise SystemExit('Expected one GUI probe Add-Type block.')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8', newline='\n')
+          PY
+          git diff --check
+      - name: Publish the harness repair
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git add tools/Test-Windows-GuiStartup.ps1
+          git commit -m "Reference drawing assemblies in GUI probe"
+          git push origin HEAD:feat/original-video-parity-rust-v5
