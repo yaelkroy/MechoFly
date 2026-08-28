@@ -22,10 +22,12 @@ enters the escape sequence only after that population crosses its activation
 threshold; zero sensory input is regression-tested against escape entry. This
 is a modeled software circuit claim, not a measured biological response.
 
-The Prism skin must retain the recording's paired glass wings, visible veins,
-orange faceted eyes, cyan/gold thorax, ten jewel-like abdominal segments, six
-jointed legs, two antennae, and behavior-specific orbit/trail cues. Drosophila
-Natural uses the same articulation with a natural palette.
+The Prism skin must retain the recording's single paired glass-wing set,
+visible veins, orange eyes, dark-green head, orange anterior thorax, round
+green posterior thorax, continuous twin-panel green abdomen, six jointed legs,
+two antennae, and the faint airborne orbit cue. Wings stay parked and invisible
+during rest, walking, reverse, grooming, alert, and quiet states. Drosophila
+Natural uses the same behavioral articulation with a natural palette.
 
 All movement is elapsed-time based. Tests compare refresh-rate trajectories and
 require distinct rendered frames for walking, grooming, escape, flight, and

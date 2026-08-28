@@ -682,7 +682,7 @@ fn draw_abdomen(
     } else {
         0.5 + 0.5 * (time * 3.1).sin()
     };
-    for segment in 0..10 {
+    for (segment, &(r, g, b)) in natural.iter().enumerate() {
         let x = -5.0 + segment as f32 * 10.7;
         let width = if segment < 2 {
             13.0
@@ -690,7 +690,6 @@ fn draw_abdomen(
             12.0 - segment as f32 * 0.45
         };
         let height = (16.0 - segment as f32 * 1.05).max(5.2);
-        let (r, g, b) = natural[segment];
         scene.ellipse(
             [x + width * 0.5, 0.0],
             [width * 0.58, height * 0.5],

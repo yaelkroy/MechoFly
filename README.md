@@ -137,7 +137,9 @@ and validation warnings before starting a pinned imported-graph session.
 `D:\Projects\MechoFly`, builds and tests it, and records the exact branch,
 commit, Git tree, and executable SHA-256. AI100 defaults to Drosophila/Auto.
 Start refuses a checkout or binary that differs from that receipt; the Sync
-shortcut performs a guarded fast-forward and rebuild.
+shortcut performs a guarded fast-forward and rebuild. Setup also creates
+**Start MechoFly Original** for the recording-matched Prism companion and
+**MechoFly Brain Lab** for Prism plus both neural windows.
 
 ```powershell
 .\tools\Setup-AI100-MechoFly.ps1 -Launch

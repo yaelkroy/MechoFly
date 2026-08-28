@@ -15,11 +15,12 @@ abdomen, red compound eyes, six articulated legs, and translucent wings.
 
 ## MechoFly Prism
 
-MechoFly Prism restores the original recording's jewel-like silhouette:
-ten iridescent abdominal segments, faceted cyan thorax, orange compound eyes,
-one independently animated glass wing pair with veins and pterostigmata, six
-jointed legs, antennae, an orbit field, and escape trails. It remains optional;
-Drosophila Natural is also the AI100 default.
+MechoFly Prism restores the original recording's silhouette: a continuous
+twin-panel green abdomen, green posterior thorax, orange anterior thorax,
+dark-green head, orange eyes, one independently animated glass wing pair with
+veins and pterostigmata, six jointed legs, antennae, and the faint airborne
+orbit field. Ground states park the wings completely and do not draw motion
+trails. It remains optional; Drosophila Natural is also the AI100 default.
 
 ```powershell
 .\host-windows\Start-MechoFly.ps1 -Skin firefly

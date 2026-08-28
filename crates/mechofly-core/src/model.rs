@@ -258,8 +258,7 @@ fn modeled_behavior(state: &ModelState, spike_count: usize) -> Behavior {
         return Behavior::PreEscape;
     }
 
-    let rate_per_10k =
-        spike_count.saturating_mul(10_000) / state.activation.len().max(1);
+    let rate_per_10k = spike_count.saturating_mul(10_000) / state.activation.len().max(1);
     if rate_per_10k > 1_200 {
         Behavior::Alert
     } else {
@@ -321,7 +320,10 @@ mod tests {
                 break;
             }
         }
-        assert!(escaped, "loom neural population never crossed the controller threshold");
+        assert!(
+            escaped,
+            "loom neural population never crossed the controller threshold"
+        );
     }
 
     #[test]
