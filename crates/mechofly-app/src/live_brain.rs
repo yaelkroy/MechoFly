@@ -1,8 +1,6 @@
 use std::sync::OnceLock;
 
-use eframe::egui::{
-    self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2,
-};
+use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 use mechofly_core::Behavior;
 use serde::Deserialize;
 
@@ -84,27 +82,24 @@ impl LiveBrainState {
                     if ui.button("Brain Lab").clicked() {
                         commands.push(LiveBrainCommand::OpenLab);
                     }
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            if ui
-                                .button(if self.show_context {
-                                    "Hide context"
-                                } else {
-                                    "Show context"
-                                })
-                                .clicked()
-                            {
-                                self.show_context = !self.show_context;
-                            }
-                            ui.monospace(format!(
-                                "{} modeled  ·  {} context  ·  {} classes",
-                                session.graph.identity.neuron_count,
-                                atlas().points.len(),
-                                atlas().classes.len()
-                            ));
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(if self.show_context {
+                                "Hide context"
+                            } else {
+                                "Show context"
+                            })
+                            .clicked()
+                        {
+                            self.show_context = !self.show_context;
+                        }
+                        ui.monospace(format!(
+                            "{} modeled  ·  {} context  ·  {} classes",
+                            session.graph.identity.neuron_count,
+                            atlas().points.len(),
+                            atlas().classes.len()
+                        ));
+                    });
                 });
             });
 
@@ -115,16 +110,15 @@ impl LiveBrainState {
                 draw_raster(ui, session, self.history_floor);
                 ui.add_space(3.0);
                 ui.horizontal(|ui| {
-                    ui.colored_label(
-                        VIOLET,
-                        "FIXED FLYWIRE X–Y CONTEXT PROJECTION",
-                    );
+                    ui.colored_label(VIOLET, "FIXED FLYWIRE X–Y CONTEXT PROJECTION");
                     ui.separator();
                     ui.label(
                         egui::RichText::new(format!(
                             "{} · {} · model overlay is not anatomical registration",
                             session.graph.identity.structure_claim,
-                            source_identity.short_commit().unwrap_or("unreceipted build")
+                            source_identity
+                                .short_commit()
+                                .unwrap_or("unreceipted build")
                         ))
                         .small()
                         .color(MUTED),
@@ -182,12 +176,7 @@ impl LiveBrainState {
                     }
                 });
                 ui.add_space(4.0);
-                draw_brain(
-                    ui,
-                    session,
-                    self.show_context,
-                    &mut self.selected_neuron,
-                );
+                draw_brain(ui, session, self.show_context, &mut self.selected_neuron);
             });
 
         commands
@@ -272,11 +261,7 @@ fn draw_brain(
         );
         let activation = state.activation[index];
         let spiked = state.spikes[index] != 0;
-        let color = if spiked {
-            YELLOW
-        } else {
-            viridis(activation)
-        };
+        let color = if spiked { YELLOW } else { viridis(activation) };
         painter.circle_filled(position, if spiked { 2.3 } else { 1.25 }, color);
         if index == *selected {
             selected_position = Some(position);
@@ -332,8 +317,7 @@ fn draw_pathway_summary(ui: &mut egui::Ui, session: &SimulationSession) {
 
 fn draw_activity_scale(ui: &mut egui::Ui) {
     heading(ui, "RELATIVE SPIKE ACTIVITY");
-    let (rect, _) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 10.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 10.0), Sense::hover());
     let painter = ui.painter();
     for index in 0..80 {
         let t = index as f32 / 79.0;
@@ -348,12 +332,9 @@ fn draw_activity_scale(ui: &mut egui::Ui) {
     }
     ui.horizontal(|ui| {
         ui.small("quiet");
-        ui.with_layout(
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                ui.small("spike");
-            },
-        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.small("spike");
+        });
     });
 }
 
@@ -373,8 +354,7 @@ fn draw_population_bars(ui: &mut egui::Ui, session: &SimulationSession) {
                 count += 1;
             }
         }
-        let fraction =
-            (total as f32 / count.max(1) as f32 / 16_000.0).clamp(0.0, 1.0);
+        let fraction = (total as f32 / count.max(1) as f32 / 16_000.0).clamp(0.0, 1.0);
         ui.horizontal(|ui| {
             ui.add_sized(
                 [58.0, 16.0],
@@ -512,23 +492,15 @@ fn behavior_color(behavior: Behavior) -> Color32 {
 }
 
 fn heading(ui: &mut egui::Ui, text: &str) {
-    ui.label(
-        egui::RichText::new(text)
-            .strong()
-            .size(10.5)
-            .color(CYAN),
-    );
+    ui.label(egui::RichText::new(text).strong().size(10.5).color(CYAN));
 }
 
 fn key_value(ui: &mut egui::Ui, key: &str, value: &str) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(key).small().color(MUTED));
-        ui.with_layout(
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                ui.label(egui::RichText::new(value).small().color(TEXT));
-            },
-        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(egui::RichText::new(value).small().color(TEXT));
+        });
     });
 }
 

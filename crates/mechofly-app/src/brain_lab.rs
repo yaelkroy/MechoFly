@@ -537,11 +537,7 @@ fn reference_layout(
             ui.add_space(3.0);
             ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new("EVENT").strong().color(VIOLET));
-                ui.label(
-                    egui::RichText::new(&state.message)
-                        .small()
-                        .color(MUTED),
-                );
+                ui.label(egui::RichText::new(&state.message).small().color(MUTED));
                 if let Some(warning) = &session.runtime_warning {
                     ui.colored_label(WARNING, warning);
                 }
@@ -582,10 +578,7 @@ fn reference_layout(
     commands
 }
 
-fn column_frame(
-    ui: &mut egui::Ui,
-    contents: impl FnOnce(&mut egui::Ui),
-) {
+fn column_frame(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(SURFACE)
         .stroke(Stroke::new(1.0, GRID))
@@ -615,18 +608,10 @@ fn role(index: usize) -> &'static str {
 }
 
 fn side(index: usize) -> &'static str {
-    if index.is_multiple_of(2) {
-        "L"
-    } else {
-        "R"
-    }
+    if index.is_multiple_of(2) { "L" } else { "R" }
 }
 
-fn neuron_search_panel(
-    state: &mut BrainLabState,
-    ui: &mut egui::Ui,
-    session: &SimulationSession,
-) {
+fn neuron_search_panel(state: &mut BrainLabState, ui: &mut egui::Ui, session: &SimulationSession) {
     section_title(ui, "NEURON SEARCH", ACTUAL);
     ui.label(
         egui::RichText::new("root ID, index, role, or side")
@@ -636,16 +621,10 @@ fn neuron_search_panel(
     ui.text_edit_singleline(&mut state.search_query);
     ui.checkbox(&mut state.show_only_spiking, "spiking now");
     ui.horizontal(|ui| {
-        ui.monospace(format!(
-            "{:>7} neurons",
-            session.graph.neuron_ids.len()
-        ));
-        ui.with_layout(
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                ui.small("showing ≤250");
-            },
-        );
+        ui.monospace(format!("{:>7} neurons", session.graph.neuron_ids.len()));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.small("showing ≤250");
+        });
     });
     ui.separator();
 
@@ -693,11 +672,7 @@ fn neuron_search_panel(
     }
 }
 
-fn structural_panel(
-    state: &mut BrainLabState,
-    ui: &mut egui::Ui,
-    session: &SimulationSession,
-) {
+fn structural_panel(state: &mut BrainLabState, ui: &mut egui::Ui, session: &SimulationSession) {
     section_title(ui, "SELECTED STRUCTURAL NEIGHBORHOOD", POSITIVE);
     let selected = state.selected_index;
     ui.label(
@@ -786,12 +761,9 @@ fn structural_row(
             session.graph.neuron_ids[neuron],
             role(neuron)
         ));
-        ui.with_layout(
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                ui.monospace(format!("{:+}", weight));
-            },
-        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.monospace(format!("{:+}", weight));
+        });
     });
 }
 
@@ -805,12 +777,7 @@ fn counterfactual_panel(
     ui.small("Actual and authored alternative begin from the same retained full-state checkpoint.");
     ui.add_space(5.0);
     if state.comparison.is_none() {
-        claim_badge(
-            ui,
-            "NO PREVIEW YET",
-            Color32::from_rgb(45, 33, 38),
-            WARNING,
-        );
+        claim_badge(ui, "NO PREVIEW YET", Color32::from_rgb(45, 33, 38), WARNING);
         paired_summary(
             ui,
             session.last_summary.spike_count,
@@ -845,10 +812,7 @@ fn counterfactual_panel(
             {
                 state.playing = !state.playing;
             }
-            ui.add(
-                egui::Slider::new(&mut state.comparison_cursor, 0..=maximum)
-                    .text("frame"),
-            );
+            ui.add(egui::Slider::new(&mut state.comparison_cursor, 0..=maximum).text("frame"));
         });
         let frame = &comparison.frames[state.comparison_cursor];
         paired_summary(
@@ -862,12 +826,7 @@ fn counterfactual_panel(
         ui.add_space(5.0);
         compact_delta_timeline(ui, comparison);
         ui.separator();
-        claim_badge(
-            ui,
-            &comparison.receipt.status,
-            POSITIVE_SOFT,
-            POSITIVE,
-        );
+        claim_badge(ui, &comparison.receipt.status, POSITIVE_SOFT, POSITIVE);
         key_value(
             ui,
             "Source frame",
@@ -910,11 +869,7 @@ fn paired_summary(
     differing: usize,
 ) {
     ui.columns(2, |columns| {
-        columns[0].label(
-            egui::RichText::new("ACTUAL")
-                .strong()
-                .color(ACTUAL),
-        );
+        columns[0].label(egui::RichText::new("ACTUAL").strong().color(ACTUAL));
         columns[0].monospace(format!("{actual_spikes} spikes"));
         columns[0].monospace(format!("mean {actual_activation:+}"));
         columns[1].label(
@@ -932,8 +887,7 @@ fn paired_summary(
 }
 
 fn compact_delta_timeline(ui: &mut egui::Ui, comparison: &ComparisonResult) {
-    let (rect, _) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 106.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 106.0), Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3, Color32::from_rgb(5, 9, 15));
     painter.rect_stroke(rect, 3, Stroke::new(1.0, GRID), StrokeKind::Inside);
@@ -946,8 +900,7 @@ fn compact_delta_timeline(ui: &mut egui::Ui, comparison: &ComparisonResult) {
         .max(1);
     let width = rect.width() / comparison.frames.len().max(1) as f32;
     for (index, frame) in comparison.frames.iter().enumerate() {
-        let height =
-            frame.differing_neurons as f32 / maximum as f32 * (rect.height() - 22.0);
+        let height = frame.differing_neurons as f32 / maximum as f32 * (rect.height() - 22.0);
         let x = rect.left() + index as f32 * width;
         painter.rect_filled(
             Rect::from_min_size(
@@ -980,17 +933,10 @@ fn replay_stimulation_panel(
     section_title(ui, "BOUNDED REPLAY + STIMULATION PREVIEW", VIOLET);
     let maximum = session.replay.len().saturating_sub(1);
     state.replay_frames_back = state.replay_frames_back.min(maximum);
-    ui.add(
-        egui::Slider::new(&mut state.replay_frames_back, 0..=maximum)
-            .text("frames back"),
-    );
+    ui.add(egui::Slider::new(&mut state.replay_frames_back, 0..=maximum).text("frames back"));
     if let Some(checkpoint) = session.replay.get_from_newest(state.replay_frames_back) {
         key_value(ui, "Source frame", &checkpoint.state.frame.to_string());
-        key_value(
-            ui,
-            "Behavior",
-            &format!("{:?}", checkpoint.state.behavior),
-        );
+        key_value(ui, "Behavior", &format!("{:?}", checkpoint.state.behavior));
         key_value(ui, "State", &checkpoint.state.digest()[..12]);
     } else {
         ui.colored_label(WARNING, "Replay empty; wait for the first model step.");
@@ -1015,10 +961,7 @@ fn replay_stimulation_panel(
                 .suffix(" ms"),
         );
     });
-    ui.add(
-        egui::Slider::new(&mut state.comparison_frames, 1..=120)
-            .text("comparison frames"),
-    );
+    ui.add(egui::Slider::new(&mut state.comparison_frames, 1..=120).text("comparison frames"));
     if ui
         .add_sized(
             [ui.available_width(), 31.0],
@@ -1028,7 +971,9 @@ fn replay_stimulation_panel(
     {
         commands.push(LabCommand::GeneratePreview);
     }
-    ui.small("≤64 targets · amplitude ≤0.25 · 33–990 ms · ≤4.0 neuron-seconds · discarded branch only");
+    ui.small(
+        "≤64 targets · amplitude ≤0.25 · 33–990 ms · ≤4.0 neuron-seconds · discarded branch only",
+    );
     ui.separator();
     section_title(ui, "MODEL / SOURCE", ACTUAL);
     key_value(ui, "Skin", skin.label());
@@ -1045,11 +990,7 @@ fn replay_stimulation_panel(
         .width(ui.available_width())
         .show_ui(ui, |ui| {
             for mode in ComputePreference::ALL {
-                ui.selectable_value(
-                    &mut state.compute_preference,
-                    mode,
-                    mode.label(),
-                );
+                ui.selectable_value(&mut state.compute_preference, mode, mode.label());
             }
         });
     if ui.button("Re-evaluate system capacity").clicked() {
@@ -1059,9 +1000,7 @@ fn replay_stimulation_panel(
         ui.label("FlyWire connection-table path");
         ui.text_edit_singleline(&mut state.import_path);
         if ui.button("Validate and start session").clicked() {
-            commands.push(LabCommand::ImportConnectome(
-                state.import_path.clone(),
-            ));
+            commands.push(LabCommand::ImportConnectome(state.import_path.clone()));
         }
     });
     ui.separator();
@@ -1109,19 +1048,14 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
                 .color(MUTED),
             );
         });
-        ui.with_layout(
-            egui::Layout::right_to_left(egui::Align::Center),
-            |ui| {
-                ui.monospace(format!(
-                    "{:?} persisted {} frames",
-                    session.engine.state.behavior,
-                    session.engine.state.behavior_age_frames
-                ));
-            },
-        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.monospace(format!(
+                "{:?} persisted {} frames",
+                session.engine.state.behavior, session.engine.state.behavior_age_frames
+            ));
+        });
     });
-    let (rect, _) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 91.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 91.0), Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3, Color32::from_rgb(5, 9, 15));
     painter.rect_stroke(rect, 3, Stroke::new(1.0, GRID), StrokeKind::Inside);
@@ -1158,12 +1092,7 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
             Vec2::new((width - 3.0).max(1.0), 43.0),
         );
         painter.rect_filled(segment, 3, color.gamma_multiply(0.25));
-        painter.rect_stroke(
-            segment,
-            3,
-            Stroke::new(1.0, color),
-            StrokeKind::Inside,
-        );
+        painter.rect_stroke(segment, 3, Stroke::new(1.0, color), StrokeKind::Inside);
         painter.text(
             segment.center(),
             Align2::CENTER_CENTER,

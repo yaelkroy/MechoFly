@@ -97,19 +97,25 @@ impl PetMotion {
         self.animation_seconds += dt;
         self.behavior_age_seconds += dt;
 
-        let center =
-            self.screen_position + Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * 0.5;
+        let center = self.screen_position + Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * 0.5;
+        let mut cursor_guided = false;
         if matches!(behavior, Behavior::PreEscape | Behavior::Flight)
             && let Some(cursor) = cursor_position
         {
             let away = center - cursor;
             if away.length_sq() > 1.0 && away.length() < 560.0 {
-                self.target_heading_radians = away.y.atan2(away.x);
+                let weave = if behavior == Behavior::Flight {
+                    (self.animation_seconds * 2.1).sin() * 0.28
+                } else {
+                    0.0
+                };
+                self.target_heading_radians = wrapped_angle(away.y.atan2(away.x) + weave);
+                cursor_guided = true;
             }
-        } else if behavior == Behavior::Flight {
+        }
+        if behavior == Behavior::Flight && !cursor_guided {
             // Deterministic free-flight curvature, independent of refresh rate.
-            self.target_heading_radians +=
-                (self.animation_seconds * 0.73).sin() * dt * 0.62;
+            self.target_heading_radians += (self.animation_seconds * 0.73).sin() * dt * 0.62;
         }
 
         let target_speed = match behavior {
@@ -123,9 +129,7 @@ impl PetMotion {
                 }
             }
             Behavior::Flight => 185.0,
-            Behavior::Landing => {
-                (108.0 * (1.0 - self.behavior_age_seconds / 0.9)).max(0.0)
-            }
+            Behavior::Landing => (108.0 * (1.0 - self.behavior_age_seconds / 0.9)).max(0.0),
             _ => 0.0,
         };
         let response = if matches!(behavior, Behavior::PreEscape | Behavior::Flight) {
@@ -133,8 +137,14 @@ impl PetMotion {
         } else {
             5.5
         };
-        self.speed_pixels_per_second +=
-            (target_speed - self.speed_pixels_per_second) * (1.0 - (-response * dt).exp());
+        let old_speed = self.speed_pixels_per_second;
+        let decay = (-response * dt).exp();
+        self.speed_pixels_per_second = target_speed + (old_speed - target_speed) * decay;
+        // Integrate the first-order speed response analytically. Using the new
+        // endpoint speed as an Euler step makes a walking fly cover a different
+        // distance at 30 Hz and 120 Hz, which is visible as poor timing.
+        let step_distance =
+            target_speed * dt + (old_speed - target_speed) * (1.0 - decay) / response;
 
         if matches!(
             behavior,
@@ -152,15 +162,14 @@ impl PetMotion {
             4.8
         };
         let delta = wrapped_angle(self.target_heading_radians - self.heading_radians);
-        self.heading_radians = wrapped_angle(
-            self.heading_radians + delta.clamp(-turn_rate * dt, turn_rate * dt),
-        );
+        self.heading_radians =
+            wrapped_angle(self.heading_radians + delta.clamp(-turn_rate * dt, turn_rate * dt));
 
-        let mut velocity = Vec2::angled(self.heading_radians) * self.speed_pixels_per_second;
+        let mut displacement = Vec2::angled(self.heading_radians) * step_distance;
         if !matches!(behavior, Behavior::PreEscape | Behavior::Flight) {
-            velocity.y = 0.0;
+            displacement.y = 0.0;
         }
-        self.screen_position += velocity * dt;
+        self.screen_position += displacement;
 
         let width = screen_size.x.max(480.0);
         let height = screen_size.y.max(320.0);
@@ -354,8 +363,7 @@ pub fn draw_pet(
 ) {
     let scene = pet_scene(skin, behavior, phase, heading, reduced_motion);
     let scale = (rect.width() / PET_WIDTH as f32).min(rect.height() / PET_HEIGHT as f32);
-    let origin =
-        rect.center() - Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * scale * 0.5;
+    let origin = rect.center() - Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * scale * 0.5;
     let position = |point: [f32; 2]| origin + Vec2::new(point[0], point[1]) * scale;
 
     for primitive in scene {
@@ -538,13 +546,7 @@ fn draw_contact_shadow(scene: &mut SceneBuilder, behavior: Behavior) {
         Behavior::PreEscape => 22,
         _ => 55,
     };
-    scene.ellipse(
-        [10.0, 58.0],
-        [88.0, 9.0],
-        0.0,
-        Rgba(5, 13, 22, alpha),
-        None,
-    );
+    scene.ellipse([10.0, 58.0], [88.0, 9.0], 0.0, Rgba(5, 13, 22, alpha), None);
 }
 
 fn draw_wings(scene: &mut SceneBuilder, behavior: Behavior, time: f32, colors: Palette) {
@@ -587,12 +589,11 @@ fn draw_wing(
         } else {
             43.0 + lift * 7.0
         },
-        side
-            * if fore {
-                86.0 + lift * 8.0
-            } else {
-                79.0 + lift * 7.0
-            },
+        side * if fore {
+            86.0 + lift * 8.0
+        } else {
+            79.0 + lift * 7.0
+        },
     ];
     let outer = [
         if fore {
@@ -600,12 +601,11 @@ fn draw_wing(
         } else {
             79.0 + lift * 4.0
         },
-        side
-            * if fore {
-                72.0 + lift * 5.0
-            } else {
-                59.0 + lift * 5.0
-            },
+        side * if fore {
+            72.0 + lift * 5.0
+        } else {
+            59.0 + lift * 5.0
+        },
     ];
     let trailing = [
         if fore { 20.0 } else { 48.0 },
@@ -630,22 +630,14 @@ fn draw_wing(
             [trailing[0] + 5.0, side * (trailing[1].abs() - 2.0)],
             trailing,
         ),
-        (
-            trailing,
-            [11.0, side * 18.0],
-            [-2.0, side * 11.0],
-            root,
-        ),
+        (trailing, [11.0, side * 18.0], [-2.0, side * 11.0], root),
     ];
     let outline = cubic_loop(&segments, 7);
     let shimmer = 0.5 + 0.5 * (time * 2.7 + wing_index as f32 * 1.17).sin();
     scene.polygon(
         &outline,
         Rgba(
-            colors
-                .wing_fill
-                .0
-                .saturating_add((shimmer * 28.0) as u8),
+            colors.wing_fill.0.saturating_add((shimmer * 28.0) as u8),
             colors.wing_fill.1,
             colors.wing_fill.2,
             colors.wing_fill.3,
@@ -795,32 +787,13 @@ fn draw_abdomen(
 fn draw_thorax(scene: &mut SceneBuilder, skin: Skin, time: f32, colors: Palette) {
     let shell = cubic_loop(
         &[
-            (
-                [-45.0, 0.0],
-                [-42.0, -20.0],
-                [-15.0, -24.0],
-                [3.0, -12.0],
-            ),
-            (
-                [3.0, -12.0],
-                [10.0, -5.0],
-                [10.0, 5.0],
-                [3.0, 12.0],
-            ),
-            (
-                [3.0, 12.0],
-                [-15.0, 24.0],
-                [-42.0, 20.0],
-                [-45.0, 0.0],
-            ),
+            ([-45.0, 0.0], [-42.0, -20.0], [-15.0, -24.0], [3.0, -12.0]),
+            ([3.0, -12.0], [10.0, -5.0], [10.0, 5.0], [3.0, 12.0]),
+            ([3.0, 12.0], [-15.0, 24.0], [-42.0, 20.0], [-45.0, 0.0]),
         ],
         9,
     );
-    scene.polygon(
-        &shell,
-        colors.thorax_core,
-        Some((colors.thorax_edge, 1.6)),
-    );
+    scene.polygon(&shell, colors.thorax_core, Some((colors.thorax_edge, 1.6)));
     scene.ellipse(
         [-21.0, -4.0],
         [22.0, 13.0],
@@ -855,12 +828,7 @@ fn draw_thorax(scene: &mut SceneBuilder, skin: Skin, time: f32, colors: Palette)
     }
 }
 
-fn draw_head(
-    scene: &mut SceneBuilder,
-    behavior: Behavior,
-    time: f32,
-    colors: Palette,
-) {
+fn draw_head(scene: &mut SceneBuilder, behavior: Behavior, time: f32, colors: Palette) {
     scene.ellipse(
         [-60.0, 0.0],
         [18.0, 18.0],
@@ -868,13 +836,7 @@ fn draw_head(
         colors.head_core,
         Some((colors.head_rim, 1.5)),
     );
-    scene.ellipse(
-        [-63.0, -3.0],
-        [12.5, 12.5],
-        0.0,
-        Rgba(9, 30, 54, 70),
-        None,
-    );
+    scene.ellipse([-63.0, -3.0], [12.5, 12.5], 0.0, Rgba(9, 30, 54, 70), None);
     for side in [-1.0_f32, 1.0] {
         let pulse = if behavior == Behavior::Rest {
             0.0
@@ -903,21 +865,9 @@ fn draw_head(
             );
         }
     }
-    scene.ellipse(
-        [-69.0, 0.0],
-        [12.5, 4.0],
-        0.0,
-        Rgba(27, 89, 103, 210),
-        None,
-    );
+    scene.ellipse([-69.0, 0.0], [12.5, 4.0], 0.0, Rgba(27, 89, 103, 210), None);
     for y in [-4.0_f32, 0.0, 4.0] {
-        scene.ellipse(
-            [-78.0, y],
-            [1.7, 1.7],
-            0.0,
-            Rgba(244, 205, 78, 245),
-            None,
-        );
+        scene.ellipse([-78.0, y], [1.7, 1.7], 0.0, Rgba(244, 205, 78, 245), None);
     }
 }
 
@@ -938,8 +888,7 @@ fn draw_legs(
             if rear_layer != (leg_index == 2) {
                 continue;
             }
-            let phase_offset =
-                leg_index as f32 * 2.07 + if side_index == 0 { 0.0 } else { PI };
+            let phase_offset = leg_index as f32 * 2.07 + if side_index == 0 { 0.0 } else { PI };
             let swing = if locomoting {
                 (gait.asin() + phase_offset).sin()
             } else {
@@ -957,16 +906,15 @@ fn draw_legs(
                 1 => -22.0 + swing * 5.0,
                 _ => 32.0 + swing * 7.0,
             };
-            let mut reach_y =
-                side * match leg_index {
+            let mut reach_y = side
+                * match leg_index {
                     0 => 34.0,
                     1 => 44.0,
                     _ => 48.0,
                 };
             if grooming && leg_index == 0 {
                 reach_x = -68.0 + groom_motion;
-                reach_y =
-                    side * (13.0 + (time * 12.0 + side_index as f32).cos() * 8.0);
+                reach_y = side * (13.0 + (time * 12.0 + side_index as f32).cos() * 8.0);
             } else if landing {
                 reach_y *= 1.13;
                 reach_x += if leg_index == 2 { 8.0 } else { -3.0 };
@@ -988,45 +936,20 @@ fn draw_legs(
                 if rear_layer { 2.0 } else { 2.4 },
                 dark,
             );
-            scene.line(
-                knee,
-                ankle,
-                if rear_layer { 1.8 } else { 2.2 },
-                dark,
-            );
+            scene.line(knee, ankle, if rear_layer { 1.8 } else { 2.2 }, dark);
             scene.line(ankle, toe, 1.45, dark);
-            scene.line(
-                [hip_x, hip_y],
-                knee,
-                0.65,
-                Rgba(87, 237, 218, 105),
-            );
-            scene.ellipse(
-                knee,
-                [1.5, 1.5],
-                0.0,
-                Rgba(235, 184, 65, 220),
-                None,
-            );
+            scene.line([hip_x, hip_y], knee, 0.65, Rgba(87, 237, 218, 105));
+            scene.ellipse(knee, [1.5, 1.5], 0.0, Rgba(235, 184, 65, 220), None);
         }
     }
 }
 
-fn draw_antennae(
-    scene: &mut SceneBuilder,
-    behavior: Behavior,
-    time: f32,
-    colors: Palette,
-) {
+fn draw_antennae(scene: &mut SceneBuilder, behavior: Behavior, time: f32, colors: Palette) {
     let alert = matches!(
         behavior,
         Behavior::Alert | Behavior::PreEscape | Behavior::Flight
     );
-    let sway = if alert {
-        (time * 5.2).sin() * 5.0
-    } else {
-        0.0
-    };
+    let sway = if alert { (time * 5.2).sin() * 5.0 } else { 0.0 };
     for side in [-1.0_f32, 1.0] {
         let root = [-72.0, side * 8.0];
         let joint = [-87.0, side * (18.0 + sway)];
@@ -1043,22 +966,11 @@ fn draw_antennae(
                 205,
             ),
         );
-        scene.ellipse(
-            tip,
-            [1.8, 1.8],
-            0.0,
-            Rgba(242, 183, 63, 235),
-            None,
-        );
+        scene.ellipse(tip, [1.8, 1.8], 0.0, Rgba(242, 183, 63, 235), None);
     }
 }
 
-fn ellipse_points(
-    center: [f32; 2],
-    radii: [f32; 2],
-    angle: f32,
-    count: usize,
-) -> Vec<[f32; 2]> {
+fn ellipse_points(center: [f32; 2], radii: [f32; 2], angle: f32, count: usize) -> Vec<[f32; 2]> {
     let cosine = angle.cos();
     let sine = angle.sin();
     (0..count)
@@ -1156,17 +1068,15 @@ impl RasterCanvas {
         );
         let cosine = angle.cos();
         let sine = angle.sin();
-        let inner = stroke.map(|(_, width)| {
-            (1.0 - width / radii[0].min(radii[1]).max(1.0)).max(0.0)
-        });
+        let inner =
+            stroke.map(|(_, width)| (1.0 - width / radii[0].min(radii[1]).max(1.0)).max(0.0));
         for y in bounds.1..=bounds.3 {
             for x in bounds.0..=bounds.2 {
                 let dx = x as f32 + 0.5 - center[0];
                 let dy = y as f32 + 0.5 - center[1];
                 let local_x = dx * cosine + dy * sine;
                 let local_y = -dx * sine + dy * cosine;
-                let distance =
-                    (local_x / radii[0]).powi(2) + (local_y / radii[1]).powi(2);
+                let distance = (local_x / radii[0]).powi(2) + (local_y / radii[1]).powi(2);
                 if distance <= 1.0 {
                     let color = match (stroke, inner) {
                         (Some((stroke_color, _)), Some(inner_radius))
@@ -1197,14 +1107,11 @@ impl RasterCanvas {
             for x in bounds.0..=bounds.2 {
                 let px = x as f32 + 0.5;
                 let py = y as f32 + 0.5;
-                let t = (((px - from[0]) * dx + (py - from[1]) * dy)
-                    / length_squared)
-                    .clamp(0.0, 1.0);
+                let t =
+                    (((px - from[0]) * dx + (py - from[1]) * dy) / length_squared).clamp(0.0, 1.0);
                 let nearest_x = from[0] + t * dx;
                 let nearest_y = from[1] + t * dy;
-                if (px - nearest_x).powi(2) + (py - nearest_y).powi(2)
-                    <= radius * radius
-                {
+                if (px - nearest_x).powi(2) + (py - nearest_y).powi(2) <= radius * radius {
                     self.blend(x, y, color);
                 }
             }
@@ -1215,14 +1122,8 @@ impl RasterCanvas {
         if points.len() < 3 {
             return;
         }
-        let min_x = points
-            .iter()
-            .map(|p| p[0])
-            .fold(f32::INFINITY, f32::min);
-        let min_y = points
-            .iter()
-            .map(|p| p[1])
-            .fold(f32::INFINITY, f32::min);
+        let min_x = points.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+        let min_y = points.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min);
         let max_x = points
             .iter()
             .map(|p| p[0])
@@ -1241,23 +1142,11 @@ impl RasterCanvas {
         }
     }
 
-    fn bounds(
-        &self,
-        left: f32,
-        top: f32,
-        right: f32,
-        bottom: f32,
-    ) -> (usize, usize, usize, usize) {
+    fn bounds(&self, left: f32, top: f32, right: f32, bottom: f32) -> (usize, usize, usize, usize) {
         let x0 = left.floor().max(0.0) as usize;
         let y0 = top.floor().max(0.0) as usize;
-        let x1 = right
-            .ceil()
-            .min((self.width - 1) as f32)
-            .max(0.0) as usize;
-        let y1 = bottom
-            .ceil()
-            .min((self.height - 1) as f32)
-            .max(0.0) as usize;
+        let x1 = right.ceil().min((self.width - 1) as f32).max(0.0) as usize;
+        let y1 = bottom.ceil().min((self.height - 1) as f32).max(0.0) as usize;
         (x0.min(x1), y0.min(y1), x1, y1)
     }
 
@@ -1350,14 +1239,7 @@ impl FireflyVisualSelfTest {
 pub fn run_firefly_visual_self_test() -> FireflyVisualSelfTest {
     let render = |behavior, phase| {
         let mut pixels = vec![0; PET_WIDTH * PET_HEIGHT * 4];
-        render_pet_bgra(
-            &mut pixels,
-            Skin::Firefly,
-            behavior,
-            phase,
-            0.0,
-            false,
-        );
+        render_pet_bgra(&mut pixels, Skin::Firefly, behavior, phase, 0.0, false);
         pixels
     };
     let rest = render(Behavior::Rest, 0.0);
@@ -1395,15 +1277,11 @@ pub fn run_firefly_visual_self_test() -> FireflyVisualSelfTest {
         } else {
             result.translucent_pixels += 1;
         }
-        let unpremultiply =
-            |channel: u8| (channel as u32 * 255 / alpha).min(255) as u8;
+        let unpremultiply = |channel: u8| (channel as u32 * 255 / alpha).min(255) as u8;
         let red = unpremultiply(pixel[2]);
         let green = unpremultiply(pixel[1]);
         let blue = unpremultiply(pixel[0]);
-        if red > 145
-            && red > green.saturating_add(35)
-            && red > blue.saturating_add(20)
-        {
+        if red > 145 && red > green.saturating_add(35) && red > blue.saturating_add(20) {
             result.red_eye_pixels += 1;
         }
         if green > 145 && blue > 105 && green > red.saturating_add(20) {
@@ -1456,9 +1334,7 @@ mod tests {
             scene
                 .iter()
                 .filter_map(|primitive| match primitive {
-                    Primitive::Ellipse { center, fill, .. }
-                        if fill.0 > 240 && fill.1 < 150 =>
-                    {
+                    Primitive::Ellipse { center, fill, .. } if fill.0 > 240 && fill.1 < 150 => {
                         Some(center[0])
                     }
                     _ => None,
@@ -1495,24 +1371,10 @@ mod tests {
         let origin = Pos2::ZERO;
         let screen = Vec2::new(3_840.0, 2_160.0);
         for _ in 0..60 {
-            at_30_hz.advance(
-                1.0 / 30.0,
-                Behavior::Walk,
-                origin,
-                screen,
-                false,
-                None,
-            );
+            at_30_hz.advance(1.0 / 30.0, Behavior::Walk, origin, screen, false, None);
         }
         for _ in 0..240 {
-            at_120_hz.advance(
-                1.0 / 120.0,
-                Behavior::Walk,
-                origin,
-                screen,
-                false,
-                None,
-            );
+            at_120_hz.advance(1.0 / 120.0, Behavior::Walk, origin, screen, false, None);
         }
         assert!((at_30_hz.screen_position.x - at_120_hz.screen_position.x).abs() < 0.8);
         assert!((at_30_hz.animation_seconds - at_120_hz.animation_seconds).abs() < 0.001);
@@ -1542,14 +1404,7 @@ mod tests {
     #[test]
     fn prism_uses_the_reference_desktop_scale() {
         let mut pixels = vec![0; PET_WIDTH * PET_HEIGHT * 4];
-        render_pet_bgra(
-            &mut pixels,
-            Skin::Firefly,
-            Behavior::Rest,
-            0.0,
-            0.0,
-            false,
-        );
+        render_pet_bgra(&mut pixels, Skin::Firefly, Behavior::Rest, 0.0, 0.0, false);
         let mut minimum_x = PET_WIDTH;
         let mut maximum_x = 0;
         let mut minimum_y = PET_HEIGHT;
@@ -1600,14 +1455,7 @@ mod tests {
         assert!(result.passed, "{result:#?}");
         if let Some(path) = std::env::var_os("MECHOFLY_VISUAL_FIXTURE") {
             let mut rest = vec![0; PET_WIDTH * PET_HEIGHT * 4];
-            render_pet_bgra(
-                &mut rest,
-                Skin::Firefly,
-                Behavior::Rest,
-                0.0,
-                0.0,
-                false,
-            );
+            render_pet_bgra(&mut rest, Skin::Firefly, Behavior::Rest, 0.0, 0.0, false);
             write_pam(std::path::Path::new(&path), &rest);
         }
     }
@@ -1622,8 +1470,7 @@ mod tests {
             if alpha == 0 {
                 bytes.extend_from_slice(&[0, 0, 0, 0]);
             } else {
-                let unpremultiply =
-                    |channel: u8| (channel as u32 * 255 / alpha).min(255) as u8;
+                let unpremultiply = |channel: u8| (channel as u32 * 255 / alpha).min(255) as u8;
                 bytes.extend_from_slice(&[
                     unpremultiply(pixel[2]),
                     unpremultiply(pixel[1]),

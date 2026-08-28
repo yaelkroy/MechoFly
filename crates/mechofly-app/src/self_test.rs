@@ -116,9 +116,9 @@ pub fn run(path: &Path) -> Result<(), String> {
             Some(eframe::egui::Pos2::new(1_000.0, 640.0)),
         );
     }
-    let two_dimensional_flight_motion =
-        (flight_motion.screen_position.x - flight_start.x).abs() > 20.0
-            && (flight_motion.screen_position.y - flight_start.y).abs() > 15.0;
+    let two_dimensional_flight_motion = (flight_motion.screen_position.x - flight_start.x).abs()
+        > 20.0
+        && (flight_motion.screen_position.y - flight_start.y).abs() > 15.0;
 
     #[cfg(windows)]
     let hotkeys = crate::desktop_pet::run_hotkey_self_test();

@@ -499,8 +499,7 @@ impl PetOverlay {
         // SAFETY: GetCursorPos writes synchronously to the valid stack value.
         unsafe {
             let mut cursor: POINT = zeroed();
-            (GetCursorPos(&mut cursor) != 0)
-                .then_some(Pos2::new(cursor.x as f32, cursor.y as f32))
+            (GetCursorPos(&mut cursor) != 0).then_some(Pos2::new(cursor.x as f32, cursor.y as f32))
         }
     }
 
