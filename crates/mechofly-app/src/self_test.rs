@@ -201,10 +201,12 @@ pub fn run(path: &Path) -> Result<(), String> {
         .map(crate::brain_lab::grooming_substate_at)
         .map(|(label, _, _)| label.to_owned())
         .to_vec();
-    let grooming_substate_timeline = grooming_program_substates
-        .iter()
-        .map(String::as_str)
-        .eq(["PREPARE", "CLEANING STROKE", "LIMB RUB", "RESET"]);
+    let grooming_substate_timeline = grooming_program_substates.iter().map(String::as_str).eq([
+        "PREPARE",
+        "CLEANING STROKE",
+        "LIMB RUB",
+        "RESET",
+    ]);
 
     #[cfg(windows)]
     let hotkeys = crate::desktop_pet::run_hotkey_self_test();

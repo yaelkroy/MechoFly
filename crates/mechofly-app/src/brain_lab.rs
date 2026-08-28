@@ -1,7 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
-use mechofly_core::{ComparisonResult, Feedback, PetPolicy, StimulationPolicy, StimulationRequest};
+use mechofly_core::{
+    Behavior, ComparisonResult, Feedback, PetPolicy, StimulationPolicy, StimulationRequest,
+};
 
 use crate::{
     app::RuntimeSourceIdentity, compute::ComputePreference, pet::Skin, runtime::SimulationSession,
@@ -808,6 +810,8 @@ fn counterfactual_panel(
             claim_badge(ui, "NO PREVIEW YET", Color32::from_rgb(45, 33, 38), WARNING);
             paired_summary(
                 ui,
+                session.last_summary.behavior,
+                session.last_summary.behavior,
                 session.last_summary.spike_count,
                 session.last_summary.spike_count,
                 session.last_summary.mean_activation_q15,
@@ -842,6 +846,8 @@ fn counterfactual_panel(
             let frame = &comparison.frames[state.comparison_cursor];
             paired_summary(
                 ui,
+                frame.actual.behavior,
+                frame.alternative.behavior,
                 frame.actual.spike_count,
                 frame.alternative.spike_count,
                 frame.actual.mean_activation_q15,
@@ -888,6 +894,8 @@ fn counterfactual_panel(
 
 fn paired_summary(
     ui: &mut egui::Ui,
+    actual_behavior: Behavior,
+    alternative_behavior: Behavior,
     actual_spikes: usize,
     alternative_spikes: usize,
     actual_activation: i32,
@@ -896,6 +904,7 @@ fn paired_summary(
 ) {
     ui.columns(2, |columns| {
         columns[0].label(egui::RichText::new("ACTUAL").strong().color(ACTUAL));
+        columns[0].monospace(format!("{actual_behavior:?}"));
         columns[0].monospace(format!("{actual_spikes} spikes"));
         columns[0].monospace(format!("mean {actual_activation:+}"));
         columns[1].label(
@@ -903,6 +912,7 @@ fn paired_summary(
                 .strong()
                 .color(ALTERNATIVE),
         );
+        columns[1].monospace(format!("{alternative_behavior:?}"));
         columns[1].monospace(format!("{alternative_spikes} spikes"));
         columns[1].monospace(format!("mean {alternative_activation:+}"));
     });
@@ -1138,23 +1148,22 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
     }
     let playhead = match session.engine.state.behavior {
         mechofly_core::Behavior::Groom => grooming_phase.map_or(0.0, |(_, _, progress)| progress),
-        mechofly_core::Behavior::PreEscape => 0.24
-            * (session.engine.state.behavior_age_frames as f32
+        mechofly_core::Behavior::PreEscape => {
+            0.24 * (session.engine.state.behavior_age_frames as f32
                 / (mechofly_core::model::ESCAPE_HOLD_FRAMES + 1) as f32)
-                .clamp(0.0, 1.0),
+                .clamp(0.0, 1.0)
+        }
         mechofly_core::Behavior::Flight => {
-            0.24
-                + 0.52
-                    * (session.engine.state.behavior_age_frames as f32
-                        / (mechofly_core::model::FLIGHT_HOLD_FRAMES + 1) as f32)
-                        .clamp(0.0, 1.0)
+            0.24 + 0.52
+                * (session.engine.state.behavior_age_frames as f32
+                    / (mechofly_core::model::FLIGHT_HOLD_FRAMES + 1) as f32)
+                    .clamp(0.0, 1.0)
         }
         mechofly_core::Behavior::Landing => {
-            0.76
-                + 0.24
-                    * (session.engine.state.behavior_age_frames as f32
-                        / (mechofly_core::model::LANDING_HOLD_FRAMES + 1) as f32)
-                        .clamp(0.0, 1.0)
+            0.76 + 0.24
+                * (session.engine.state.behavior_age_frames as f32
+                    / (mechofly_core::model::LANDING_HOLD_FRAMES + 1) as f32)
+                    .clamp(0.0, 1.0)
         }
         mechofly_core::Behavior::Walk | mechofly_core::Behavior::Reverse => {
             (session.engine.state.behavior_age_frames % 60) as f32 / 60.0

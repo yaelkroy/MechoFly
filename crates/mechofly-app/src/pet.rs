@@ -164,7 +164,8 @@ impl PetMotion {
 
         self.screen_position +=
             Vec2::angled(self.heading_radians) * self.speed_pixels_per_second * dt;
-        if behavior == Behavior::Landing && self.behavior_age_seconds >= LANDING_COMPLETION_SECONDS {
+        if behavior == Behavior::Landing && self.behavior_age_seconds >= LANDING_COMPLETION_SECONDS
+        {
             self.screen_position.y = bottom;
             self.heading_radians = PI * 0.5;
             self.speed_pixels_per_second = 0.0;
