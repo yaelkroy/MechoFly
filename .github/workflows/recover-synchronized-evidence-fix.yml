@@ -35,7 +35,7 @@ jobs:
           inside_triple_string = False
           for line_number, raw_line in enumerate(payload.splitlines(), start=1):
               line = raw_line
-              if not inside_triple_string:
+              if not inside_triple_string and line:
                   if not line.startswith(prefix):
                       raise SystemExit(
                           f'embedded patch line {line_number} lacks YAML indentation'
