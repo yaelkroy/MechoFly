@@ -778,16 +778,16 @@ fn counterfactual_panel(
     ui.add_space(5.0);
     match state.comparison.as_ref() {
         None => {
-        claim_badge(ui, "NO PREVIEW YET", Color32::from_rgb(45, 33, 38), WARNING);
-        paired_summary(
-            ui,
-            session.last_summary.spike_count,
-            session.last_summary.spike_count,
-            session.last_summary.mean_activation_q15,
-            session.last_summary.mean_activation_q15,
-            0,
-        );
-        ui.label(
+            claim_badge(ui, "NO PREVIEW YET", Color32::from_rgb(45, 33, 38), WARNING);
+            paired_summary(
+                ui,
+                session.last_summary.spike_count,
+                session.last_summary.spike_count,
+                session.last_summary.mean_activation_q15,
+                session.last_summary.mean_activation_q15,
+                0,
+            );
+            ui.label(
             egui::RichText::new(
                 "Configure the bounded branch in the next column, then generate the isolated comparison.",
             )
@@ -796,51 +796,51 @@ fn counterfactual_panel(
         );
         }
         Some(comparison) => {
-        let maximum = comparison.frames.len().saturating_sub(1);
-        state.comparison_cursor = state.comparison_cursor.min(maximum);
-        if state.playing && !comparison.frames.is_empty() {
-            state.comparison_cursor =
-                ui.input(|input| (input.time * 12.0) as usize) % comparison.frames.len();
-            ui.ctx().request_repaint_after(Duration::from_millis(80));
-        }
-        ui.horizontal(|ui| {
-            if ui
-                .button(if state.playing { "Pause" } else { "Play" })
-                .clicked()
-            {
-                state.playing = !state.playing;
+            let maximum = comparison.frames.len().saturating_sub(1);
+            state.comparison_cursor = state.comparison_cursor.min(maximum);
+            if state.playing && !comparison.frames.is_empty() {
+                state.comparison_cursor =
+                    ui.input(|input| (input.time * 12.0) as usize) % comparison.frames.len();
+                ui.ctx().request_repaint_after(Duration::from_millis(80));
             }
-            ui.add(egui::Slider::new(&mut state.comparison_cursor, 0..=maximum).text("frame"));
-        });
-        let frame = &comparison.frames[state.comparison_cursor];
-        paired_summary(
-            ui,
-            frame.actual.spike_count,
-            frame.alternative.spike_count,
-            frame.actual.mean_activation_q15,
-            frame.alternative.mean_activation_q15,
-            frame.differing_neurons,
-        );
-        ui.add_space(5.0);
-        compact_delta_timeline(ui, comparison);
-        ui.separator();
-        claim_badge(ui, &comparison.receipt.status, POSITIVE_SOFT, POSITIVE);
-        key_value(
-            ui,
-            "Source frame",
-            &comparison.receipt.source_frame.to_string(),
-        );
-        key_value(
-            ui,
-            "Live unchanged",
-            &comparison.receipt.live_state_unchanged.to_string(),
-        );
-        key_value(
-            ui,
-            "Alternative differs",
-            &comparison.receipt.alternative_differs.to_string(),
-        );
-        ui.monospace(&comparison.receipt.alternative_final_sha256[..12]);
+            ui.horizontal(|ui| {
+                if ui
+                    .button(if state.playing { "Pause" } else { "Play" })
+                    .clicked()
+                {
+                    state.playing = !state.playing;
+                }
+                ui.add(egui::Slider::new(&mut state.comparison_cursor, 0..=maximum).text("frame"));
+            });
+            let frame = &comparison.frames[state.comparison_cursor];
+            paired_summary(
+                ui,
+                frame.actual.spike_count,
+                frame.alternative.spike_count,
+                frame.actual.mean_activation_q15,
+                frame.alternative.mean_activation_q15,
+                frame.differing_neurons,
+            );
+            ui.add_space(5.0);
+            compact_delta_timeline(ui, comparison);
+            ui.separator();
+            claim_badge(ui, &comparison.receipt.status, POSITIVE_SOFT, POSITIVE);
+            key_value(
+                ui,
+                "Source frame",
+                &comparison.receipt.source_frame.to_string(),
+            );
+            key_value(
+                ui,
+                "Live unchanged",
+                &comparison.receipt.live_state_unchanged.to_string(),
+            );
+            key_value(
+                ui,
+                "Alternative differs",
+                &comparison.receipt.alternative_differs.to_string(),
+            );
+            ui.monospace(&comparison.receipt.alternative_final_sha256[..12]);
         }
     }
     ui.add_space(8.0);

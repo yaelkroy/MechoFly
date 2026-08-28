@@ -486,18 +486,17 @@ impl eframe::App for MechoFlyApp {
         }
         let cursor_loom_strength = cursor_position
             .map(|cursor| {
-                let pet_center = self.pet.screen_position
-                    + Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * 0.5;
+                let pet_center =
+                    self.pet.screen_position + Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * 0.5;
                 let distance = pet_center.distance(cursor);
                 ((360.0 - distance) / 240.0).clamp(0.0, 1.0)
             })
             .unwrap_or(0.0);
-        self.session
-            .set_cursor_loom_strength(if cursor_over_pet {
-                1.0
-            } else {
-                cursor_loom_strength
-            });
+        self.session.set_cursor_loom_strength(if cursor_over_pet {
+            1.0
+        } else {
+            cursor_loom_strength
+        });
         self.pet.advance(
             elapsed.as_secs_f32(),
             self.display_behavior(),

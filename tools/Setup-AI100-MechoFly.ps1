@@ -573,6 +573,30 @@ try {
         -IconLocation $IconLocation
     $CreatedShortcuts.Add($StartShortcut)
 
+    $OriginalShortcut = Join-Path $UserDesktop 'Start MechoFly Original.lnk'
+    New-MechoFlyShortcut `
+        -Shell $Shell `
+        -ShortcutPath $OriginalShortcut `
+        -TargetPath $WindowsPowerShell `
+        -Arguments ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' +
+            (Join-Path $Target 'host-windows\Start-MechoFly.ps1') +
+            '" -Skin firefly -Compute auto') `
+        -Description 'Start the recording-matched MechoFly Prism companion.' `
+        -IconLocation $IconLocation
+    $CreatedShortcuts.Add($OriginalShortcut)
+
+    $BrainLabShortcut = Join-Path $UserDesktop 'MechoFly Brain Lab.lnk'
+    New-MechoFlyShortcut `
+        -Shell $Shell `
+        -ShortcutPath $BrainLabShortcut `
+        -TargetPath $WindowsPowerShell `
+        -Arguments ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' +
+            (Join-Path $Target 'host-windows\Start-MechoFly.ps1') +
+            '" -Skin firefly -Compute auto -BrainLab') `
+        -Description 'Start recording-matched Prism with Live Brain and Brain Lab.' `
+        -IconLocation $IconLocation
+    $CreatedShortcuts.Add($BrainLabShortcut)
+
     $SyncShortcut = Join-Path $UserDesktop 'Sync MechoFly with GitHub.lnk'
     New-MechoFlyShortcut `
         -Shell $Shell `

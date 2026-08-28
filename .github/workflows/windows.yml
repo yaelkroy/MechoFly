@@ -151,4 +151,5 @@ jobs:
             artifacts/
             host-windows/bin/
             crates/mechofly-app/src/
+            crates/mechofly-core/src/
           if-no-files-found: warn
