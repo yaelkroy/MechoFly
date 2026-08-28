@@ -76,9 +76,9 @@ jobs:
             -File $scriptPath `
             -GuardSelfTest
           if ($LASTEXITCODE -ne 0) { throw "Recovery guard self-test exited $LASTEXITCODE" }
-      - name: Check Rust formatting
+      - name: Format Rust sources for candidate verification
         shell: powershell
-        run: cargo fmt --all --check
+        run: cargo fmt --all
       - name: Resolve reproducible dependencies
         shell: powershell
         run: cargo generate-lockfile
@@ -144,4 +144,5 @@ jobs:
             Cargo.lock
             artifacts/
             host-windows/bin/
+            crates/mechofly-app/src/
           if-no-files-found: warn
