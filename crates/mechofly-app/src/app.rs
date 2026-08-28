@@ -121,10 +121,8 @@ impl MechoFlyApp {
             Err(error) => (None, Some(error)),
         };
         diagnostics::mark("system tray initialization attempted");
-        let pet = PetMotion {
-            reduced_motion: config.reduced_motion,
-            ..PetMotion::default()
-        };
+        let mut pet = PetMotion::default();
+        pet.reduced_motion = config.reduced_motion;
         #[cfg(windows)]
         let (desktop_pet, overlay_warning) = match crate::desktop_pet::PetOverlay::new(
             pet.screen_position,
