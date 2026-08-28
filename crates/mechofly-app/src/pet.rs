@@ -703,7 +703,10 @@ fn draw_contact_shadow(scene: &mut SceneBuilder, behavior: Behavior) {
     let airborne = matches!(behavior, Behavior::PreEscape | Behavior::Flight);
     let scale = if airborne { 0.58 } else { 1.0 };
     scene.ellipse(
-        [8.0 * scale, if airborne { 55.0 + 9.0 * scale } else { 51.0 }],
+        [
+            8.0 * scale,
+            if airborne { 55.0 + 9.0 * scale } else { 51.0 },
+        ],
         [79.0 * scale, 9.0 * scale],
         0.0,
         Rgba(3, 10, 9, if airborne { 28 } else { 72 }),
@@ -753,18 +756,8 @@ fn draw_wing(
     let tip = [40.0 + lift * 7.0, side * (83.0 + lift * 8.0)];
     let trailing = [58.0 + lift * 4.0, side * (36.0 + lift * 3.0)];
     let segments = [
-        (
-            root,
-            [5.0, side * 34.0],
-            [18.0, side * 72.0],
-            tip,
-        ),
-        (
-            tip,
-            [58.0, side * 77.0],
-            [70.0, side * 51.0],
-            trailing,
-        ),
+        (root, [5.0, side * 34.0], [18.0, side * 72.0], tip),
+        (tip, [58.0, side * 77.0], [70.0, side * 51.0], trailing),
         (trailing, [37.0, side * 24.0], [17.0, side * 13.0], root),
     ];
     let outline = cubic_loop(&segments, 10);
@@ -784,19 +777,9 @@ fn draw_wing(
     for index in 1..=6 {
         let t = index as f32 / 7.0;
         let leading = cubic_point(root, [5.0, side * 34.0], [18.0, side * 72.0], tip, t);
-        let trailing_point = cubic_point(
-            root,
-            [17.0, side * 13.0],
-            [37.0, side * 24.0],
-            trailing,
-            t,
-        );
-        scene.line(
-            leading,
-            trailing_point,
-            0.72,
-            Rgba(26, 91, 76, 112),
-        );
+        let trailing_point =
+            cubic_point(root, [17.0, side * 13.0], [37.0, side * 24.0], trailing, t);
+        scene.line(leading, trailing_point, 0.72, Rgba(26, 91, 76, 112));
     }
     // A subtle highlight along the distal membrane keeps the fast beat
     // readable at the recording's normal desktop scale.
@@ -804,17 +787,16 @@ fn draw_wing(
         mix(tip, trailing, 0.16),
         mix(tip, trailing, 0.76),
         0.58,
-        Rgba(colors.wing_edge.0, colors.wing_edge.1, colors.wing_edge.2, 92),
+        Rgba(
+            colors.wing_edge.0,
+            colors.wing_edge.1,
+            colors.wing_edge.2,
+            92,
+        ),
     );
 }
 
-fn cubic_point(
-    p0: [f32; 2],
-    p1: [f32; 2],
-    p2: [f32; 2],
-    p3: [f32; 2],
-    t: f32,
-) -> [f32; 2] {
+fn cubic_point(p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], p3: [f32; 2], t: f32) -> [f32; 2] {
     let inverse = 1.0 - t;
     let inverse_squared = inverse * inverse;
     let t_squared = t * t;
@@ -943,7 +925,12 @@ fn draw_prism_abdomen(scene: &mut SceneBuilder, behavior: Behavior, time: f32, _
         let inner = if lantern {
             Rgba(216, 245, 83, 214)
         } else {
-            Rgba(20, 72_u8.saturating_add(index as u8 * 7), 48_u8.saturating_add(index as u8 * 5), 214)
+            Rgba(
+                20,
+                72_u8.saturating_add(index as u8 * 7),
+                48_u8.saturating_add(index as u8 * 5),
+                214,
+            )
         };
         scene.ellipse(
             [center, 0.0],
@@ -951,7 +938,11 @@ fn draw_prism_abdomen(scene: &mut SceneBuilder, behavior: Behavior, time: f32, _
             0.0,
             outer,
             Some((
-                if lantern { Rgba(222, 255, 131, 224) } else { Rgba(47, 124, 82, 225) },
+                if lantern {
+                    Rgba(222, 255, 131, 224)
+                } else {
+                    Rgba(47, 124, 82, 225)
+                },
                 0.9,
             )),
         );
@@ -971,7 +962,11 @@ fn draw_prism_elytra(scene: &mut SceneBuilder, behavior: Behavior, time: f32) {
     } else {
         0.0
     };
-    let stable_time = if behavior == Behavior::PreEscape { time } else { 0.0 };
+    let stable_time = if behavior == Behavior::PreEscape {
+        time
+    } else {
+        0.0
+    };
     for (index, side) in [-1.0_f32, 1.0].into_iter().enumerate() {
         let pivot = [-1.0, side * 2.5];
         let rotate = |point: [f32; 2]| rotate_point(point, pivot, opening_radians);
@@ -1147,7 +1142,13 @@ fn draw_head(scene: &mut SceneBuilder, skin: Skin, behavior: Behavior, time: f32
             Rgba(4, 13, 17, 255),
             Some((Rgba(83, 171, 106, 220), 1.0)),
         );
-        scene.ellipse([-66.5, -2.8], [8.5, 9.0], -0.08, Rgba(33, 78, 61, 224), None);
+        scene.ellipse(
+            [-66.5, -2.8],
+            [8.5, 9.0],
+            -0.08,
+            Rgba(33, 78, 61, 224),
+            None,
+        );
         for side in [-1.0_f32, 1.0] {
             let pulse = if matches!(behavior, Behavior::Rest | Behavior::Quiet) {
                 0.4
@@ -1392,11 +1393,7 @@ fn prism_grooming_foreleg_pose(
             side * mix_scalar(5.0, 33.0, smooth),
         ),
     };
-    (
-        [knee_x, knee_y],
-        [ankle_x, ankle_y],
-        [toe_x, toe_y],
-    )
+    ([knee_x, knee_y], [ankle_x, ankle_y], [toe_x, toe_y])
 }
 
 fn mix_scalar(first: f32, second: f32, amount: f32) -> f32 {

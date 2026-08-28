@@ -209,10 +209,10 @@ fn apply_population_drive(stimulus: &mut [i32], offset: usize, drive_q15: i32) {
 #[cfg(test)]
 mod tests {
     use super::{apply_population_drive, neural_drive_for_action};
-    use mechofly_core::{Action, Behavior};
     use mechofly_core::model::{
         FUNCTIONAL_POPULATION_COUNT, GROOM_POPULATION_OFFSET, LOOM_POPULATION_OFFSET,
     };
+    use mechofly_core::{Action, Behavior};
 
     #[test]
     fn independent_sensory_drives_are_combined_without_erasing_each_other() {
