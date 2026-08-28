@@ -1,0 +1,77 @@
+name: Recover synchronized Windows evidence repair
+
+on:
+  push:
+    branches:
+      - feat/original-video-parity-rust-v5
+    paths:
+      - .github/workflows/recover-synchronized-evidence-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Reconstruct and apply the staged repair
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source_path = Path('.github/workflows/apply-synchronized-evidence-fix.yml')
+          source = source_path.read_text(encoding='utf-8')
+          opening = "          python3 - <<'PY'\n"
+          start = source.index(opening) + len(opening)
+          end = source.index("\n          PY\n", start)
+          payload = source[start:end]
+
+          prefix = '          '
+          reconstructed = []
+          inside_triple_string = False
+          for line_number, raw_line in enumerate(payload.splitlines(), start=1):
+              line = raw_line
+              if not inside_triple_string:
+                  if not line.startswith(prefix):
+                      raise SystemExit(
+                          f'embedded patch line {line_number} lacks YAML indentation'
+                      )
+                  line = line[len(prefix):]
+              if line.count("'''") % 2 == 1:
+                  inside_triple_string = not inside_triple_string
+              reconstructed.append(line)
+
+          if inside_triple_string:
+              raise SystemExit('embedded patch ended inside a triple-quoted string')
+
+          output = Path('/tmp/apply-synchronized-evidence-fix.py')
+          output.write_text('\n'.join(reconstructed) + '\n', encoding='utf-8')
+          PY
+          python3 /tmp/apply-synchronized-evidence-fix.py
+      - name: Format and inspect the repaired candidate
+        shell: bash
+        run: |
+          cargo fmt --all
+          git diff --check
+          git diff --stat
+      - name: Publish the repaired candidate
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm \
+            .github/workflows/apply-synchronized-evidence-fix.yml \
+            .github/workflows/recover-synchronized-evidence-fix.yml
+          git add \
+            .github/workflows/windows.yml \
+            crates/mechofly-app/src/app.rs \
+            crates/mechofly-app/src/brain_lab.rs \
+            crates/mechofly-app/src/desktop_pet.rs \
+            crates/mechofly-app/src/live_brain.rs \
+            tools/Test-Windows-GuiStartup.ps1
+          git commit -m "Synchronize Windows visual evidence"
+          git push origin HEAD:feat/original-video-parity-rust-v5
