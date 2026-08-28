@@ -42,7 +42,7 @@ use windows_sys::Win32::{
     },
 };
 
-use crate::pet::{PET_HEIGHT, PET_WIDTH, Skin, render_pet_bgra};
+use crate::pet::{PET_HEIGHT, PET_WIDTH, Skin};
 
 const HIT_ALPHA_THRESHOLD: u8 = 12;
 
@@ -312,7 +312,15 @@ impl PetOverlay {
                 observatory_open: false,
             };
             overlay.register_hotkeys();
-            overlay.update(position, Skin::default(), Behavior::Rest, 0.0, 0.0, false)?;
+            overlay.update(
+                position,
+                Skin::default(),
+                Behavior::Rest,
+                0.0,
+                0.0,
+                0.0,
+                false,
+            )?;
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             Ok(overlay)
         }
@@ -324,14 +332,16 @@ impl PetOverlay {
         skin: Skin,
         behavior: Behavior,
         phase: f32,
+        behavior_age_seconds: f32,
         heading_radians: f32,
         reduced_motion: bool,
     ) -> Result<(), String> {
-        render_pet_bgra(
+        crate::pet::render_pet_bgra_at_age(
             &mut self.pixels,
             skin,
             behavior,
             phase,
+            behavior_age_seconds,
             heading_radians,
             reduced_motion,
         );

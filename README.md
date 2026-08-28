@@ -12,9 +12,10 @@ preview.
 
 The application has two presentation-only skins:
 
-- **Drosophila Natural** is the repository and application default.
-- **MechoFly Prism** is the optional recording-matched alternate skin (the
-  existing `firefly` CLI value remains compatible).
+- **MechoFly Prism** is the repository, application, and AI100 default because
+  it matches the supplied DesktopFly recording (the existing `firefly` CLI
+  value remains compatible).
+- **Drosophila Natural** remains an explicit alternate skin.
 
 Skins never change graph structure, dynamics, replay, learning, or scientific
 claims.
@@ -82,8 +83,9 @@ Global shortcuts preserve the accepted legacy control contract:
 - cursor proximity drives the modeled Loom population; crossing its neural
   threshold produces pre-escape → flight → landing, while `Ctrl+Alt+L` keeps a
   clearly labeled authored presentation for repeatable review;
-- `Ctrl+Alt+G`, `Ctrl+Alt+B`, and `Ctrl+Alt+W` present grooming, reverse, and
-  walk respectively; and
+- `Ctrl+Alt+G`, `Ctrl+Alt+B`, and `Ctrl+Alt+W` inject bounded Groom, MDN, and
+  DNP09 population drives; the animation changes only after the modeled
+  controller selects grooming, reverse, or walk; and
 - `Ctrl+Alt+Q` or `Ctrl+Shift+F12` exits.
 
 The native host uses `RegisterHotKey` plus an edge-triggered
@@ -112,8 +114,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 Useful launch options:
 
 ```powershell
-.\host-windows\Start-MechoFly.ps1 -Skin drosophila -Compute auto
-.\host-windows\Start-MechoFly.ps1 -Skin firefly -Compute cpu -BrainLab
+.\host-windows\Start-MechoFly.ps1 -Skin firefly -Compute auto
+.\host-windows\Start-MechoFly.ps1 -Skin drosophila -Compute cpu -BrainLab
 .\host-windows\Start-MechoFly.ps1 -Compute gpu -ReducedMotion
 ```
 
@@ -127,7 +129,7 @@ does embed a compact set of 23,210 FlyWire-derived soma coordinates as a
 validated reference asset. They are not simulated and are not used to place
 unregistered model neurons in the default population view. After agreeing to
 the FlyWire citation guidelines and principles, download the filtered
-connection table from Codex and choose the local CSV or CSV.GZ path in Brain Lab. Import
+connection table and choose the local CSV or CSV.GZ path in Brain Lab. Import
 records the source URL, snapshot, column mapping, SHA-256, transform, counts,
 and validation warnings before starting a pinned imported-graph session.
 
@@ -135,11 +137,11 @@ and validation warnings before starting a pinned imported-graph session.
 
 `tools\Setup-AI100-MechoFly.ps1` synchronizes a clean selected GitHub branch at
 `D:\Projects\MechoFly`, builds and tests it, and records the exact branch,
-commit, Git tree, and executable SHA-256. AI100 defaults to Drosophila/Auto.
+commit, Git tree, and executable SHA-256. AI100 defaults to Prism/Auto.
 Start refuses a checkout or binary that differs from that receipt; the Sync
 shortcut performs a guarded fast-forward and rebuild. Setup also creates
-**Start MechoFly Original** for the recording-matched Prism companion and
-**MechoFly Brain Lab** for Prism plus both neural windows.
+**Start MechoFly Natural** for the alternate natural skin and **MechoFly Brain
+Lab** for Prism plus both neural windows.
 
 ```powershell
 .\tools\Setup-AI100-MechoFly.ps1 -Launch

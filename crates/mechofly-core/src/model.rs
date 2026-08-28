@@ -11,6 +11,7 @@ pub const SPIKE_THRESHOLD: i32 = 8_000;
 pub const RESET_DELTA: i32 = 10_000;
 pub const FUNCTIONAL_POPULATION_COUNT: usize = 9;
 pub const LOOM_POPULATION_OFFSET: usize = 0;
+pub const ALERT_POPULATION_OFFSET: usize = 3;
 pub const REVERSE_POPULATION_OFFSET: usize = 4;
 pub const WALK_POPULATION_OFFSET: usize = 5;
 pub const GROOM_POPULATION_OFFSET: usize = 6;
@@ -277,6 +278,11 @@ fn modeled_behavior(state: &ModelState, spike_count: usize) -> Behavior {
     {
         return Behavior::Groom;
     }
+    if functional_population_activation(state, ALERT_POPULATION_OFFSET)
+        >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
+    {
+        return Behavior::Alert;
+    }
     if functional_population_activation(state, REVERSE_POPULATION_OFFSET)
         >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
     {
@@ -418,6 +424,7 @@ mod tests {
         let graph = Arc::new(ModelGraph::synthetic(ModelTier::Demo4096, 9));
         for (offset, expected) in [
             (GROOM_POPULATION_OFFSET, Behavior::Groom),
+            (ALERT_POPULATION_OFFSET, Behavior::Alert),
             (REVERSE_POPULATION_OFFSET, Behavior::Reverse),
             (WALK_POPULATION_OFFSET, Behavior::Walk),
         ] {

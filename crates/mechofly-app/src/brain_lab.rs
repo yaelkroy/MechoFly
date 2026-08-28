@@ -492,7 +492,7 @@ fn reference_layout(
         .min(session.graph.neuron_ids.len().saturating_sub(1));
 
     egui::Panel::top("reference_lab_header")
-        .exact_size(58.0)
+        .exact_size(70.0)
         .frame(
             egui::Frame::new()
                 .fill(Color32::from_rgb(33, 20, 47))
@@ -515,6 +515,12 @@ fn reference_layout(
                         .small()
                         .color(MUTED),
                     );
+                    ui.monospace(format!(
+                        "SESSION {}  ·  FRAME {:08}  ·  STATE {}",
+                        session.short_session_id().to_ascii_uppercase(),
+                        session.last_summary.frame,
+                        &session.live_digest()[..12]
+                    ));
                 });
                 ui.with_layout(
                     egui::Layout::right_to_left(egui::Align::Center),
@@ -1104,6 +1110,12 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
             ));
         });
     });
+    let transitions = recent_behavior_transitions(session, 7);
+    ui.monospace(if transitions.is_empty() {
+        "MOTOR RECEIPT  waiting for retained modeled frames".to_owned()
+    } else {
+        format!("MOTOR RECEIPT  {}", transitions.join("  →  "))
+    });
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 91.0), Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 3, Color32::from_rgb(5, 9, 15));
@@ -1191,6 +1203,19 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
         FontId::monospace(9.5),
         MUTED,
     );
+}
+
+fn recent_behavior_transitions(session: &SimulationSession, maximum: usize) -> Vec<String> {
+    let mut last = None;
+    let mut transitions = Vec::new();
+    for summary in session.replay.summaries() {
+        if last != Some(summary.behavior) {
+            transitions.push(format!("{:06} {:?}", summary.frame, summary.behavior));
+            last = Some(summary.behavior);
+        }
+    }
+    let keep_from = transitions.len().saturating_sub(maximum);
+    transitions.into_iter().skip(keep_from).collect()
 }
 
 pub(crate) fn grooming_substate_at(age_frames: u32) -> (&'static str, u32, f32) {

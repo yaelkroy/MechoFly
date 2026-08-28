@@ -15,12 +15,14 @@ use crate::{
     compute::ComputePreference,
     diagnostics,
     live_brain::{LiveBrainCommand, LiveBrainState},
-    pet::{PET_HEIGHT, PET_WIDTH, PetMotion, Skin, draw_pet, transparent_frame},
+    pet::{PET_HEIGHT, PET_WIDTH, PetMotion, Skin, draw_pet_at_age, transparent_frame},
     runtime::SimulationSession,
     tray::{TrayAction, TrayController},
 };
 
 const MODEL_INTERVAL: Duration = Duration::from_millis(mechofly_core::MODEL_STEP_MS as u64);
+const CATCHUP_WARNING: &str =
+    "Model fell behind the wall clock; catch-up was bounded and excess elapsed time was dropped.";
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -190,24 +192,7 @@ impl MechoFlyApp {
             self.session.engine.state.frame,
             self.seed,
         );
-    }
-
-    fn display_behavior(&self) -> Behavior {
-        match self.session.engine.state.behavior {
-            Behavior::Walk
-            | Behavior::Reverse
-            | Behavior::Groom
-            | Behavior::Alert
-            | Behavior::PreEscape
-            | Behavior::Flight
-            | Behavior::Landing => self.session.engine.state.behavior,
-            Behavior::Rest | Behavior::Quiet => match self.current_action {
-                Action::Pause => Behavior::Rest,
-                Action::Explore => Behavior::Walk,
-                Action::Inspect => Behavior::Alert,
-                Action::Groom => Behavior::Groom,
-            },
-        }
+        self.session.stimulate_action(self.current_action);
     }
 
     #[cfg(windows)]
@@ -407,10 +392,9 @@ impl eframe::App for MechoFlyApp {
         }
         if steps == 5 && self.accumulator >= MODEL_INTERVAL {
             self.accumulator = Duration::ZERO;
-            self.session.runtime_warning = Some(
-                "Model fell behind the wall clock; catch-up was bounded and excess elapsed time was dropped."
-                    .to_owned(),
-            );
+            self.session.runtime_warning = Some(CATCHUP_WARNING.to_owned());
+        } else if self.session.runtime_warning.as_deref() == Some(CATCHUP_WARNING) {
+            self.session.runtime_warning = None;
         }
         let mut screen_origin = Pos2::ZERO;
         let mut screen_size = ctx.input(|input| {
@@ -464,7 +448,7 @@ impl eframe::App for MechoFlyApp {
         });
         self.pet.advance(
             elapsed.as_secs_f32(),
-            self.display_behavior(),
+            authoritative_display_behavior(self.session.engine.state.behavior),
             screen_origin,
             screen_size,
             held,
@@ -472,7 +456,7 @@ impl eframe::App for MechoFlyApp {
         );
         #[cfg(windows)]
         {
-            let behavior = self.display_behavior();
+            let behavior = authoritative_display_behavior(self.session.engine.state.behavior);
             let update_error = self.desktop_pet.as_mut().and_then(|overlay| {
                 overlay.set_observatory_open(self.live_brain.open || self.lab.open);
                 overlay
@@ -481,6 +465,7 @@ impl eframe::App for MechoFlyApp {
                         self.skin,
                         behavior,
                         self.pet.animation_seconds,
+                        self.pet.behavior_age_seconds,
                         self.pet.heading_radians,
                         self.pet.reduced_motion,
                     )
@@ -529,7 +514,7 @@ impl eframe::App for MechoFlyApp {
         }
 
         if self.live_brain.open {
-            let behavior = self.display_behavior();
+            let behavior = authoritative_display_behavior(self.session.engine.state.behavior);
             let commands = {
                 let live_brain = &mut self.live_brain;
                 let session = &self.session;
@@ -599,7 +584,7 @@ impl eframe::App for MechoFlyApp {
 impl MechoFlyApp {
     fn draw_fallback_pet(&mut self, ui: &mut egui::Ui) {
         ui.send_viewport_cmd(ViewportCommand::OuterPosition(self.pet.screen_position));
-        let behavior = self.display_behavior();
+        let behavior = authoritative_display_behavior(self.session.engine.state.behavior);
         egui::CentralPanel::default()
             .frame(transparent_frame())
             .show(ui, |ui| {
@@ -607,12 +592,13 @@ impl MechoFlyApp {
                     Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32),
                     Sense::click_and_drag(),
                 );
-                draw_pet(
+                draw_pet_at_age(
                     ui.painter(),
                     rect,
                     self.skin,
                     behavior,
                     self.pet.animation_seconds,
+                    self.pet.behavior_age_seconds,
                     self.pet.heading_radians,
                     self.pet.reduced_motion,
                 );
@@ -630,6 +616,10 @@ impl MechoFlyApp {
                 }
             });
     }
+}
+
+pub(crate) const fn authoritative_display_behavior(neural_behavior: Behavior) -> Behavior {
+    neural_behavior
 }
 
 fn app_data_dir() -> PathBuf {

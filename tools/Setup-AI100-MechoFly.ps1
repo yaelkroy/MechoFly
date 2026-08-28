@@ -400,12 +400,12 @@ if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
 }
 $Receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json
 if ($Receipt.status -ne 'PASS' -or -not $Receipt.live_state_unchanged -or
-    $Receipt.default_skin -ne 'drosophila' -or -not $Receipt.firefly_skin_available -or
+    $Receipt.default_skin -ne 'firefly' -or -not $Receipt.firefly_skin_available -or
     -not $Receipt.cpu_without_gpu_supported -or -not $Receipt.reevaluation_control -or
     -not $Receipt.global_hotkey_contract_passed -or
     $Receipt.global_hotkey_count -ne 8 -or
     -not $Receipt.asynchronous_hotkey_fallback -or
-    $Receipt.firefly_visual_style -ne 'mechofly_prism_glasswing_v5' -or
+    $Receipt.firefly_visual_style -ne 'desktopfly_prism_recording_port_v6' -or
     -not $Receipt.firefly_visual_contract_passed -or
     -not $Receipt.firefly_rest_temporal_invariant -or
     -not $Receipt.firefly_escape_wing_responsive -or
@@ -415,6 +415,9 @@ if ($Receipt.status -ne 'PASS' -or -not $Receipt.live_state_unchanged -or
     -not $Receipt.prism_grooming_animation_responsive -or
     -not $Receipt.prism_wing_state_contract_passed -or
     -not $Receipt.cursor_loom_neural_escape -or
+    -not $Receipt.policy_action_neural_dispatch -or
+    -not $Receipt.rendered_behavior_matches_neural_state -or
+    $Receipt.presentation_only_autonomy_path -or
     -not $Receipt.two_dimensional_flight_motion -or
     -not $Receipt.separate_live_brain_and_brain_lab -or
     @($Receipt.brain_lab_reference_columns).Count -ne 4 -or
@@ -462,7 +465,7 @@ $GeneratedUtc = [DateTime]::UtcNow.ToString('o')
 $Profile = [ordered]@{
     schema_version = 3
     machine_role = 'ai100-development'
-    skin = 'drosophila'
+    skin = 'firefly'
     compute = 'auto'
     reduced_motion = $false
     canonical_repository = $CanonicalRepository
@@ -539,6 +542,7 @@ $LegacyShortcutNames = @(
     ('Stop ' + $LegacyProduct + '.lnk'),
     ('Emergency Stop ' + $LegacyProduct + '.lnk'),
     ($LegacyProduct + ' Prism.lnk'),
+    ('Start ' + $LegacyProduct + ' Natural.lnk'),
     ($LegacyProduct + ' Brain Lab.lnk'),
     ($LegacyProduct + ' Live Brain.lnk')
 )
@@ -569,19 +573,19 @@ try {
         -TargetPath $WindowsPowerShell `
         -Arguments ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' +
             (Join-Path $Target 'host-windows\Start-MechoFly-AI100.ps1') + '"') `
-        -Description 'Start MechoFly with Drosophila Natural.' `
+        -Description 'Start the recording-matched MechoFly Prism companion.' `
         -IconLocation $IconLocation
     $CreatedShortcuts.Add($StartShortcut)
 
-    $OriginalShortcut = Join-Path $UserDesktop 'Start MechoFly Original.lnk'
+    $OriginalShortcut = Join-Path $UserDesktop 'Start MechoFly Natural.lnk'
     New-MechoFlyShortcut `
         -Shell $Shell `
         -ShortcutPath $OriginalShortcut `
         -TargetPath $WindowsPowerShell `
         -Arguments ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' +
             (Join-Path $Target 'host-windows\Start-MechoFly.ps1') +
-            '" -Skin firefly -Compute auto') `
-        -Description 'Start the recording-matched MechoFly Prism companion.' `
+            '" -Skin drosophila -Compute auto') `
+        -Description 'Start the alternate Drosophila Natural companion.' `
         -IconLocation $IconLocation
     $CreatedShortcuts.Add($OriginalShortcut)
 

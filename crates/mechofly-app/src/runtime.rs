@@ -1,10 +1,11 @@
 use std::{sync::Arc, time::Instant};
 
 use mechofly_core::{
-    Behavior, BoundedReplay, FrameSummary, ModelCheckpoint, ModelEngine, ModelGraph, ModelTier,
+    Action, Behavior, BoundedReplay, FrameSummary, ModelCheckpoint, ModelEngine, ModelGraph,
+    ModelTier,
     model::{
-        FUNCTIONAL_POPULATION_COUNT, GROOM_POPULATION_OFFSET, LOOM_POPULATION_OFFSET,
-        REVERSE_POPULATION_OFFSET, WALK_POPULATION_OFFSET,
+        ALERT_POPULATION_OFFSET, FUNCTIONAL_POPULATION_COUNT, GROOM_POPULATION_OFFSET,
+        LOOM_POPULATION_OFFSET, REVERSE_POPULATION_OFFSET, WALK_POPULATION_OFFSET,
     },
     provenance::sha256_hex,
 };
@@ -111,6 +112,7 @@ impl SimulationSession {
         let population_offset = match behavior {
             Behavior::PreEscape => LOOM_POPULATION_OFFSET,
             Behavior::Groom => GROOM_POPULATION_OFFSET,
+            Behavior::Alert => ALERT_POPULATION_OFFSET,
             Behavior::Reverse => REVERSE_POPULATION_OFFSET,
             Behavior::Walk => WALK_POPULATION_OFFSET,
             _ => return false,
@@ -121,6 +123,14 @@ impl SimulationSession {
             expires_after_frame: self.engine.state.frame.saturating_add(u64::from(frames)),
         });
         true
+    }
+
+    pub fn stimulate_action(&mut self, action: Action) -> bool {
+        let Some((behavior, duration_ms)) = neural_drive_for_action(action) else {
+            self.authored_drive = None;
+            return true;
+        };
+        self.stimulate_behavior(behavior, duration_ms)
     }
 
     fn prepare_sensory_stimulus(&mut self) {
@@ -177,6 +187,15 @@ impl SimulationSession {
     }
 }
 
+pub(crate) const fn neural_drive_for_action(action: Action) -> Option<(Behavior, u32)> {
+    match action {
+        Action::Pause => None,
+        Action::Explore => Some((Behavior::Walk, 594)),
+        Action::Inspect => Some((Behavior::Alert, 330)),
+        Action::Groom => Some((Behavior::Groom, 594)),
+    }
+}
+
 fn apply_population_drive(stimulus: &mut [i32], offset: usize, drive_q15: i32) {
     for value in stimulus
         .iter_mut()
@@ -189,7 +208,8 @@ fn apply_population_drive(stimulus: &mut [i32], offset: usize, drive_q15: i32) {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_population_drive;
+    use super::{apply_population_drive, neural_drive_for_action};
+    use mechofly_core::{Action, Behavior};
     use mechofly_core::model::{
         FUNCTIONAL_POPULATION_COUNT, GROOM_POPULATION_OFFSET, LOOM_POPULATION_OFFSET,
     };
@@ -207,5 +227,22 @@ mod tests {
             };
             assert_eq!(*value, expected);
         }
+    }
+
+    #[test]
+    fn autonomous_policy_actions_enter_through_neural_population_drives() {
+        assert_eq!(neural_drive_for_action(Action::Pause), None);
+        assert_eq!(
+            neural_drive_for_action(Action::Explore),
+            Some((Behavior::Walk, 594))
+        );
+        assert_eq!(
+            neural_drive_for_action(Action::Inspect),
+            Some((Behavior::Alert, 330))
+        );
+        assert_eq!(
+            neural_drive_for_action(Action::Groom),
+            Some((Behavior::Groom, 594))
+        );
     }
 }

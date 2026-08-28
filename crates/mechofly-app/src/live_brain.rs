@@ -308,6 +308,8 @@ fn draw_brain(
 
 fn draw_pathway_summary(ui: &mut egui::Ui, session: &SimulationSession) {
     heading(ui, "MODEL PATHWAY SUMMARY");
+    key_value(ui, "Session", session.short_session_id());
+    key_value(ui, "State", &session.live_digest()[..12]);
     key_value(ui, "Product", &session.graph.identity.product);
     key_value(ui, "Dataset", &session.graph.identity.dataset);
     key_value(ui, "Snapshot", &session.graph.identity.snapshot);
@@ -347,7 +349,15 @@ fn draw_activity_scale(ui: &mut egui::Ui) {
 }
 
 const POPULATIONS: [&str; 9] = [
-    "Loom", "Steer L", "Steer R", "Reverse", "Walk", "Groom", "Wing", "Flight", "Land",
+    "LC4 loom",
+    "LPLC2 loom",
+    "GF escape",
+    "DNA steer",
+    "MDN reverse",
+    "DNP09 walk",
+    "DNG11 groom",
+    "ESCw wing",
+    "Landing",
 ];
 
 fn draw_population_bars(ui: &mut egui::Ui, session: &SimulationSession) {
@@ -365,7 +375,7 @@ fn draw_population_bars(ui: &mut egui::Ui, session: &SimulationSession) {
         let fraction = (total as f32 / count.max(1) as f32 / 16_000.0).clamp(0.0, 1.0);
         ui.horizontal(|ui| {
             ui.add_sized(
-                [58.0, 16.0],
+                [82.0, 16.0],
                 egui::Label::new(egui::RichText::new(*label).small().color(MUTED)),
             );
             ui.add(
@@ -555,8 +565,8 @@ mod tests {
     #[test]
     fn every_modeled_population_has_a_visible_lane() {
         assert_eq!(POPULATIONS.len(), 9);
-        assert!(POPULATIONS.contains(&"Groom"));
-        assert!(POPULATIONS.contains(&"Flight"));
-        assert!(POPULATIONS.contains(&"Land"));
+        assert!(POPULATIONS.contains(&"GF escape"));
+        assert!(POPULATIONS.contains(&"DNG11 groom"));
+        assert!(POPULATIONS.contains(&"Landing"));
     }
 }

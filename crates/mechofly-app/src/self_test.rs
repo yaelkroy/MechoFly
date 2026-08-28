@@ -6,7 +6,7 @@ use mechofly_core::{
     model::{
         ESCAPE_HOLD_FRAMES, FLIGHT_HOLD_FRAMES, FUNCTIONAL_POPULATION_COUNT, GROOM_HOLD_FRAMES,
         GROOM_POPULATION_OFFSET, LANDING_HOLD_FRAMES, LOOM_POPULATION_OFFSET,
-        REVERSE_POPULATION_OFFSET, WALK_POPULATION_OFFSET,
+        ALERT_POPULATION_OFFSET, REVERSE_POPULATION_OFFSET, WALK_POPULATION_OFFSET,
     },
 };
 use serde::Serialize;
@@ -56,6 +56,9 @@ struct SelfTestReceipt {
     cursor_loom_neural_escape: bool,
     neural_hotkey_behavior_dispatch: bool,
     presentation_only_hotkey_path: bool,
+    presentation_only_autonomy_path: bool,
+    policy_action_neural_dispatch: bool,
+    rendered_behavior_matches_neural_state: bool,
     behavior_controller_authoritative: bool,
     escape_envelope_ms: u32,
     flight_envelope_ms: u32,
@@ -147,6 +150,7 @@ pub fn run(path: &Path) -> Result<(), String> {
     });
     let neural_hotkey_behavior_dispatch = [
         (GROOM_POPULATION_OFFSET, Behavior::Groom),
+        (ALERT_POPULATION_OFFSET, Behavior::Alert),
         (REVERSE_POPULATION_OFFSET, Behavior::Reverse),
         (WALK_POPULATION_OFFSET, Behavior::Walk),
     ]
@@ -170,6 +174,27 @@ pub fn run(path: &Path) -> Result<(), String> {
                 == expected
         })
     });
+    let policy_action_neural_dispatch = [
+        (Action::Pause, None),
+        (Action::Explore, Some((Behavior::Walk, 594))),
+        (Action::Inspect, Some((Behavior::Alert, 330))),
+        (Action::Groom, Some((Behavior::Groom, 594))),
+    ]
+    .into_iter()
+    .all(|(action, expected)| crate::runtime::neural_drive_for_action(action) == expected);
+    let rendered_behavior_matches_neural_state = [
+        Behavior::Rest,
+        Behavior::Quiet,
+        Behavior::Walk,
+        Behavior::Reverse,
+        Behavior::Groom,
+        Behavior::Alert,
+        Behavior::PreEscape,
+        Behavior::Flight,
+        Behavior::Landing,
+    ]
+    .into_iter()
+    .all(|behavior| crate::app::authoritative_display_behavior(behavior) == behavior);
     let motion = run_motion_self_test();
     let mut flight_motion = PetMotion::default();
     flight_motion.screen_position = eframe::egui::Pos2::new(800.0, 500.0);
@@ -232,7 +257,7 @@ pub fn run(path: &Path) -> Result<(), String> {
     };
 
     let receipt = SelfTestReceipt {
-        schema_version: 4,
+        schema_version: 5,
         status: if comparison.receipt.live_state_unchanged
             && comparison.receipt.alternative_differs
             && live_before == live_after
@@ -241,6 +266,8 @@ pub fn run(path: &Path) -> Result<(), String> {
             && firefly_visual.passed
             && cursor_loom_neural_escape
             && neural_hotkey_behavior_dispatch
+            && policy_action_neural_dispatch
+            && rendered_behavior_matches_neural_state
             && motion.passed
             && two_dimensional_flight_motion
             && two_way_neuron_selection_sync
@@ -275,7 +302,7 @@ pub fn run(path: &Path) -> Result<(), String> {
         global_hotkey_contract_passed: hotkeys.passed,
         registered_hotkeys_tested: hotkeys.registered_count,
         asynchronous_hotkey_fallback: hotkeys.async_fallback_all_bindings,
-        firefly_visual_style: "mechofly_prism_glasswing_v5".to_owned(),
+        firefly_visual_style: "desktopfly_prism_recording_port_v6".to_owned(),
         firefly_palette: "iridescent_glasswing".to_owned(),
         firefly_visual_contract_passed: firefly_visual.passed,
         firefly_opaque_pixels: firefly_visual.opaque_pixels,
@@ -290,7 +317,11 @@ pub fn run(path: &Path) -> Result<(), String> {
         cursor_loom_neural_escape,
         neural_hotkey_behavior_dispatch,
         presentation_only_hotkey_path: false,
-        behavior_controller_authoritative: true,
+        presentation_only_autonomy_path: false,
+        policy_action_neural_dispatch,
+        rendered_behavior_matches_neural_state,
+        behavior_controller_authoritative: rendered_behavior_matches_neural_state
+            && policy_action_neural_dispatch,
         escape_envelope_ms: (ESCAPE_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
         flight_envelope_ms: (FLIGHT_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
         landing_envelope_ms: (LANDING_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,

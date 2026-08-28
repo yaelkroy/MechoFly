@@ -14,7 +14,7 @@ repository.
 | Reverse | backward translation while the body keeps its orientation |
 | Groom | no translation; alternating foreleg wipes across eyes and antenna base |
 | Pre-escape | orient away from the cursor; brace; rapid wing preparation |
-| Flight | continuous 2D motion; smooth turns; one independently animated wing pair |
+| Flight | continuous 2D motion; smooth turns; the recording's independently animated wing pair |
 | Landing | deceleration; reduced wing amplitude; leg extension; settle |
 
 Cursor proximity is encoded into the modeled Loom population. The controller
@@ -22,10 +22,10 @@ enters the escape sequence only after that population crosses its activation
 threshold; zero sensory input is regression-tested against escape entry. This
 is a modeled software circuit claim, not a measured biological response.
 
-The Prism skin must retain the recording's single paired glass-wing set,
-visible veins, orange eyes, dark-green head, orange anterior thorax, round
-green posterior thorax, continuous twin-panel green abdomen, six jointed legs,
-two antennae, and the faint airborne orbit cue. Wings stay parked and invisible
+The Prism skin must retain the recording's paired glass-wing set, visible
+veins, orange eyes, dark-green head, orange pronotum, round green posterior
+thorax, segmented lantern abdomen, twin green elytra, six jointed legs, two
+antennae, and the faint airborne orbit cue. Flight wings stay parked and invisible
 during rest, walking, reverse, grooming, alert, and quiet states. Drosophila
 Natural uses the same behavioral articulation with a natural palette.
 
@@ -41,7 +41,8 @@ Live Brain is a separate compact window and includes:
 - 23,210-point fixed FlyWire X–Y context projection;
 - clearly labeled modeled-neuron activity overlay;
 - pathway/model summary and viridis relative-activity scale;
-- Loom, Steer L/R, Reverse, Walk, Groom, Wing, Flight, and Land bars;
+- LC4 loom, LPLC2 loom, GF escape, DNA steer, MDN reverse, DNP09 walk,
+  DNG11 groom, ESCw wing, and Landing bars;
 - top active and selected-neuron details; and
 - retained five-second spike raster.
 
@@ -69,5 +70,7 @@ weights. Presentation role names are labeled as presentation groupings.
 - A PASS comparison receipt requires an unchanged live-state digest.
 - Learning remains a separately stored, explicit-feedback software policy and
   cannot alter graph edges or neural state.
+- Autonomous policy choices enter only as bounded modeled-population drives;
+  they cannot substitute a presentation behavior for the neural state.
 - Losing or stopping neural authority cannot leave a hidden autonomous motor
   path.
