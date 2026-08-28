@@ -9,6 +9,9 @@ pub const ACTIVATION_MIN: i32 = -32_768;
 pub const ACTIVATION_MAX: i32 = 32_767;
 pub const SPIKE_THRESHOLD: i32 = 8_000;
 pub const RESET_DELTA: i32 = 10_000;
+pub const FUNCTIONAL_POPULATION_COUNT: usize = 9;
+pub const LOOM_POPULATION_OFFSET: usize = 0;
+const LOOM_ESCAPE_ACTIVATION_Q15: i32 = 5_200;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -151,8 +154,7 @@ impl ModelEngine {
             (self.state.activation.iter().map(|v| *v as i64).sum::<i64>()
                 / self.state.activation.len() as i64) as i32
         };
-        let next_behavior =
-            modeled_behavior(self.state.frame, spike_count, self.state.activation.len());
+        let next_behavior = modeled_behavior(&self.state, spike_count);
         if next_behavior == self.state.behavior {
             self.state.behavior_age_frames += 1;
         } else {
@@ -233,12 +235,35 @@ fn initial_activation(seed: u64, index: usize) -> i32 {
     ((h & 0x0fff) as i32) - 2_048
 }
 
-fn modeled_behavior(frame: u64, spike_count: usize, neuron_count: usize) -> Behavior {
-    let rate_per_10k = spike_count.saturating_mul(10_000) / neuron_count.max(1);
+fn modeled_behavior(state: &ModelState, spike_count: usize) -> Behavior {
+    match state.behavior {
+        Behavior::PreEscape if state.behavior_age_frames < 5 => return Behavior::PreEscape,
+        Behavior::PreEscape => return Behavior::Flight,
+        Behavior::Flight if state.behavior_age_frames < 90 => return Behavior::Flight,
+        Behavior::Flight => return Behavior::Landing,
+        Behavior::Landing if state.behavior_age_frames < 35 => return Behavior::Landing,
+        Behavior::Landing => return Behavior::Rest,
+        _ => {}
+    }
+
+    let loom_activation = state
+        .activation
+        .iter()
+        .skip(LOOM_POPULATION_OFFSET)
+        .step_by(FUNCTIONAL_POPULATION_COUNT)
+        .copied()
+        .max()
+        .unwrap_or(ACTIVATION_MIN);
+    if loom_activation >= LOOM_ESCAPE_ACTIVATION_Q15 {
+        return Behavior::PreEscape;
+    }
+
+    let rate_per_10k =
+        spike_count.saturating_mul(10_000) / state.activation.len().max(1);
     if rate_per_10k > 1_200 {
         Behavior::Alert
     } else {
-        match (frame / 90) % 9 {
+        match (state.frame / 90) % 9 {
             0 => Behavior::Rest,
             1..=3 => Behavior::Walk,
             4 => Behavior::Groom,
@@ -271,5 +296,49 @@ mod tests {
             );
         }
         assert_eq!(a.state, b.state);
+    }
+
+    #[test]
+    fn loom_population_crosses_neural_threshold_before_escape() {
+        let graph = Arc::new(ModelGraph::synthetic(ModelTier::Demo4096, 7));
+        let mut engine = ModelEngine::new(graph, 11);
+        let mut stimulus = engine.empty_stimulus();
+        for value in stimulus
+            .iter_mut()
+            .skip(LOOM_POPULATION_OFFSET)
+            .step_by(FUNCTIONAL_POPULATION_COUNT)
+        {
+            *value = 8_192;
+        }
+
+        let mut escaped = false;
+        for _ in 0..24 {
+            let summary = engine.step_cpu(StepInput {
+                stimulus_q15: &stimulus,
+            });
+            if summary.behavior == Behavior::PreEscape {
+                escaped = true;
+                break;
+            }
+        }
+        assert!(escaped, "loom neural population never crossed the controller threshold");
+    }
+
+    #[test]
+    fn zero_sensory_input_cannot_trigger_escape_sequence() {
+        let graph = Arc::new(ModelGraph::synthetic(ModelTier::Demo4096, 7));
+        let mut engine = ModelEngine::new(graph, 11);
+        let stimulus = engine.empty_stimulus();
+        for _ in 0..300 {
+            let behavior = engine
+                .step_cpu(StepInput {
+                    stimulus_q15: &stimulus,
+                })
+                .behavior;
+            assert!(!matches!(
+                behavior,
+                Behavior::PreEscape | Behavior::Flight | Behavior::Landing
+            ));
+        }
     }
 }

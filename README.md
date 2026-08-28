@@ -79,7 +79,9 @@ Global shortcuts preserve the accepted legacy control contract:
 
 - `Ctrl+Alt+N` toggles Live Brain;
 - `Ctrl+Alt+H` hides or shows the pet;
-- `Ctrl+Alt+L` presents loom → escape → landing;
+- cursor proximity drives the modeled Loom population; crossing its neural
+  threshold produces pre-escape → flight → landing, while `Ctrl+Alt+L` keeps a
+  clearly labeled authored presentation for repeatable review;
 - `Ctrl+Alt+G`, `Ctrl+Alt+B`, and `Ctrl+Alt+W` present grooming, reverse, and
   walk respectively; and
 - `Ctrl+Alt+Q` or `Ctrl+Shift+F12` exits.

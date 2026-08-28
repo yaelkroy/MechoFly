@@ -3,6 +3,7 @@ use std::{fs, path::Path, sync::Arc};
 use mechofly_core::{
     Action, Behavior, Feedback, ModelCheckpoint, ModelEngine, ModelGraph, ModelTier, PetPolicy,
     PolicyContext, StepInput, StimulationPolicy, StimulationRequest,
+    model::{FUNCTIONAL_POPULATION_COUNT, LOOM_POPULATION_OFFSET},
 };
 use serde::Serialize;
 
@@ -48,6 +49,7 @@ struct SelfTestReceipt {
     prism_walking_animation_responsive: bool,
     prism_grooming_animation_responsive: bool,
     prism_wing_state_contract_passed: bool,
+    cursor_loom_neural_escape: bool,
     two_dimensional_flight_motion: bool,
     separate_live_brain_and_brain_lab: bool,
     brain_lab_reference_columns: Vec<String>,
@@ -104,6 +106,23 @@ pub fn run(path: &Path) -> Result<(), String> {
         .map(Vec::len)
         .unwrap_or_default();
     let firefly_visual = crate::pet::run_firefly_visual_self_test();
+    let mut loom_engine = ModelEngine::new(Arc::clone(&graph), 0xC0FFEE);
+    let mut loom_stimulus = loom_engine.empty_stimulus();
+    for value in loom_stimulus
+        .iter_mut()
+        .skip(LOOM_POPULATION_OFFSET)
+        .step_by(FUNCTIONAL_POPULATION_COUNT)
+    {
+        *value = 8_192;
+    }
+    let cursor_loom_neural_escape = (0..24).any(|_| {
+        loom_engine
+            .step_cpu(StepInput {
+                stimulus_q15: &loom_stimulus,
+            })
+            .behavior
+            == Behavior::PreEscape
+    });
     let mut flight_motion = PetMotion::default();
     flight_motion.screen_position = eframe::egui::Pos2::new(800.0, 500.0);
     let flight_start = flight_motion.screen_position;
@@ -152,6 +171,7 @@ pub fn run(path: &Path) -> Result<(), String> {
             && explicit_learning_changed
             && hotkeys.passed
             && firefly_visual.passed
+            && cursor_loom_neural_escape
             && two_dimensional_flight_motion
             && anatomical_context_points == 23_210
         {
@@ -195,6 +215,7 @@ pub fn run(path: &Path) -> Result<(), String> {
         prism_walking_animation_responsive: firefly_visual.walking_pixel_differences > 100,
         prism_grooming_animation_responsive: firefly_visual.grooming_pixel_differences > 100,
         prism_wing_state_contract_passed: firefly_visual.wing_state_contract_passed,
+        cursor_loom_neural_escape,
         two_dimensional_flight_motion,
         separate_live_brain_and_brain_lab: true,
         brain_lab_reference_columns: vec![

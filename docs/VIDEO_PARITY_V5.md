@@ -17,6 +17,11 @@ repository.
 | Flight | continuous 2D motion; smooth turns; four independently beating wings |
 | Landing | deceleration; reduced wing amplitude; leg extension; settle |
 
+Cursor proximity is encoded into the modeled Loom population. The controller
+enters the escape sequence only after that population crosses its activation
+threshold; zero sensory input is regression-tested against escape entry. This
+is a modeled software circuit claim, not a measured biological response.
+
 The Prism skin must retain the recording's four glass wings, visible veins,
 orange faceted eyes, cyan/gold thorax, ten jewel-like abdominal segments, six
 jointed legs, two antennae, and behavior-specific orbit/trail cues. Drosophila

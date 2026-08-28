@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Instant};
 
 use mechofly_core::{
     BoundedReplay, FrameSummary, ModelCheckpoint, ModelEngine, ModelGraph, ModelTier,
+    model::{FUNCTIONAL_POPULATION_COUNT, LOOM_POPULATION_OFFSET},
     provenance::sha256_hex,
 };
 
@@ -21,7 +22,7 @@ pub struct SimulationSession {
     pub started_unix_millis: u64,
     pub last_step_ms: f64,
     pub runtime_warning: Option<String>,
-    zero_stimulus: Vec<i32>,
+    sensory_stimulus: Vec<i32>,
 }
 
 impl SimulationSession {
@@ -73,7 +74,7 @@ impl SimulationSession {
             started_unix_millis.to_le_bytes().as_slice(),
             assessment.selected.label().as_bytes(),
         ]);
-        let zero_stimulus = engine.empty_stimulus();
+        let sensory_stimulus = engine.empty_stimulus();
         Self {
             assessment,
             graph,
@@ -85,13 +86,26 @@ impl SimulationSession {
             started_unix_millis,
             last_step_ms: 0.0,
             runtime_warning: None,
-            zero_stimulus,
+            sensory_stimulus,
+        }
+    }
+
+    pub fn set_cursor_loom_strength(&mut self, strength: f32) {
+        self.sensory_stimulus.fill(0);
+        let drive_q15 = (strength.clamp(0.0, 1.0) * 8_192.0).round() as i32;
+        for value in self
+            .sensory_stimulus
+            .iter_mut()
+            .skip(LOOM_POPULATION_OFFSET)
+            .step_by(FUNCTIONAL_POPULATION_COUNT)
+        {
+            *value = drive_q15;
         }
     }
 
     pub fn step(&mut self) {
         let started = Instant::now();
-        let result = self.backend.step(&mut self.engine, &self.zero_stimulus);
+        let result = self.backend.step(&mut self.engine, &self.sensory_stimulus);
         self.last_summary = match result {
             Ok(summary) => summary,
             Err(error) => {
@@ -102,7 +116,7 @@ impl SimulationSession {
                 self.assessment.selected = ActiveBackend::Cpu;
                 self.assessment.reason = self.runtime_warning.clone().unwrap_or_default();
                 self.backend
-                    .step(&mut self.engine, &self.zero_stimulus)
+                    .step(&mut self.engine, &self.sensory_stimulus)
                     .expect("CPU backend is infallible")
             }
         };

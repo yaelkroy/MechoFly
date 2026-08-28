@@ -454,7 +454,7 @@ impl eframe::App for MechoFlyApp {
                 .monitor_size
                 .unwrap_or(Vec2::new(1_920.0, 1_080.0))
         });
-        let mut held = ctx.input(|input| input.pointer.hover_pos().is_some());
+        let mut held = ctx.input(|input| input.pointer.primary_down());
         let mut cursor_position = None;
         #[cfg(windows)]
         if let Some(events) = self
@@ -468,7 +468,7 @@ impl eframe::App for MechoFlyApp {
                 .expect("overlay existed while its events were polled");
             screen_origin = overlay.screen_origin();
             screen_size = overlay.screen_size();
-            held = events.dragging || events.hovered;
+            held = events.dragging;
             cursor_position = events.cursor_position;
             if let Some(position) = events.position {
                 self.pet.screen_position = position;
@@ -482,6 +482,16 @@ impl eframe::App for MechoFlyApp {
             }
             self.handle_hotkeys(events);
         }
+        let cursor_loom_strength = cursor_position
+            .map(|cursor| {
+                let pet_center = self.pet.screen_position
+                    + Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * 0.5;
+                let distance = pet_center.distance(cursor);
+                ((360.0 - distance) / 240.0).clamp(0.0, 1.0)
+            })
+            .unwrap_or(0.0);
+        self.session
+            .set_cursor_loom_strength(cursor_loom_strength);
         self.pet.advance(
             elapsed.as_secs_f32(),
             self.display_behavior(),
