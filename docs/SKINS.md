@@ -17,7 +17,7 @@ abdomen, red compound eyes, six articulated legs, and translucent wings.
 
 MechoFly Prism restores the original recording's jewel-like silhouette:
 ten iridescent abdominal segments, faceted cyan thorax, orange compound eyes,
-four independently animated glass wings with veins and pterostigmata, six
+one independently animated glass wing pair with veins and pterostigmata, six
 jointed legs, antennae, an orbit field, and escape trails. It remains optional;
 Drosophila Natural is also the AI100 default.
 

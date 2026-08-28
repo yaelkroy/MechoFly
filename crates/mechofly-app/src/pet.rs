@@ -326,17 +326,17 @@ struct Palette {
 fn palette(skin: Skin) -> Palette {
     match skin {
         Skin::Firefly => Palette {
-            outline: Rgba(12, 45, 65, 238),
-            highlight: Rgba(102, 248, 224, 220),
-            leg: Rgba(19, 39, 51, 238),
-            wing_fill: Rgba(91, 200, 246, 70),
-            wing_edge: Rgba(70, 239, 221, 190),
-            head_core: Rgba::rgb(39, 151, 174),
-            head_rim: Rgba::rgb(94, 241, 221),
-            eye_core: Rgba::rgb(255, 96, 53),
-            eye_rim: Rgba::rgb(241, 194, 92),
-            thorax_core: Rgba::rgb(112, 231, 202),
-            thorax_edge: Rgba::rgb(75, 247, 218),
+            outline: Rgba(26, 67, 45, 245),
+            highlight: Rgba(185, 218, 67, 225),
+            leg: Rgba(41, 91, 49, 248),
+            wing_fill: Rgba(82, 96, 179, 82),
+            wing_edge: Rgba(139, 99, 211, 205),
+            head_core: Rgba::rgb(23, 74, 56),
+            head_rim: Rgba::rgb(163, 177, 56),
+            eye_core: Rgba::rgb(202, 75, 31),
+            eye_rim: Rgba::rgb(240, 155, 48),
+            thorax_core: Rgba::rgb(207, 89, 36),
+            thorax_edge: Rgba::rgb(241, 169, 54),
         },
         Skin::Drosophila => Palette {
             outline: Rgba(63, 35, 25, 240),
@@ -469,13 +469,12 @@ fn pet_scene(
     let colors = palette(skin);
     let mut scene = SceneBuilder::new(heading, screen_offset);
     draw_behavior_field(&mut scene, behavior, time, skin);
-    draw_motion_trails(&mut scene, behavior, time, skin);
     draw_contact_shadow(&mut scene, behavior);
     draw_legs(&mut scene, behavior, gait, time, true, colors);
     draw_wings(&mut scene, behavior, time, colors);
     draw_abdomen(&mut scene, skin, behavior, time, colors);
     draw_thorax(&mut scene, skin, time, colors);
-    draw_head(&mut scene, behavior, time, colors);
+    draw_head(&mut scene, skin, behavior, time, colors);
     draw_legs(&mut scene, behavior, gait, time, false, colors);
     draw_antennae(&mut scene, behavior, time, colors);
     scene.primitives
@@ -501,7 +500,10 @@ fn behavior_accent(behavior: Behavior, skin: Skin) -> Rgba {
 }
 
 fn draw_behavior_field(scene: &mut SceneBuilder, behavior: Behavior, time: f32, skin: Skin) {
-    if behavior == Behavior::Rest {
+    if !matches!(
+        behavior,
+        Behavior::Alert | Behavior::PreEscape | Behavior::Flight | Behavior::Landing
+    ) {
         return;
     }
     let accent = behavior_accent(behavior, skin);
@@ -521,24 +523,6 @@ fn draw_behavior_field(scene: &mut SceneBuilder, behavior: Behavior, time: f32, 
         ];
         let size = 1.5 + (index % 3) as f32 * 0.65;
         scene.ellipse(point, [size, size], 0.0, accent, None);
-    }
-}
-
-fn draw_motion_trails(scene: &mut SceneBuilder, behavior: Behavior, time: f32, skin: Skin) {
-    if !matches!(behavior, Behavior::PreEscape | Behavior::Flight) {
-        return;
-    }
-    let accent = behavior_accent(behavior, skin);
-    let drift = (time * 6.0).sin() * 3.0;
-    for index in 0..4 {
-        let y = -23.0 + index as f32 * 15.0 + drift;
-        let length = 24.0 + index as f32 * 8.0;
-        scene.line(
-            [93.0 + index as f32 * 4.0, y],
-            [93.0 + length, y - 2.0],
-            1.6,
-            Rgba(accent.0, accent.1, accent.2, 95),
-        );
     }
 }
 
@@ -570,75 +554,43 @@ fn draw_wings(scene: &mut SceneBuilder, behavior: Behavior, time: f32, colors: P
         28.0
     };
     let phase = time * frequency;
-    let fore = phase.sin() * intensity;
-    let hind = (phase + 1.31).sin() * intensity;
-    draw_wing(scene, -1.0, false, hind - 0.12 * intensity, colors, time, 2);
-    draw_wing(scene, 1.0, false, hind + 0.12 * intensity, colors, time, 3);
-    draw_wing(scene, -1.0, true, fore + 0.16 * intensity, colors, time, 0);
-    draw_wing(scene, 1.0, true, fore - 0.16 * intensity, colors, time, 1);
+    let beat = phase.sin() * intensity;
+    draw_wing(scene, -1.0, beat + 0.12 * intensity, colors, time, 0);
+    draw_wing(scene, 1.0, beat - 0.12 * intensity, colors, time, 1);
 }
 
 fn draw_wing(
     scene: &mut SceneBuilder,
     side: f32,
-    fore: bool,
     lift: f32,
     colors: Palette,
     time: f32,
     wing_index: usize,
 ) {
-    let root = [
-        if fore { -27.0 } else { -9.0 },
-        side * if fore { 6.0 } else { 8.0 },
-    ];
-    let tip = [
-        if fore {
-            -42.0 + lift * 6.0
-        } else {
-            43.0 + lift * 7.0
-        },
-        side * if fore {
-            86.0 + lift * 8.0
-        } else {
-            79.0 + lift * 7.0
-        },
-    ];
-    let outer = [
-        if fore {
-            7.0 + lift * 4.0
-        } else {
-            79.0 + lift * 4.0
-        },
-        side * if fore {
-            72.0 + lift * 5.0
-        } else {
-            59.0 + lift * 5.0
-        },
-    ];
-    let trailing = [
-        if fore { 20.0 } else { 48.0 },
-        side * if fore { 31.0 } else { 25.0 },
-    ];
+    let root = [-10.0, side * 9.0];
+    let tip = [8.0 + lift * 15.0, side * (72.0 - lift.abs() * 5.0)];
+    let outer = [46.0 + lift * 8.0, side * (52.0 + lift * 4.0)];
+    let trailing = [34.0, side * 23.0];
     let segments = [
         (
             root,
-            [if fore { -35.0 } else { 7.0 }, side * 26.0],
-            [if fore { -60.0 } else { 36.0 }, side * 67.0],
+            [-7.0, side * 31.0],
+            [-2.0 + lift * 9.0, side * 63.0],
             tip,
         ),
         (
             tip,
-            [outer[0] - 14.0, side * (outer[1].abs() + 7.0)],
-            [outer[0] + 6.0, side * (outer[1].abs() - 4.0)],
+            [24.0 + lift * 12.0, side * 77.0],
+            [47.0 + lift * 9.0, side * 67.0],
             outer,
         ),
         (
             outer,
-            [trailing[0] + 8.0, side * (trailing[1].abs() + 7.0)],
-            [trailing[0] + 5.0, side * (trailing[1].abs() - 2.0)],
+            [56.0 + lift * 6.0, side * 43.0],
+            [48.0, side * 28.0],
             trailing,
         ),
-        (trailing, [11.0, side * 18.0], [-2.0, side * 11.0], root),
+        (trailing, [21.0, side * 20.0], [0.0, side * 12.0], root),
     ];
     let outline = cubic_loop(&segments, 7);
     let shimmer = 0.5 + 0.5 * (time * 2.7 + wing_index as f32 * 1.17).sin();
@@ -652,35 +604,27 @@ fn draw_wing(
         ),
         Some((colors.wing_edge, 1.25)),
     );
-    let pane = [
-        root,
-        mix(root, tip, 0.63),
-        mix(tip, outer, 0.55),
-        mix(outer, trailing, 0.62),
-        trailing,
-    ];
-    scene.polygon(&pane, Rgba(124, 102, 241, 28), None);
-    for fraction in [0.30_f32, 0.55, 0.78] {
+    for fraction in [0.28_f32, 0.52, 0.76] {
         scene.line(
             root,
             mix(tip, outer, fraction),
             0.72,
-            Rgba(83, 224, 224, 100),
+            Rgba(93, 178, 145, 105),
         );
     }
-    scene.line(root, trailing, 0.78, Rgba(236, 190, 72, 112));
+    scene.line(root, trailing, 0.78, Rgba(204, 181, 74, 125));
     scene.line(
         mix(root, tip, 0.53),
         mix(trailing, outer, 0.55),
         0.65,
-        Rgba(106, 102, 229, 95),
+        Rgba(129, 104, 196, 105),
     );
     let stigma = mix(tip, outer, 0.27);
     scene.ellipse(
         stigma,
         [5.2, 1.8],
         side * 0.24,
-        Rgba(245, 180, 50, 190),
+        Rgba(225, 177, 56, 195),
         None,
     );
 }
@@ -720,18 +664,10 @@ fn draw_abdomen(
     time: f32,
     colors: Palette,
 ) {
-    let prism: [(u8, u8, u8); 10] = [
-        (31, 173, 196),
-        (31, 199, 155),
-        (48, 149, 219),
-        (80, 113, 222),
-        (119, 85, 217),
-        (39, 188, 180),
-        (63, 184, 112),
-        (192, 169, 55),
-        (50, 157, 186),
-        (116, 74, 190),
-    ];
+    if skin == Skin::Firefly {
+        draw_prism_abdomen(scene, behavior, time, colors);
+        return;
+    }
     let natural: [(u8, u8, u8); 10] = [
         (178, 113, 45),
         (164, 96, 39),
@@ -757,11 +693,7 @@ fn draw_abdomen(
             12.0 - segment as f32 * 0.45
         };
         let height = (16.0 - segment as f32 * 1.05).max(5.2);
-        let (r, g, b) = if skin == Skin::Firefly {
-            prism[segment]
-        } else {
-            natural[segment]
-        };
+        let (r, g, b) = natural[segment];
         scene.ellipse(
             [x + width * 0.5, 0.0],
             [width * 0.58, height * 0.5],
@@ -783,16 +715,98 @@ fn draw_abdomen(
     }
     scene.polygon(
         &[[101.0, -3.2], [115.0, 0.0], [101.0, 3.2]],
-        if skin == Skin::Firefly {
-            Rgba(72, 145, 218, 248)
-        } else {
-            Rgba(68, 38, 24, 248)
-        },
+        Rgba(68, 38, 24, 248),
         Some((colors.highlight, 0.8)),
     );
 }
 
+fn draw_prism_abdomen(
+    scene: &mut SceneBuilder,
+    behavior: Behavior,
+    time: f32,
+    colors: Palette,
+) {
+    let pulse = if behavior == Behavior::Rest {
+        0
+    } else {
+        ((0.5 + 0.5 * (time * 3.1).sin()) * 16.0) as u8
+    };
+    scene.ellipse(
+        [39.0, 0.0],
+        [44.0, 18.0],
+        0.0,
+        Rgba(31, 112_u8.saturating_add(pulse), 50, 250),
+        Some((colors.outline, 1.35)),
+    );
+    for side in [-1.0_f32, 1.0] {
+        scene.ellipse(
+            [38.0, side * 7.0],
+            [37.0, 8.2],
+            0.0,
+            Rgba(53, 158_u8.saturating_add(pulse), 66, 228),
+            None,
+        );
+        scene.line(
+            [7.0, side * 5.5],
+            [72.0, side * 5.5],
+            1.0,
+            Rgba(161, 222, 77, 170),
+        );
+    }
+    scene.line([0.0, 0.0], [81.0, 0.0], 1.45, Rgba(204, 219, 77, 210));
+    for (x, half_height) in [(14.0, 15.5), (34.0, 17.5), (55.0, 15.0), (72.0, 10.0)] {
+        scene.line(
+            [x, -half_height],
+            [x, half_height],
+            0.72,
+            Rgba(21, 92, 47, 175),
+        );
+    }
+    scene.ellipse(
+        [78.0, 0.0],
+        [5.0, 8.5],
+        0.0,
+        Rgba(87, 189, 69, 150),
+        None,
+    );
+}
+
 fn draw_thorax(scene: &mut SceneBuilder, skin: Skin, time: f32, colors: Palette) {
+    if skin == Skin::Firefly {
+        let glow = if time == 0.0 {
+            0
+        } else {
+            ((time * 3.0).sin().abs() * 14.0) as u8
+        };
+        scene.ellipse(
+            [-31.0, 0.0],
+            [20.0, 17.0],
+            0.0,
+            colors.thorax_core,
+            Some((colors.thorax_edge, 1.5)),
+        );
+        scene.ellipse(
+            [-36.0, 0.0],
+            [6.5, 7.5],
+            0.0,
+            Rgba(67, 47, 32, 230),
+            Some((Rgba(239, 158_u8.saturating_add(glow), 51, 210), 0.7)),
+        );
+        scene.ellipse(
+            [-7.0, 0.0],
+            [15.5, 15.5],
+            0.0,
+            Rgba(38, 121_u8.saturating_add(glow), 60, 250),
+            Some((colors.highlight, 1.1)),
+        );
+        scene.line(
+            [-16.0, -9.0],
+            [0.0, 9.0],
+            0.8,
+            Rgba(176, 215, 69, 135),
+        );
+        return;
+    }
     let shell = cubic_loop(
         &[
             ([-45.0, 0.0], [-42.0, -20.0], [-15.0, -24.0], [3.0, -12.0]),
@@ -836,7 +850,51 @@ fn draw_thorax(scene: &mut SceneBuilder, skin: Skin, time: f32, colors: Palette)
     }
 }
 
-fn draw_head(scene: &mut SceneBuilder, behavior: Behavior, time: f32, colors: Palette) {
+fn draw_head(
+    scene: &mut SceneBuilder,
+    skin: Skin,
+    behavior: Behavior,
+    time: f32,
+    colors: Palette,
+) {
+    if skin == Skin::Firefly {
+        scene.ellipse(
+            [-58.0, 0.0],
+            [13.0, 12.5],
+            0.0,
+            colors.head_core,
+            Some((colors.head_rim, 1.25)),
+        );
+        for side in [-1.0_f32, 1.0] {
+            let pulse = if behavior == Behavior::Rest {
+                0
+            } else {
+                ((time * 4.1 + side).sin().abs() * 18.0) as u8
+            };
+            scene.ellipse(
+                [-62.0, side * 7.0],
+                [6.2, 5.8],
+                side * 0.08,
+                Rgba(202, 75_u8.saturating_add(pulse), 31, 255),
+                Some((colors.eye_rim, 0.95)),
+            );
+            scene.ellipse(
+                [-64.0, side * 8.0],
+                [1.5, 1.2],
+                0.0,
+                Rgba(255, 203, 92, 225),
+                None,
+            );
+        }
+        scene.ellipse(
+            [-69.0, 0.0],
+            [3.0, 2.2],
+            0.0,
+            Rgba(215, 139, 40, 235),
+            None,
+        );
+        return;
+    }
     scene.ellipse(
         [-60.0, 0.0],
         [18.0, 18.0],
@@ -1270,7 +1328,7 @@ pub fn run_firefly_visual_self_test() -> FireflyVisualSelfTest {
     .all(|behavior| wing_panel_count(&pet_scene(Skin::Firefly, behavior, 0.2, 0.0, false)) == 0);
     let air_wings_deployed = [Behavior::PreEscape, Behavior::Flight, Behavior::Landing]
         .into_iter()
-        .all(|behavior| wing_panel_count(&pet_scene(Skin::Firefly, behavior, 0.2, 0.0, false)) == 4);
+        .all(|behavior| wing_panel_count(&pet_scene(Skin::Firefly, behavior, 0.2, 0.0, false)) == 2);
 
     let mut result = FireflyVisualSelfTest {
         passed: false,
@@ -1305,7 +1363,10 @@ pub fn run_firefly_visual_self_test() -> FireflyVisualSelfTest {
         if red > 145 && red > green.saturating_add(35) && red > blue.saturating_add(20) {
             result.red_eye_pixels += 1;
         }
-        if green > 145 && blue > 105 && green > red.saturating_add(20) {
+        if green > 130
+            && green > red.saturating_add(35)
+            && green > blue.saturating_add(25)
+        {
             result.lantern_pixels += 1;
         }
         if alpha >= 190 && (green > 105 || blue > 130) {
@@ -1334,7 +1395,7 @@ fn wing_panel_count(scene: &[Primitive]) -> usize {
         .filter(|primitive| {
             matches!(
                 primitive,
-                Primitive::Polygon { fill, .. } if fill.3 == 70
+                Primitive::Polygon { fill, .. } if fill.3 == 82
             )
         })
         .count()

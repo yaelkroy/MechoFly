@@ -456,6 +456,7 @@ impl eframe::App for MechoFlyApp {
         });
         let mut held = ctx.input(|input| input.pointer.primary_down());
         let mut cursor_position = None;
+        let mut cursor_over_pet = false;
         #[cfg(windows)]
         if let Some(events) = self
             .desktop_pet
@@ -470,6 +471,7 @@ impl eframe::App for MechoFlyApp {
             screen_size = overlay.screen_size();
             held = events.dragging;
             cursor_position = events.cursor_position;
+            cursor_over_pet = events.hovered;
             if let Some(position) = events.position {
                 self.pet.screen_position = position;
             }
@@ -491,7 +493,11 @@ impl eframe::App for MechoFlyApp {
             })
             .unwrap_or(0.0);
         self.session
-            .set_cursor_loom_strength(cursor_loom_strength);
+            .set_cursor_loom_strength(if cursor_over_pet {
+                1.0
+            } else {
+                cursor_loom_strength
+            });
         self.pet.advance(
             elapsed.as_secs_f32(),
             self.display_behavior(),
