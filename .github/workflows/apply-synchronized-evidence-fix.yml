@@ -1,0 +1,933 @@
+name: Apply synchronized Windows evidence repair
+
+on:
+  push:
+    branches: ["feat/original-video-parity-rust-v5"]
+    paths: [".github/workflows/apply-synchronized-evidence-fix.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Apply exact repair
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def read(path: str) -> str:
+              return Path(path).read_text(encoding="utf-8")
+
+          def write(path: str, text: str) -> None:
+              Path(path).write_text(text, encoding="utf-8", newline="\n")
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              text = read(path)
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one exact match, found {count}: {old[:100]!r}")
+              write(path, text.replace(old, new, 1))
+
+          def replace_regex(path: str, pattern: str, replacement: str) -> None:
+              text = read(path)
+              updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one regex match, found {count}: {pattern!r}")
+              write(path, updated)
+
+          desktop = "crates/mechofly-app/src/desktop_pet.rs"
+          replace_once(
+              desktop,
+              "const HIT_ALPHA_THRESHOLD: u8 = 12;\n",
+              "const HIT_ALPHA_THRESHOLD: u8 = 12;\nconst EVIDENCE_HOLD_MESSAGE: u32 = 0x804D;\n",
+          )
+          replace_once(
+              desktop,
+              "    pub hovered: bool,\n    pub position: Option<Pos2>,\n",
+              "    pub hovered: bool,\n    pub evidence_hold: bool,\n    pub position: Option<Pos2>,\n",
+          )
+          replace_once(
+              desktop,
+              "    interacted: AtomicBool,\n    dragging: Cell<bool>,\n",
+              "    interacted: AtomicBool,\n    evidence_hold: AtomicBool,\n    dragging: Cell<bool>,\n",
+          )
+          replace_once(
+              desktop,
+              "            interacted: AtomicBool::new(false),\n            dragging: Cell::new(false),\n",
+              "            interacted: AtomicBool::new(false),\n            evidence_hold: AtomicBool::new(false),\n            dragging: Cell::new(false),\n",
+          )
+          replace_once(
+              desktop,
+              "            hovered: self.cursor_hits_pet(),\n            position,\n",
+              "            hovered: self.cursor_hits_pet(),\n            evidence_hold: self.shared.evidence_hold.load(Ordering::Acquire),\n            position,\n",
+          )
+          replace_once(
+              desktop,
+              "        match message {\n            WM_HOTKEY => {\n",
+              "        match message {\n            EVIDENCE_HOLD_MESSAGE => {\n                shared\n                    .evidence_hold\n                    .store(wparam != 0, Ordering::Release);\n                return 0;\n            }\n            WM_HOTKEY => {\n",
+          )
+
+          app = "crates/mechofly-app/src/app.rs"
+          replace_once(
+              app,
+              "    accumulator: Duration,\n    seed: u64,\n",
+              "    accumulator: Duration,\n    evidence_hold: bool,\n    seed: u64,\n",
+          )
+          replace_once(
+              app,
+              "            accumulator: Duration::ZERO,\n            seed,\n",
+              "            accumulator: Duration::ZERO,\n            evidence_hold: false,\n            seed,\n",
+          )
+          replace_once(
+              app,
+              '''        self.accumulator += elapsed;
+        let mut steps = 0;
+        while self.accumulator >= MODEL_INTERVAL && steps < MAX_CATCH_UP_STEPS {
+            self.session.step();
+            self.accumulator -= MODEL_INTERVAL;
+            steps += 1;
+            if self.session.engine.state.frame.is_multiple_of(90) {
+                self.select_policy_action();
+            }
+        }
+        if steps == MAX_CATCH_UP_STEPS && self.accumulator >= MODEL_INTERVAL {
+            self.accumulator = Duration::ZERO;
+            self.session.runtime_warning = Some(CATCHUP_WARNING.to_owned());
+        } else if self.session.runtime_warning.as_deref() == Some(CATCHUP_WARNING) {
+            self.session.runtime_warning = None;
+        }
+''',
+              '''        let mut steps = 0;
+        if self.evidence_hold {
+            self.accumulator = Duration::ZERO;
+        } else {
+            self.accumulator += elapsed;
+            while self.accumulator >= MODEL_INTERVAL && steps < MAX_CATCH_UP_STEPS {
+                self.session.step();
+                self.accumulator -= MODEL_INTERVAL;
+                steps += 1;
+                if self.session.engine.state.frame.is_multiple_of(90) {
+                    self.select_policy_action();
+                }
+            }
+        }
+        if !self.evidence_hold
+            && steps == MAX_CATCH_UP_STEPS
+            && self.accumulator >= MODEL_INTERVAL
+        {
+            self.accumulator = Duration::ZERO;
+            self.session.runtime_warning = Some(CATCHUP_WARNING.to_owned());
+        } else if self.session.runtime_warning.as_deref() == Some(CATCHUP_WARNING) {
+            self.session.runtime_warning = None;
+        }
+''',
+          )
+          replace_once(
+              app,
+              "            cursor_over_pet = events.hovered;\n            if let Some(position) = events.position {\n",
+              "            cursor_over_pet = events.hovered;\n            self.evidence_hold = events.evidence_hold;\n            if let Some(position) = events.position {\n",
+          )
+          replace_once(
+              app,
+              '''        self.pet.advance(
+            elapsed.as_secs_f32(),
+''',
+              '''        let presentation_elapsed = if self.evidence_hold {
+            Duration::ZERO
+        } else {
+            elapsed
+        };
+        self.pet.advance(
+            presentation_elapsed.as_secs_f32(),
+''',
+          )
+          replace_once(
+              app,
+              '''        if self.live_brain.open {
+            let behavior = authoritative_display_behavior(self.session.engine.state.behavior);
+            let commands = {
+                let live_brain = &mut self.live_brain;
+                let session = &self.session;
+                let source_identity = &self.source_identity;
+''',
+              '''        if self.live_brain.open {
+            let behavior = authoritative_display_behavior(self.session.engine.state.behavior);
+            let skin = self.skin;
+            let title = neural_viewport_title(
+                skin,
+                "Live Brain",
+                self.evidence_hold,
+                self.session.last_summary.frame,
+            );
+            let commands = {
+                let live_brain = &mut self.live_brain;
+                let session = &self.session;
+                let source_identity = &self.source_identity;
+''',
+          )
+          replace_once(
+              app,
+              '.with_title("MechoFly Prism — Live Brain")',
+              ".with_title(title)",
+          )
+          replace_once(
+              app,
+              '''                    |brain_ui, _class| {
+                        if brain_ui.input(|input| input.viewport().close_requested()) {
+                            live_brain.open = false;
+                        }
+                        live_brain.draw(brain_ui, session, behavior, source_identity)
+                    },
+''',
+              '''                    |brain_ui, _class| {
+                        brain_ui.ctx().request_repaint();
+                        if brain_ui.input(|input| input.viewport().close_requested()) {
+                            live_brain.open = false;
+                        }
+                        live_brain.draw(brain_ui, session, behavior, skin, source_identity)
+                    },
+''',
+          )
+          replace_once(
+              app,
+              '''        if self.lab.open {
+            let commands = {
+                let lab = &mut self.lab;
+                let session = &self.session;
+                let policy = &self.policy;
+                let skin = self.skin;
+                let source_identity = &self.source_identity;
+''',
+              '''        if self.lab.open {
+            let skin = self.skin;
+            let title = neural_viewport_title(
+                skin,
+                "Brain Lab",
+                self.evidence_hold,
+                self.session.last_summary.frame,
+            );
+            let commands = {
+                let lab = &mut self.lab;
+                let session = &self.session;
+                let policy = &self.policy;
+                let source_identity = &self.source_identity;
+''',
+          )
+          replace_once(
+              app,
+              '.with_title("MechoFly Prism — Brain Lab")',
+              ".with_title(title)",
+          )
+          replace_once(
+              app,
+              '''                    |lab_ui, _class| {
+                        if lab_ui.input(|input| input.viewport().close_requested()) {
+                            lab.open = false;
+                        }
+                        lab.draw(lab_ui, session, policy, skin, source_identity)
+                    },
+''',
+              '''                    |lab_ui, _class| {
+                        lab_ui.ctx().request_repaint();
+                        if lab_ui.input(|input| input.viewport().close_requested()) {
+                            lab.open = false;
+                        }
+                        lab.draw(lab_ui, session, policy, skin, source_identity)
+                    },
+''',
+          )
+          replace_once(
+              app,
+              '''pub(crate) const fn authoritative_display_behavior(neural_behavior: Behavior) -> Behavior {
+    neural_behavior
+}
+''',
+              '''fn neural_viewport_title(
+    skin: Skin,
+    panel: &str,
+    evidence_hold: bool,
+    frame: u64,
+) -> String {
+    if evidence_hold {
+        format!("{} — {panel} — frame {frame:08}", skin.label())
+    } else {
+        format!("{} — {panel}", skin.label())
+    }
+}
+
+pub(crate) const fn authoritative_display_behavior(neural_behavior: Behavior) -> Behavior {
+    neural_behavior
+}
+''',
+          )
+
+          live = "crates/mechofly-app/src/live_brain.rs"
+          replace_once(
+              live,
+              "use crate::{app::RuntimeSourceIdentity, runtime::SimulationSession};\n",
+              "use crate::{app::RuntimeSourceIdentity, pet::Skin, runtime::SimulationSession};\n",
+          )
+          replace_once(
+              live,
+              '''        behavior: Behavior,
+        source_identity: &RuntimeSourceIdentity,
+''',
+              '''        behavior: Behavior,
+        skin: Skin,
+        source_identity: &RuntimeSourceIdentity,
+''',
+          )
+          replace_once(
+              live,
+              'egui::RichText::new("MECHOFLY PRISM  —  LIVE BRAIN")',
+              'egui::RichText::new(format!("{}  —  LIVE BRAIN", skin.label().to_ascii_uppercase()))',
+          )
+
+          brain = "crates/mechofly-app/src/brain_lab.rs"
+          replace_once(
+              brain,
+              'egui::RichText::new("MECHOFLY PRISM  —  BRAIN LAB")',
+              'egui::RichText::new(format!("{}  —  BRAIN LAB", skin.label().to_ascii_uppercase()))',
+          )
+
+          smoke = "tools/Test-Windows-GuiStartup.ps1"
+          replace_once(
+              smoke,
+              "using System.Collections.Generic;\nusing System.Runtime.InteropServices;\n",
+              "using System.Collections.Generic;\nusing System.Drawing;\nusing System.Runtime.InteropServices;\n",
+          )
+          replace_once(
+              smoke,
+              '''        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hwnd);
+''',
+              '''        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hwnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetWindowPos(
+            IntPtr hwnd,
+            IntPtr insertAfter,
+            int x,
+            int y,
+            int width,
+            int height,
+            uint flags);
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmFlush();
+''',
+          )
+          replace_once(
+              smoke,
+              '''        public static bool Activate(long handle)
+        {
+            return SetForegroundWindow(new IntPtr(handle));
+        }
+''',
+              '''        public static bool Activate(long handle)
+        {
+            return SetForegroundWindow(new IntPtr(handle));
+        }
+
+        public static bool SetCaptureLayer(long handle, bool topmost)
+        {
+            const uint NoSize = 0x0001;
+            const uint NoMove = 0x0002;
+            const uint NoActivate = 0x0010;
+            const uint ShowWindow = 0x0040;
+            IntPtr insertAfter = topmost ? new IntPtr(-1) : new IntPtr(1);
+            return SetWindowPos(
+                new IntPtr(handle),
+                insertAfter,
+                0,
+                0,
+                0,
+                0,
+                NoSize | NoMove | NoActivate | ShowWindow);
+        }
+
+        public static bool FlushComposition()
+        {
+            return DwmFlush() == 0;
+        }
+''',
+          )
+          replace_once(
+              smoke,
+              '''        public static bool PostHotkey(long handle, int hotkeyId)
+        {
+            const uint HotkeyMessage = 0x0312;
+            return PostMessage(
+                new IntPtr(handle),
+                HotkeyMessage,
+                new UIntPtr((uint)hotkeyId),
+                IntPtr.Zero);
+        }
+''',
+              '''        public static bool PostHotkey(long handle, int hotkeyId)
+        {
+            const uint HotkeyMessage = 0x0312;
+            return PostMessage(
+                new IntPtr(handle),
+                HotkeyMessage,
+                new UIntPtr((uint)hotkeyId),
+                IntPtr.Zero);
+        }
+
+        public static bool PostEvidenceHold(long handle)
+        {
+            const uint EvidenceHoldMessage = 0x804D;
+            return PostMessage(
+                new IntPtr(handle),
+                EvidenceHoldMessage,
+                new UIntPtr(1),
+                IntPtr.Zero);
+        }
+''',
+          )
+          replace_once(
+              smoke,
+              '''        public static bool Print(long handle, IntPtr targetDeviceContext)
+        {
+            const uint RenderFullContent = 2;
+            return PrintWindow(
+                new IntPtr(handle),
+                targetDeviceContext,
+                RenderFullContent);
+        }
+''',
+              '''        public static bool Print(long handle, IntPtr targetDeviceContext)
+        {
+            const uint RenderFullContent = 2;
+            return PrintWindow(
+                new IntPtr(handle),
+                targetDeviceContext,
+                RenderFullContent);
+        }
+
+        public static WindowInfo Current(long handle)
+        {
+            IntPtr hwnd = new IntPtr(handle);
+            if (!IsWindowVisible(hwnd))
+            {
+                return null;
+            }
+            Rect rect;
+            if (!GetWindowRect(hwnd, out rect))
+            {
+                return null;
+            }
+            int width = rect.Right - rect.Left;
+            int height = rect.Bottom - rect.Top;
+            if (width < 32 || height < 32)
+            {
+                return null;
+            }
+            StringBuilder title = new StringBuilder(512);
+            StringBuilder className = new StringBuilder(256);
+            GetWindowText(hwnd, title, title.Capacity);
+            GetClassName(hwnd, className, className.Capacity);
+            return new WindowInfo
+            {
+                handle = handle,
+                x = rect.Left,
+                y = rect.Top,
+                width = width,
+                height = height,
+                title = title.ToString(),
+                class_name = className.ToString()
+            };
+        }
+
+        public static int CountDifferentPixels(
+            string firstPath,
+            string secondPath,
+            int threshold)
+        {
+            using (Bitmap first = new Bitmap(firstPath))
+            using (Bitmap second = new Bitmap(secondPath))
+            {
+                if (first.Width != second.Width || first.Height != second.Height)
+                {
+                    return -1;
+                }
+                int different = 0;
+                for (int y = 0; y < first.Height; y++)
+                {
+                    for (int x = 0; x < first.Width; x++)
+                    {
+                        Color left = first.GetPixel(x, y);
+                        Color right = second.GetPixel(x, y);
+                        int delta = Math.Abs(left.R - right.R)
+                            + Math.Abs(left.G - right.G)
+                            + Math.Abs(left.B - right.B);
+                        if (delta > threshold)
+                        {
+                            different++;
+                        }
+                    }
+                }
+                return different;
+            }
+        }
+''',
+          )
+
+          new_capture = r'''function Save-DesktopRectangle {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int] $Left,
+
+        [Parameter(Mandatory = $true)]
+        [int] $Top,
+
+        [Parameter(Mandatory = $true)]
+        [int] $Width,
+
+        [Parameter(Mandatory = $true)]
+        [int] $Height,
+
+        [Parameter(Mandatory = $true)]
+        [string] $LiteralPath
+    )
+
+    $Bitmap = New-Object System.Drawing.Bitmap($Width, $Height)
+    $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
+    try {
+        $Graphics.CopyFromScreen(
+            $Left,
+            $Top,
+            0,
+            0,
+            (New-Object System.Drawing.Size($Width, $Height)),
+            [System.Drawing.CopyPixelOperation]::SourceCopy)
+        $Bitmap.Save(
+            $LiteralPath,
+            [System.Drawing.Imaging.ImageFormat]::Png)
+    }
+    finally {
+        $Graphics.Dispose()
+        $Bitmap.Dispose()
+    }
+}
+
+function Save-WindowCapture {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object] $Window,
+
+        [Parameter(Mandatory = $true)]
+        [string] $LiteralPath
+    )
+
+    $Window = [MechoFly.RuntimeSmoke.WindowProbe]::Current(
+        [int64]$Window.handle)
+    if ($null -eq $Window) {
+        throw 'The evidence window disappeared before capture.'
+    }
+
+    $CaptureMethod = 'desktop-composition-current-rect'
+    $CaptureWidth = 0
+    $CaptureHeight = 0
+    $ForegroundDifferencePixels = 0
+    if ([string]$Window.class_name -eq 'Window Class') {
+        $CaptureMethod = 'print-window-full-content'
+        $CaptureWidth = [int]$Window.width
+        $CaptureHeight = [int]$Window.height
+        $Bitmap = New-Object System.Drawing.Bitmap(
+            $CaptureWidth,
+            $CaptureHeight)
+        $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
+        try {
+            $DeviceContext = $Graphics.GetHdc()
+            try {
+                $Printed = [MechoFly.RuntimeSmoke.WindowProbe]::Print(
+                    [int64]$Window.handle,
+                    $DeviceContext)
+            }
+            finally {
+                $Graphics.ReleaseHdc($DeviceContext)
+            }
+            if (-not $Printed) {
+                throw ('Full-content window capture failed: ' +
+                    [string]$Window.title)
+            }
+            $Bitmap.Save(
+                $LiteralPath,
+                [System.Drawing.Imaging.ImageFormat]::Png)
+        }
+        finally {
+            $Graphics.Dispose()
+            $Bitmap.Dispose()
+        }
+    }
+    else {
+        $CaptureMethod = 'desktop-composition-isolated-foreground'
+        $Virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
+        $BackgroundPath = $LiteralPath + '.background.png'
+        try {
+            if (-not [MechoFly.RuntimeSmoke.WindowProbe]::SetCaptureLayer(
+                [int64]$Window.handle,
+                $false)) {
+                throw 'Could not demote the layered pet for background isolation.'
+            }
+            [void][MechoFly.RuntimeSmoke.WindowProbe]::FlushComposition()
+            Start-Sleep -Milliseconds 80
+
+            $Left = [Math]::Max($Virtual.Left, [int]$Window.x)
+            $Top = [Math]::Max($Virtual.Top, [int]$Window.y)
+            $Right = [Math]::Min(
+                $Virtual.Right,
+                [int]$Window.x + [int]$Window.width)
+            $Bottom = [Math]::Min(
+                $Virtual.Bottom,
+                [int]$Window.y + [int]$Window.height)
+            $CaptureWidth = $Right - $Left
+            $CaptureHeight = $Bottom - $Top
+            if ($CaptureWidth -le 0 -or $CaptureHeight -le 0) {
+                throw 'The layered pet was outside the virtual screen.'
+            }
+            Save-DesktopRectangle `
+                -Left $Left `
+                -Top $Top `
+                -Width $CaptureWidth `
+                -Height $CaptureHeight `
+                -LiteralPath $BackgroundPath
+
+            if (-not [MechoFly.RuntimeSmoke.WindowProbe]::SetCaptureLayer(
+                [int64]$Window.handle,
+                $true)) {
+                throw 'Could not promote the layered pet for foreground capture.'
+            }
+            [void][MechoFly.RuntimeSmoke.WindowProbe]::FlushComposition()
+            Start-Sleep -Milliseconds 80
+            $Window = [MechoFly.RuntimeSmoke.WindowProbe]::Current(
+                [int64]$Window.handle)
+            if ($null -eq $Window) {
+                throw 'The layered pet disappeared after foreground promotion.'
+            }
+
+            $Left = [Math]::Max($Virtual.Left, [int]$Window.x)
+            $Top = [Math]::Max($Virtual.Top, [int]$Window.y)
+            $Right = [Math]::Min(
+                $Virtual.Right,
+                [int]$Window.x + [int]$Window.width)
+            $Bottom = [Math]::Min(
+                $Virtual.Bottom,
+                [int]$Window.y + [int]$Window.height)
+            $CaptureWidth = $Right - $Left
+            $CaptureHeight = $Bottom - $Top
+            Save-DesktopRectangle `
+                -Left $Left `
+                -Top $Top `
+                -Width $CaptureWidth `
+                -Height $CaptureHeight `
+                -LiteralPath $LiteralPath
+            $ForegroundDifferencePixels =
+                [MechoFly.RuntimeSmoke.WindowProbe]::CountDifferentPixels(
+                    $BackgroundPath,
+                    $LiteralPath,
+                    18)
+            if ($ForegroundDifferencePixels -lt 500) {
+                throw (
+                    'The layered-pet capture did not contain a visible ' +
+                    'foreground. differing_pixels=' +
+                    [string]$ForegroundDifferencePixels)
+            }
+        }
+        finally {
+            Remove-Item `
+                -LiteralPath $BackgroundPath `
+                -Force `
+                -ErrorAction SilentlyContinue
+            [void][MechoFly.RuntimeSmoke.WindowProbe]::SetCaptureLayer(
+                [int64]$Window.handle,
+                $true)
+            [void][MechoFly.RuntimeSmoke.WindowProbe]::FlushComposition()
+        }
+    }
+
+    return [pscustomobject][ordered]@{
+        path = $LiteralPath
+        sha256 = (Get-FileHash `
+            -LiteralPath $LiteralPath `
+            -Algorithm SHA256).Hash
+        width = $CaptureWidth
+        height = $CaptureHeight
+        capture_method = $CaptureMethod
+        foreground_difference_pixels = $ForegroundDifferencePixels
+        full_window = (
+            $CaptureWidth -eq [int]$Window.width -and
+            $CaptureHeight -eq [int]$Window.height)
+        source_window = $Window
+    }
+}'''
+          replace_regex(
+              smoke,
+              r"function Save-WindowCapture \{.*?\n\}\n\nfunction Invoke-GuiCase \{",
+              new_capture + "\n\nfunction Invoke-GuiCase {",
+          )
+          replace_once(
+              smoke,
+              '''        [Parameter(Mandatory = $true)]
+        [string[]] $Arguments,
+
+        [int] $StimulusHotkeyId = 0,
+''',
+              '''        [Parameter(Mandatory = $true)]
+        [string[]] $Arguments,
+
+        [Parameter(Mandatory = $true)]
+        [string] $ExpectedSkinLabel,
+
+        [int] $StimulusHotkeyId = 0,
+''',
+          )
+          replace_once(
+              smoke,
+              '''            $Windows = @([MechoFly.RuntimeSmoke.WindowProbe]::ForProcess(
+                [uint32]$Process.Id))
+        }
+
+        $Captures = New-Object System.Collections.Generic.List[object]
+''',
+              '''            $Windows = @([MechoFly.RuntimeSmoke.WindowProbe]::ForProcess(
+                [uint32]$Process.Id))
+        }
+
+        $PetWindow = @($Windows | Where-Object {
+            [string]$_.title -eq 'MechoFly desktop pet'
+        }) | Select-Object -First 1
+        $EvidenceHoldPosted =
+            [MechoFly.RuntimeSmoke.WindowProbe]::PostEvidenceHold(
+                [int64]$PetWindow.handle)
+        if (-not $EvidenceHoldPosted) {
+            throw 'Could not place the model and presentation in evidence hold.'
+        }
+        $EvidenceSettleMilliseconds = 500
+        Start-Sleep -Milliseconds $EvidenceSettleMilliseconds
+        $Process.Refresh()
+        if ($Process.HasExited) {
+            throw 'MechoFly exited while entering synchronized evidence hold.'
+        }
+        $Windows = @([MechoFly.RuntimeSmoke.WindowProbe]::ForProcess(
+            [uint32]$Process.Id))
+        $NeuralWindows = @($Windows | Where-Object {
+            [string]$_.title -like '*Live Brain*' -or
+            [string]$_.title -like '*Brain Lab*'
+        })
+        if ($NeuralWindows.Count -ne 2) {
+            throw ('Expected exactly two neural evidence windows; found ' +
+                [string]$NeuralWindows.Count + '.')
+        }
+        $ExpectedSkinTitlePassed = @($NeuralWindows | Where-Object {
+            [string]$_.title -notlike ($ExpectedSkinLabel + ' — *')
+        }).Count -eq 0
+        if (-not $ExpectedSkinTitlePassed) {
+            throw ('A neural window title does not match skin ' +
+                $ExpectedSkinLabel + '.')
+        }
+        $NeuralFrames = @($NeuralWindows | ForEach-Object {
+            $Match = [regex]::Match(
+                [string]$_.title,
+                ' — frame (?<frame>[0-9]{8})$')
+            if (-not $Match.Success) {
+                throw ('Neural evidence title has no frozen frame: ' +
+                    [string]$_.title)
+            }
+            [uint64]$Match.Groups['frame'].Value
+        })
+        $UniqueNeuralFrames = @($NeuralFrames | Sort-Object -Unique)
+        if ($UniqueNeuralFrames.Count -ne 1) {
+            throw ('Neural evidence windows are not frame-synchronized: ' +
+                ($NeuralFrames -join ', '))
+        }
+        $NeuralCaptureFrame = [uint64]$UniqueNeuralFrames[0]
+
+        $Captures = New-Object System.Collections.Generic.List[object]
+''',
+          )
+          replace_once(
+              smoke,
+              '''        $Result = [ordered]@{
+            schema_version = 2
+''',
+              '''        $PetCaptures = @($Captures | Where-Object {
+            [string]$_.source_window.class_name -eq
+                'MechoFlyDesktopPetLayeredWindowV1'
+        })
+        if ($PetCaptures.Count -ne 1 -or
+            [int]$PetCaptures[0].foreground_difference_pixels -lt 500) {
+            throw 'The normal-scale pet foreground was not captured exactly once.'
+        }
+
+        $Result = [ordered]@{
+            schema_version = 3
+''',
+          )
+          replace_once(
+              smoke,
+              '''            stimulus_settle_milliseconds = $StimulusSettleMilliseconds
+            process_id = $Process.Id
+''',
+              '''            stimulus_settle_milliseconds = $StimulusSettleMilliseconds
+            evidence_hold_message = '0x804D'
+            evidence_hold_posted = $EvidenceHoldPosted
+            evidence_settle_milliseconds = $EvidenceSettleMilliseconds
+            expected_skin_label = $ExpectedSkinLabel
+            expected_skin_title_passed = $ExpectedSkinTitlePassed
+            neural_capture_frame = $NeuralCaptureFrame
+            neural_capture_frame_synchronized = $true
+            process_id = $Process.Id
+''',
+          )
+          replace_once(
+              smoke,
+              '''            -Arguments @('--skin', 'drosophila', '--compute', 'cpu', '--brain-lab', '--reduced-motion') `
+            -StimulusHotkeyId 0x4D05 `
+''',
+              '''            -Arguments @('--skin', 'drosophila', '--compute', 'cpu', '--brain-lab', '--reduced-motion') `
+            -ExpectedSkinLabel 'Drosophila Natural' `
+            -StimulusHotkeyId 0x4D05 `
+''',
+          )
+          replace_once(
+              smoke,
+              '''            -Arguments @('--skin', 'firefly', '--compute', 'auto', '--brain-lab') `
+            -StimulusHotkeyId 0x4D03 `
+''',
+              '''            -Arguments @('--skin', 'firefly', '--compute', 'auto', '--brain-lab') `
+            -ExpectedSkinLabel 'MechoFly Prism' `
+            -StimulusHotkeyId 0x4D03 `
+''',
+          )
+          replace_once(
+              smoke,
+              '''$FullWindowCaptures = @($AllCaptures | Where-Object {
+    -not [bool]$_.full_window
+}).Count -eq 0
+if (-not $FullWindowCaptures) {
+    throw 'At least one GUI evidence image was clipped.'
+}
+
+Write-JsonFile `
+''',
+              '''$FullWindowCaptures = @($AllCaptures | Where-Object {
+    -not [bool]$_.full_window
+}).Count -eq 0
+if (-not $FullWindowCaptures) {
+    throw 'At least one GUI evidence image was clipped.'
+}
+$PetForegroundCaptured = @($AllCaptures | Where-Object {
+    [string]$_.source_window.class_name -eq
+        'MechoFlyDesktopPetLayeredWindowV1' -and
+    [int]$_.foreground_difference_pixels -ge 500
+}).Count -eq $Cases.Count
+if (-not $PetForegroundCaptured) {
+    throw 'At least one case lacks an isolated visible pet foreground.'
+}
+$NeuralFramesSynchronized = @($Cases | Where-Object {
+    -not [bool]$_.neural_capture_frame_synchronized
+}).Count -eq 0
+$SkinTitlesMatched = @($Cases | Where-Object {
+    -not [bool]$_.expected_skin_title_passed
+}).Count -eq 0
+
+Write-JsonFile `
+''',
+          )
+          replace_once(
+              smoke,
+              '''        schema_version = 2
+        status = 'PASS'
+        cases = @($Cases)
+        normal_scale_desktop_capture = $true
+        comprehensive_neural_window_capture = $true
+        full_window_captures = $FullWindowCaptures
+''',
+              '''        schema_version = 3
+        status = 'PASS'
+        cases = @($Cases)
+        normal_scale_desktop_capture = $true
+        pet_foreground_captured = $PetForegroundCaptured
+        comprehensive_neural_window_capture = $true
+        neural_frames_synchronized = $NeuralFramesSynchronized
+        skin_titles_matched = $SkinTitlesMatched
+        full_window_captures = $FullWindowCaptures
+''',
+          )
+
+          workflow = ".github/workflows/windows.yml"
+          replace_once(
+              workflow,
+              '''      - name: Exercise real Windows GUI startup boundary
+        shell: powershell
+        run: |
+          .\\tools\\Test-Windows-GuiStartup.ps1 `
+            -ExecutablePath .\\host-windows\\bin\\MechoFly.exe `
+            -OutputDirectory .\\artifacts\\runtime-smoke `
+            -ObservationSeconds 12
+''',
+              '''      - name: Exercise real Windows GUI startup boundary
+        shell: powershell
+        run: |
+          .\\tools\\Test-Windows-GuiStartup.ps1 `
+            -ExecutablePath .\\host-windows\\bin\\MechoFly.exe `
+            -OutputDirectory .\\artifacts\\runtime-smoke `
+            -ObservationSeconds 12
+          $summary = Get-Content `
+            -LiteralPath .\\artifacts\\runtime-smoke\\summary.json `
+            -Raw | ConvertFrom-Json
+          if ($summary.schema_version -ne 3) { throw 'GUI evidence receipt schema is stale.' }
+          if ($summary.status -ne 'PASS') { throw 'GUI evidence receipt failed.' }
+          if (-not $summary.pet_foreground_captured) { throw 'Layered pet foreground evidence is absent.' }
+          if (-not $summary.neural_frames_synchronized) { throw 'Neural viewport evidence is not frame-synchronized.' }
+          if (-not $summary.skin_titles_matched) { throw 'Neural viewport titles do not match the active skin.' }
+          if (-not $summary.full_window_captures) { throw 'A GUI evidence image is clipped.' }
+          foreach ($case in @($summary.cases)) {
+            if (-not $case.evidence_hold_posted) { throw 'Evidence hold was not acknowledged.' }
+            if (-not $case.neural_capture_frame_synchronized) { throw 'A GUI case has divergent neural frames.' }
+            $pet = @($case.screenshots | Where-Object {
+              $_.source_window.class_name -eq 'MechoFlyDesktopPetLayeredWindowV1'
+            })
+            if ($pet.Count -ne 1 -or [int]$pet[0].foreground_difference_pixels -lt 500) {
+              throw 'A GUI case lacks an isolated normal-scale pet foreground.'
+            }
+          }
+''',
+          )
+
+          for path in [desktop, app, live, brain, smoke, workflow]:
+              text = read(path)
+              if "ChatGPT" in text or "OpenAI" in text or "Codex" in text:
+                  raise SystemExit(f"{path}: prohibited artifact attribution marker")
+          PY
+      - name: Format and inspect patch
+        shell: bash
+        run: |
+          cargo fmt --all
+          git diff --check
+          git diff --stat
+      - name: Publish repair commit
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm .github/workflows/apply-synchronized-evidence-fix.yml
+          git add \
+            .github/workflows/windows.yml \
+            crates/mechofly-app/src/app.rs \
+            crates/mechofly-app/src/brain_lab.rs \
+            crates/mechofly-app/src/desktop_pet.rs \
+            crates/mechofly-app/src/live_brain.rs \
+            tools/Test-Windows-GuiStartup.ps1
+          git commit -m "Synchronize Windows visual evidence"
+          git push origin HEAD:feat/original-video-parity-rust-v5
