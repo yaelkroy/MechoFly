@@ -164,9 +164,7 @@ impl PetMotion {
 
         self.screen_position +=
             Vec2::angled(self.heading_radians) * self.speed_pixels_per_second * dt;
-        if behavior == Behavior::Landing
-            && self.behavior_age_seconds >= LANDING_COMPLETION_SECONDS
-        {
+        if behavior == Behavior::Landing && self.behavior_age_seconds >= LANDING_COMPLETION_SECONDS {
             self.screen_position.y = bottom;
             self.heading_radians = PI * 0.5;
             self.speed_pixels_per_second = 0.0;
@@ -255,14 +253,7 @@ pub fn run_motion_self_test() -> MotionSelfTest {
     let mut flight_path_pixels = 0.0;
     for _ in 0..72 {
         let before = airborne.screen_position;
-        airborne.advance(
-            1.0 / 60.0,
-            Behavior::Flight,
-            origin,
-            screen,
-            false,
-            None,
-        );
+        airborne.advance(1.0 / 60.0, Behavior::Flight, origin, screen, false, None);
         flight_path_pixels += airborne.screen_position.distance(before);
     }
     let flight_horizontal_pixels = (airborne.screen_position.x - flight_start.x).abs();
@@ -271,14 +262,7 @@ pub fn run_motion_self_test() -> MotionSelfTest {
     airborne.screen_position.y = bottom - 48.0;
     let landing_start_y = airborne.screen_position.y;
     for _ in 0..30 {
-        airborne.advance(
-            1.0 / 60.0,
-            Behavior::Landing,
-            origin,
-            screen,
-            false,
-            None,
-        );
+        airborne.advance(1.0 / 60.0, Behavior::Landing, origin, screen, false, None);
     }
     let landing_descent_pixels = airborne.screen_position.y - landing_start_y;
     let landing_reached_surface = (airborne.screen_position.y - bottom).abs() < 0.01;
@@ -1701,28 +1685,14 @@ mod tests {
         }
         record(&motion, Behavior::PreEscape, elapsed);
         for frame in 1_u32..=240 {
-            motion.advance(
-                1.0 / 60.0,
-                Behavior::Flight,
-                origin,
-                screen,
-                false,
-                None,
-            );
+            motion.advance(1.0 / 60.0, Behavior::Flight, origin, screen, false, None);
             elapsed += 1.0 / 60.0;
             if frame.is_multiple_of(48) {
                 record(&motion, Behavior::Flight, elapsed);
             }
         }
         for _ in 0..30 {
-            motion.advance(
-                1.0 / 60.0,
-                Behavior::Landing,
-                origin,
-                screen,
-                false,
-                None,
-            );
+            motion.advance(1.0 / 60.0, Behavior::Landing, origin, screen, false, None);
             elapsed += 1.0 / 60.0;
         }
         record(&motion, Behavior::Landing, elapsed);
@@ -1732,10 +1702,7 @@ mod tests {
         }
         record(&motion, Behavior::Groom, elapsed);
 
-        for (name, skin) in [
-            ("drosophila", Skin::Drosophila),
-            ("prism", Skin::Firefly),
-        ] {
+        for (name, skin) in [("drosophila", Skin::Drosophila), ("prism", Skin::Firefly)] {
             let mut canvas = desktop_canvas(width, height);
             for (index, sample) in samples.iter().enumerate() {
                 let behavior = match sample.behavior.as_str() {

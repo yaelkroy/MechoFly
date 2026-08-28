@@ -74,6 +74,8 @@ struct SelfTestReceipt {
     two_way_neuron_selection_sync: bool,
     brain_lab_reference_columns: Vec<String>,
     behavior_program_timeline: bool,
+    grooming_program_substates: Vec<String>,
+    grooming_substate_timeline: bool,
     anatomical_context_points: usize,
     anatomical_context_measured: bool,
 }
@@ -195,6 +197,14 @@ pub fn run(path: &Path) -> Result<(), String> {
     live_selection.set_selected_neuron(lab_selection.selected_neuron_index());
     let lab_to_live = live_selection.selected_neuron() == 377;
     let two_way_neuron_selection_sync = live_to_lab && lab_to_live;
+    let grooming_program_substates = [0, 8, 16, 23]
+        .map(crate::brain_lab::grooming_substate_at)
+        .map(|(label, _, _)| label.to_owned())
+        .to_vec();
+    let grooming_substate_timeline = grooming_program_substates
+        .iter()
+        .map(String::as_str)
+        .eq(["PREPARE", "CLEANING STROKE", "LIMB RUB", "RESET"]);
 
     #[cfg(windows)]
     let hotkeys = crate::desktop_pet::run_hotkey_self_test();
@@ -232,6 +242,7 @@ pub fn run(path: &Path) -> Result<(), String> {
             && motion.passed
             && two_dimensional_flight_motion
             && two_way_neuron_selection_sync
+            && grooming_substate_timeline
             && anatomical_context_points == 23_210
         {
             "PASS".to_owned()
@@ -300,6 +311,8 @@ pub fn run(path: &Path) -> Result<(), String> {
             "BOUNDED REPLAY + STIMULATION PREVIEW".to_owned(),
         ],
         behavior_program_timeline: true,
+        grooming_program_substates,
+        grooming_substate_timeline,
         anatomical_context_points,
         anatomical_context_measured: false,
     };

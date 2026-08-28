@@ -773,19 +773,19 @@ fn structural_row(
     let neuron = if show_source { source } else { target };
     let response = ui
         .horizontal(|ui| {
-        ui.colored_label(
-            if weight >= 0 { POSITIVE } else { WARNING },
-            if weight >= 0 { "+" } else { "−" },
-        );
-        ui.monospace(format!(
-            "#{:<7} {:<11}",
-            session.graph.neuron_ids[neuron],
-            role(neuron)
-        ));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.monospace(format!("{:+}", weight));
-        });
-    })
+            ui.colored_label(
+                if weight >= 0 { POSITIVE } else { WARNING },
+                if weight >= 0 { "+" } else { "−" },
+            );
+            ui.monospace(format!(
+                "#{:<7} {:<11}",
+                session.graph.neuron_ids[neuron],
+                role(neuron)
+            ));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.monospace(format!("{:+}", weight));
+            });
+        })
         .response
         .interact(Sense::click());
     if response.hovered() {
@@ -1059,6 +1059,8 @@ fn replay_stimulation_panel(
 }
 
 fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
+    let grooming_phase = (session.engine.state.behavior == mechofly_core::Behavior::Groom)
+        .then(|| grooming_substate_at(session.engine.state.behavior_age_frames));
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.label(
@@ -1066,13 +1068,18 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
                     .strong()
                     .color(INK),
             );
-            ui.label(
-                egui::RichText::new(
-                    "BODY REGION: UNSPECIFIED  ·  AUTHORED GENERIC GRAMMAR  ·  NOT CALIBRATED",
-                )
-                .small()
-                .color(MUTED),
+            let detail = grooming_phase.map_or_else(
+                || {
+                    "BODY REGION: UNSPECIFIED  ·  AUTHORED GENERIC GRAMMAR  ·  NOT CALIBRATED"
+                        .to_owned()
+                },
+                |(substate, cycle, _)| {
+                    format!(
+                        "BODY REGION: UNSPECIFIED  ·  {substate}  ·  CYCLE {cycle:03}  ·  NOT CALIBRATED"
+                    )
+                },
             );
+            ui.label(egui::RichText::new(detail).small().color(MUTED));
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.monospace(format!(
@@ -1086,24 +1093,25 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
     painter.rect_filled(rect, 3, Color32::from_rgb(5, 9, 15));
     painter.rect_stroke(rect, 3, Stroke::new(1.0, GRID), StrokeKind::Inside);
     let segments = match session.engine.state.behavior {
-        mechofly_core::Behavior::Groom => [
-            ("ORIENT", 0.18, ACTUAL),
-            ("FORELEG WIPE", 0.58, VIOLET),
-            ("SETTLE", 0.24, POSITIVE),
+        mechofly_core::Behavior::Groom => vec![
+            ("PREPARE", 0.20, ACTUAL),
+            ("CLEAN STROKE", 0.30, VIOLET),
+            ("LIMB RUB", 0.30, ALTERNATIVE),
+            ("RESET", 0.20, POSITIVE),
         ],
         mechofly_core::Behavior::PreEscape
         | mechofly_core::Behavior::Flight
-        | mechofly_core::Behavior::Landing => [
+        | mechofly_core::Behavior::Landing => vec![
             ("BRACE / JUMP", 0.24, WARNING),
             ("FLIGHT", 0.52, ALTERNATIVE),
             ("LAND / SETTLE", 0.24, POSITIVE),
         ],
-        mechofly_core::Behavior::Walk | mechofly_core::Behavior::Reverse => [
+        mechofly_core::Behavior::Walk | mechofly_core::Behavior::Reverse => vec![
             ("ORIENT", 0.18, ACTUAL),
             ("TRIPOD GAIT", 0.64, POSITIVE),
             ("SETTLE", 0.18, MUTED),
         ],
-        _ => [
+        _ => vec![
             ("STILL", 0.25, MUTED),
             ("NO MOTOR PROGRAM", 0.50, GRID),
             ("STILL", 0.25, MUTED),
@@ -1128,6 +1136,39 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
         );
         x += width;
     }
+    let playhead = match session.engine.state.behavior {
+        mechofly_core::Behavior::Groom => grooming_phase.map_or(0.0, |(_, _, progress)| progress),
+        mechofly_core::Behavior::PreEscape => 0.24
+            * (session.engine.state.behavior_age_frames as f32
+                / (mechofly_core::model::ESCAPE_HOLD_FRAMES + 1) as f32)
+                .clamp(0.0, 1.0),
+        mechofly_core::Behavior::Flight => {
+            0.24
+                + 0.52
+                    * (session.engine.state.behavior_age_frames as f32
+                        / (mechofly_core::model::FLIGHT_HOLD_FRAMES + 1) as f32)
+                        .clamp(0.0, 1.0)
+        }
+        mechofly_core::Behavior::Landing => {
+            0.76
+                + 0.24
+                    * (session.engine.state.behavior_age_frames as f32
+                        / (mechofly_core::model::LANDING_HOLD_FRAMES + 1) as f32)
+                        .clamp(0.0, 1.0)
+        }
+        mechofly_core::Behavior::Walk | mechofly_core::Behavior::Reverse => {
+            (session.engine.state.behavior_age_frames % 60) as f32 / 60.0
+        }
+        _ => 0.0,
+    };
+    let playhead_x = rect.left() + 7.0 + usable * playhead.clamp(0.0, 1.0);
+    painter.line_segment(
+        [
+            Pos2::new(playhead_x, rect.top() + 17.0),
+            Pos2::new(playhead_x, rect.bottom() - 17.0),
+        ],
+        Stroke::new(2.0, INK),
+    );
     painter.text(
         rect.left_bottom() + Vec2::new(7.0, -7.0),
         Align2::LEFT_BOTTOM,
@@ -1135,6 +1176,22 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
         FontId::monospace(9.5),
         MUTED,
     );
+}
+
+pub(crate) fn grooming_substate_at(age_frames: u32) -> (&'static str, u32, f32) {
+    const SUBSTATE_MS: u32 = 250;
+    const CYCLE_MS: u32 = SUBSTATE_MS * 4;
+    let elapsed_ms = age_frames.saturating_mul(mechofly_core::MODEL_STEP_MS);
+    let segment = (elapsed_ms / SUBSTATE_MS) % 4;
+    let label = match segment {
+        0 => "PREPARE",
+        1 => "CLEANING STROKE",
+        2 => "LIMB RUB",
+        _ => "RESET",
+    };
+    let cycle = elapsed_ms / CYCLE_MS;
+    let progress = (elapsed_ms % CYCLE_MS) as f32 / CYCLE_MS as f32;
+    (label, cycle, progress)
 }
 
 fn style_context(ctx: &egui::Context) {
@@ -1829,5 +1886,16 @@ mod tests {
     #[test]
     fn preview_targets_accept_commas_and_whitespace() {
         assert_eq!(parse_targets("3, 7  11\n19"), Ok(vec![3, 7, 11, 19]));
+    }
+
+    #[test]
+    fn grooming_program_advances_through_four_visible_substates() {
+        assert_eq!(grooming_substate_at(0).0, "PREPARE");
+        assert_eq!(grooming_substate_at(8).0, "CLEANING STROKE");
+        assert_eq!(grooming_substate_at(16).0, "LIMB RUB");
+        assert_eq!(grooming_substate_at(23).0, "RESET");
+        let wrapped = grooming_substate_at(31);
+        assert_eq!(wrapped.0, "PREPARE");
+        assert_eq!(wrapped.1, 1);
     }
 }

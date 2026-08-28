@@ -137,11 +137,7 @@ impl SimulationSession {
             self.authored_drive = None;
         }
         if let Some(drive) = self.authored_drive {
-            apply_population_drive(
-                &mut self.sensory_stimulus,
-                drive.population_offset,
-                8_192,
-            );
+            apply_population_drive(&mut self.sensory_stimulus, drive.population_offset, 8_192);
         }
     }
 

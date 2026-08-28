@@ -438,7 +438,10 @@ mod tests {
                     .behavior
                     == expected
             });
-            assert!(reached, "{expected:?} population never reached its motor program");
+            assert!(
+                reached,
+                "{expected:?} population never reached its motor program"
+            );
         }
     }
 

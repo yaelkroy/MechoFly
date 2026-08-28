@@ -200,9 +200,7 @@ impl MechoFlyApp {
             | Behavior::Alert
             | Behavior::PreEscape
             | Behavior::Flight
-            | Behavior::Landing => {
-                self.session.engine.state.behavior
-            }
+            | Behavior::Landing => self.session.engine.state.behavior,
             Behavior::Rest | Behavior::Quiet => match self.current_action {
                 Action::Pause => Behavior::Rest,
                 Action::Explore => Behavior::Walk,
@@ -240,12 +238,7 @@ impl MechoFlyApp {
         }
         for (action, behavior, duration_ms, label) in [
             (HotkeyAction::Groom, Behavior::Groom, 500, "Ctrl+Alt+G"),
-            (
-                HotkeyAction::Reverse,
-                Behavior::Reverse,
-                400,
-                "Ctrl+Alt+B",
-            ),
+            (HotkeyAction::Reverse, Behavior::Reverse, 400, "Ctrl+Alt+B"),
             (HotkeyAction::Walk, Behavior::Walk, 500, "Ctrl+Alt+W"),
         ] {
             if events.hotkey(action) {
