@@ -47,6 +47,7 @@ struct SelfTestReceipt {
     prism_landing_animation_responsive: bool,
     prism_walking_animation_responsive: bool,
     prism_grooming_animation_responsive: bool,
+    prism_wing_state_contract_passed: bool,
     two_dimensional_flight_motion: bool,
     separate_live_brain_and_brain_lab: bool,
     brain_lab_reference_columns: Vec<String>,
@@ -193,6 +194,7 @@ pub fn run(path: &Path) -> Result<(), String> {
         prism_landing_animation_responsive: firefly_visual.landing_pixel_differences > 500,
         prism_walking_animation_responsive: firefly_visual.walking_pixel_differences > 100,
         prism_grooming_animation_responsive: firefly_visual.grooming_pixel_differences > 100,
+        prism_wing_state_contract_passed: firefly_visual.wing_state_contract_passed,
         two_dimensional_flight_motion,
         separate_live_brain_and_brain_lab: true,
         brain_lab_reference_columns: vec![

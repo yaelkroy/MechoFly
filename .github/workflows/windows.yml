@@ -125,6 +125,7 @@ jobs:
           if (-not $receipt.prism_landing_animation_responsive) { throw 'Landing animation did not respond.' }
           if (-not $receipt.prism_walking_animation_responsive) { throw 'Walking animation did not respond.' }
           if (-not $receipt.prism_grooming_animation_responsive) { throw 'Grooming animation did not respond.' }
+          if (-not $receipt.prism_wing_state_contract_passed) { throw 'Ground and air wing states do not match the recording.' }
           if (-not $receipt.two_dimensional_flight_motion) { throw 'Flight remained one-dimensional.' }
           if (-not $receipt.separate_live_brain_and_brain_lab) { throw 'Live Brain and Brain Lab were not separated.' }
           if (@($receipt.brain_lab_reference_columns).Count -ne 4) { throw 'Brain Lab reference columns are incomplete.' }

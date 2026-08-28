@@ -413,6 +413,7 @@ if ($Receipt.status -ne 'PASS' -or -not $Receipt.live_state_unchanged -or
     -not $Receipt.prism_landing_animation_responsive -or
     -not $Receipt.prism_walking_animation_responsive -or
     -not $Receipt.prism_grooming_animation_responsive -or
+    -not $Receipt.prism_wing_state_contract_passed -or
     -not $Receipt.two_dimensional_flight_motion -or
     -not $Receipt.separate_live_brain_and_brain_lab -or
     @($Receipt.brain_lab_reference_columns).Count -ne 4 -or

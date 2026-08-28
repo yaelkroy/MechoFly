@@ -552,6 +552,12 @@ fn draw_contact_shadow(scene: &mut SceneBuilder, behavior: Behavior) {
 }
 
 fn draw_wings(scene: &mut SceneBuilder, behavior: Behavior, time: f32, colors: Palette) {
+    if !matches!(
+        behavior,
+        Behavior::PreEscape | Behavior::Flight | Behavior::Landing
+    ) {
+        return;
+    }
     let intensity = match behavior {
         Behavior::PreEscape => 0.78,
         Behavior::Flight => 1.0,
@@ -1230,6 +1236,7 @@ pub struct FireflyVisualSelfTest {
     pub flight_pixel_differences: usize,
     pub landing_pixel_differences: usize,
     pub walking_pixel_differences: usize,
+    pub wing_state_contract_passed: bool,
 }
 
 impl FireflyVisualSelfTest {
@@ -1253,6 +1260,17 @@ pub fn run_firefly_visual_self_test() -> FireflyVisualSelfTest {
     let landing = render(Behavior::Landing, 0.35);
     let groom = render(Behavior::Groom, 0.35);
     let walk = render(Behavior::Walk, 0.35);
+    let ground_wings_stowed = [
+        Behavior::Rest,
+        Behavior::Walk,
+        Behavior::Reverse,
+        Behavior::Groom,
+    ]
+    .into_iter()
+    .all(|behavior| wing_panel_count(&pet_scene(Skin::Firefly, behavior, 0.2, 0.0, false)) == 0);
+    let air_wings_deployed = [Behavior::PreEscape, Behavior::Flight, Behavior::Landing]
+        .into_iter()
+        .all(|behavior| wing_panel_count(&pet_scene(Skin::Firefly, behavior, 0.2, 0.0, false)) == 4);
 
     let mut result = FireflyVisualSelfTest {
         passed: false,
@@ -1268,6 +1286,7 @@ pub fn run_firefly_visual_self_test() -> FireflyVisualSelfTest {
         flight_pixel_differences: pixel_difference(&flight_first, &flight_later),
         landing_pixel_differences: pixel_difference(&rest, &landing),
         walking_pixel_differences: pixel_difference(&rest, &walk),
+        wing_state_contract_passed: ground_wings_stowed && air_wings_deployed,
     };
     for pixel in rest.as_chunks::<4>().0 {
         let alpha = pixel[3] as u32;
@@ -1304,8 +1323,21 @@ pub fn run_firefly_visual_self_test() -> FireflyVisualSelfTest {
         && result.rest_escape_pixel_differences > 1_000
         && result.grooming_pixel_differences > 100
         && result.landing_pixel_differences > 500
-        && result.walking_pixel_differences > 100;
+        && result.walking_pixel_differences > 100
+        && result.wing_state_contract_passed;
     result
+}
+
+fn wing_panel_count(scene: &[Primitive]) -> usize {
+    scene
+        .iter()
+        .filter(|primitive| {
+            matches!(
+                primitive,
+                Primitive::Polygon { fill, .. } if fill.3 == 70
+            )
+        })
+        .count()
 }
 
 fn pixel_difference(first: &[u8], second: &[u8]) -> usize {
@@ -1423,8 +1455,10 @@ mod tests {
                 }
             }
         }
-        assert!(maximum_x.saturating_sub(minimum_x) >= 210);
-        assert!(maximum_y.saturating_sub(minimum_y) >= 140);
+        let visible_width = maximum_x.saturating_sub(minimum_x);
+        let visible_height = maximum_y.saturating_sub(minimum_y);
+        assert!((150..=230).contains(&visible_width));
+        assert!((70..=140).contains(&visible_height));
     }
 
     #[test]
