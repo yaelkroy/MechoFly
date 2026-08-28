@@ -13,7 +13,7 @@ runtime dependency.
 - The Windows host uses `eframe`/`egui` with `wgpu`. There is no CUDA path and
   no vendor-name allowlist.
 - Drosophila Natural is the repository default. Firefly Lantern is an alternate
-  presentation-only skin and the AI100 machine-profile default.
+  presentation-only skin. AI100 also defaults to Drosophila Natural.
 - A fixed 33 ms model clock is independent of visual repaint timing.
 - Rest has no translation or decorative bob. Walking advances in floating
   point screen coordinates. Escape has authored preparation, flight, and
@@ -25,9 +25,9 @@ runtime dependency.
 - Eight legacy-compatible global hotkeys are handled by the native Win32
   pet window with asynchronous edge-triggered fallback for reserved or
   registration-conflicted chords.
-- The anatomical field contains 23,210 embedded FlyWire-derived soma points as
-  immutable visual context. Modeled neurons are ordinally distributed over
-  that field for presentation and are explicitly not identity-registered.
+- The repository retains 23,210 embedded FlyWire-derived soma points as a
+  validated static reference. The default field draws positions owned by the
+  active modeled graph; no unregistered node receives an anatomical identity.
 
 ## Scientific claim boundary
 

@@ -6,7 +6,7 @@ param(
     [string] $Downloads = (Join-Path $env:USERPROFILE 'Downloads'),
 
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$')]
-    [string] $TargetBranch = 'feat/transparent-pet-dark-brainlab-v3',
+    [string] $TargetBranch = 'feat/legacy-experience-parity-rust-v4',
 
     [ValidatePattern('^(|[0-9a-fA-F]{40})$')]
     [string] $TargetCommit = '',
@@ -36,7 +36,7 @@ $ErrorActionPreference = 'Stop'
 
 $CanonicalRepository = 'https://github.com/yaelkroy/MechoFly.git'
 $ExpectedSetupHash =
-    'E36D77C0B832350EB2A910B6BA7DBBD284552C8064BFF43D0085EEC5FA66B27E'
+    'B4AD029A0BEFF1EF6B28259BA0D805AE7A9565D1F161716DAAAB2C37F3A22B8C'
 $ExpectedCollectorHash =
     'C68FD72520F4961247B60C05E4E163737C54C3D75B414B908251E7BAFA98990D'
 

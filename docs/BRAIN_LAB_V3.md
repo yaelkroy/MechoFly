@@ -1,37 +1,47 @@
-# Brain Lab v3 — Neural Observatory
+# Brain Lab v3 — restored Neural Observatory
 
-Brain Lab v3 uses a dark scientific-workspace visual system. It is deliberately
-distinct from both the earlier navy visualization and the retired warm
-field-notebook prototype. Controls sit beside the evidence they affect, while
-scientific claim and safety boundaries remain continuously visible.
+Brain Lab v3 restores the accepted Rust interface from commit
+`43ba4aa406c5a39f642dace33951fcf10a7c00cf`. The restoration is deliberate:
+the later anatomical-canvas redesign reduced the contrast of modeled activity,
+made the main field appear empty during quiet states, and displaced useful
+controls and evidence.
 
-## Layout
+This is a native Rust MechoFly interface. It is not a port of the upstream
+SceneKit brain window.
 
-- **Top observatory deck:** session, frame, graph size, selected backend,
-  timing, modeled-running status, and the absence of live authority.
+## Default layout
+
+- **Top observatory deck:** session, exact frame, graph size, selected backend,
+  step timing, model-running state, build identity, and the absence of live
+  authority.
 - **Left model-control dock:** skin/session identity, CPU/GPU preference,
   capacity re-evaluation, bounded replay-source selection, and local
   connectome import.
-- **Center evidence surface:** a 23,210-point FlyWire-derived anatomical
-  context behind current modeled activation/spikes, a synchronized selected
-  circuit, an aligned actual-versus-authored filmstrip, provenance cards, or
-  the learning ledger. A five-stage causal strip explains context → model →
-  spikes → behavior → authored pet pose.
-- **Counterfactual composer:** targets, amplitude, duration, frame count,
-  authored purpose, and the immutable preview boundary appear directly above
-  the comparison rather than in an unrelated rail.
-- **Right trust layer:** claim badges, graph identity and digest, AI100 source
-  branch/commit/tree and executable SHA-256, adapter/API, neuron lookup, and
-  the separate software-learning digest. Builds without a complete runtime
-  receipt are labeled as unrecorded development builds. Index/root-ID search
-  and canvas clicks share one selection and expose strongest modeled inbound
-  and outbound connections.
-- **Bottom signal timeline:** exact current spike fraction, stable-scale mean
-  activation, selected-neuron spike marks, behavior state, replay cursor,
-  hovered-frame readout, runtime warning, and the latest user-facing event.
+- **Center population field:** a high-contrast bilateral projection of every
+  displayed modeled population, with activation intensity and current spikes
+  visible even when the model is quiet.
+- **Counterfactual tab:** targets, amplitude, duration, frame count, authored
+  purpose, paired actual/alternative filmstrip, transport, inspection cursor,
+  divergence counts, and the immutable preview receipt.
+- **Right trust layer:** scientific claim badges, graph identity and digest,
+  AI100 branch/commit/tree/executable identity, adapter/API, neuron lookup, and
+  the separate software-learning digest.
+- **Bottom timeline:** retained spike history, current behavior, replay context,
+  runtime warnings, and the latest operator-facing event.
 
-The alternative surface is created only after a bounded preview succeeds. It
-is never presented as a second live model and has no apply or commit action.
+Provenance and learning remain separate tabs so they are available without
+covering the live population view.
+
+## Information rules
+
+The main plot shows positions owned by the active modeled graph. It does not
+scatter unrelated model nodes over anatomical points. The embedded 23,210-point
+FlyWire-derived atlas remains a validated reference asset. Anatomical placement
+would require an explicit root-ID registration; this restored display does not
+infer one.
+
+The alternative surface appears only after a bounded preview succeeds. It is
+never presented as a second live model and has no apply or commit action.
 
 ## Palette and encoding
 
@@ -44,24 +54,13 @@ is never presented as a second live model and has no apply or commit action.
 - warning coral `#FF7470`
 - provenance violet `#A483FF`
 
-Actual and authored-alternative data also differ by labels and mark shape;
-color is never the only channel. Reduced-motion mode removes nonessential pet
-animation without changing model timing, replay, or receipts.
-
-## Anatomical context and modeled registration
-
-The prior synthetic bilateral projection created a generic triangular field
-that did not resemble the accepted legacy brain view. V3 now draws the
-FlyWire-derived soma atlas as faint immutable context and distributes displayed
-model neurons over it with a deterministic ordinal hash. The atlas is labeled
-`NOT SIMULATED`; the overlay is labeled `NO IDENTITY MAPPING`. This makes the
-population and real modeled spike events legible without claiming that a
-synthetic or imported graph node has been anatomically registered when it has
-not.
+Actual and authored-alternative data differ by labels and mark shape as well as
+color. Reduced-motion mode changes pet presentation only; it never changes
+model timing, replay, or receipts.
 
 ## Safety boundary
 
 A valid authored preview targets at most 64 unique neurons, has amplitude in
-`(0, 0.25]`, lasts 33–990 ms, stays under the dosage ceiling, and runs only on
-a full clone of a retained checkpoint. Its receipt records the live digest
+`(0, 0.25]`, lasts 33–990 ms, stays under the dosage ceiling, and runs only
+on a full clone of a retained checkpoint. Its receipt records the live digest
 before and after execution. No Brain Lab control has live hardware authority.

@@ -15,22 +15,25 @@ abdomen, red compound eyes, six articulated legs, and translucent wings.
 
 ## Firefly Lantern
 
-Firefly Lantern is the Rust reinterpretation of the approved legacy
-`neurofly_prism_firefly` / `noctiluca_lantern` appearance: jewel-like emerald
-elytra and thorax, amber pronotum, red-orange compound eyes with glints, a
-segmented chartreuse lantern and halo, six fine articulated legs, long curved
-antennae, and translucent veined flight wings. It is the AI100 machine profile,
-not the repository default.
+Firefly Lantern restores the accepted `43ba4aa…` Rust presentation:
+large emerald elytra, an amber shield, orange eyes, a clearly visible
+chartreuse lantern and halo, six readable legs, antennae, and translucent
+flight wings. It remains optional; Drosophila Natural is also the AI100
+default.
 
 ```powershell
 .\host-windows\Start-MechoFly.ps1 -Skin firefly
 ```
 
-Walking uses floating-point screen position and visibly advances in the
-direction the head faces. Rest has no translation or decorative bob. Flight
-unfolds and animates wings, landing adds presentation-only settling rings, and
-grooming lifts the forelegs without translating the pet. Reduced-motion mode
-removes nonessential animation but does not alter model timing.
+Walking uses floating-point screen position and advances in the direction the
+head faces. Translation and animation phase are elapsed-time based, so 30 Hz,
+60 Hz, 120 Hz, and variable-refresh presentation cover the same distance in
+the same wall-clock time. Rest has no translation or decorative bob; its
+accepted subtle antenna motion remains bounded well below escape-wing motion.
+Flight animates wings, and grooming lifts the forelegs without translating the
+pet.
+Reduced-motion mode removes nonessential animation but does not alter model
+timing.
 
 The Windows host draws either skin into a supersampled premultiplied-alpha
 bitmap and presents it through `UpdateLayeredWindow`. Transparent pixels are

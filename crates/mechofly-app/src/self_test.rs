@@ -162,7 +162,7 @@ pub fn run(path: &Path) -> Result<(), String> {
         firefly_visual_contract_passed: firefly_visual.passed,
         firefly_opaque_pixels: firefly_visual.opaque_pixels,
         firefly_translucent_pixels: firefly_visual.translucent_pixels,
-        firefly_rest_temporal_invariant: firefly_visual.rest_pixel_differences == 0,
+        firefly_rest_temporal_invariant: firefly_visual.rest_temporal_invariant(),
         firefly_escape_wing_responsive: firefly_visual.escape_wing_pixel_differences > 180,
         anatomical_context_points,
         anatomical_context_measured: false,

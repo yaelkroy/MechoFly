@@ -115,7 +115,7 @@ jobs:
           if (-not $receipt.asynchronous_hotkey_fallback) { throw 'Global hotkey fallback is absent.' }
           if ($receipt.firefly_visual_style -ne 'neurofly_prism_firefly') { throw 'Firefly Prism style is absent.' }
           if (-not $receipt.firefly_visual_contract_passed) { throw 'Firefly Prism visual contract failed.' }
-          if (-not $receipt.firefly_rest_temporal_invariant) { throw 'Rest artwork drifted over time.' }
+          if (-not $receipt.firefly_rest_temporal_invariant) { throw 'Rest micro-motion exceeded its bounded visual contract.' }
           if (-not $receipt.firefly_escape_wing_responsive) { throw 'Escape wings did not respond.' }
           if ($receipt.anatomical_context_points -ne 23210) { throw 'Anatomical context point count changed.' }
           if ($receipt.anatomical_context_measured) { throw 'Anatomical context was mislabeled as measured.' }

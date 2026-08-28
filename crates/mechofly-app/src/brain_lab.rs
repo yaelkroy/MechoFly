@@ -2,7 +2,6 @@ use std::{sync::Arc, time::Duration};
 
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 use mechofly_core::{ComparisonResult, Feedback, PetPolicy, StimulationPolicy, StimulationRequest};
-use serde::Deserialize;
 
 use crate::{
     app::RuntimeSourceIdentity, compute::ComputePreference, pet::Skin, runtime::SimulationSession,
@@ -34,64 +33,12 @@ pub enum LabCommand {
     ExportLearning,
     DeleteLearning,
 }
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LabView {
     Overview,
     Compare,
     Provenance,
     Learning,
-}
-
-#[derive(Deserialize)]
-struct AtlasAsset {
-    classes: Vec<String>,
-    points: Vec<[f32; 4]>,
-    source: String,
-}
-
-struct AtlasPoint {
-    position: [f32; 2],
-    class: usize,
-    depth: f32,
-}
-
-struct AnatomicalAtlas {
-    classes: Vec<String>,
-    points: Vec<AtlasPoint>,
-    source: String,
-}
-
-impl AnatomicalAtlas {
-    fn load() -> Self {
-        let asset: AtlasAsset = serde_json::from_str(include_str!("../assets/brain_points.json"))
-            .expect("embedded FlyWire anatomical context must be valid JSON");
-        let points = asset
-            .points
-            .into_iter()
-            .map(|point| AtlasPoint {
-                // Fixed dorsal three-quarter presentation. These points are
-                // immutable anatomical context, never modeled neurons.
-                position: [
-                    ((point[0] + point[2] * 0.22) / 10.75).clamp(-1.0, 1.0),
-                    (-(point[1] - point[2] * 0.16) / 5.05).clamp(-1.0, 1.0),
-                ],
-                class: point[3].max(0.0) as usize,
-                depth: ((point[2] + 3.5) / 7.0).clamp(0.0, 1.0),
-            })
-            .collect();
-        Self {
-            classes: asset.classes,
-            points,
-            source: asset.source,
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct Connection {
-    index: usize,
-    weight: i32,
 }
 
 pub struct BrainLabState {
@@ -110,13 +57,6 @@ pub struct BrainLabState {
     pub import_path: String,
     pub selected_neuron: String,
     pub message: String,
-    atlas: AnatomicalAtlas,
-    neighborhood_for: Option<usize>,
-    neighborhood_graph_sha256: Option<String>,
-    inbound: Vec<Connection>,
-    outbound: Vec<Connection>,
-    inbound_count: usize,
-    outbound_count: usize,
 }
 
 impl BrainLabState {
@@ -137,13 +77,6 @@ impl BrainLabState {
             import_path: String::new(),
             selected_neuron: String::new(),
             message: "No preview receipt. Live state cannot be targeted from this UI.".to_owned(),
-            atlas: AnatomicalAtlas::load(),
-            neighborhood_for: None,
-            neighborhood_graph_sha256: None,
-            inbound: Vec::new(),
-            outbound: Vec::new(),
-            inbound_count: 0,
-            outbound_count: 0,
         }
     }
 
@@ -225,15 +158,10 @@ impl BrainLabState {
 
         egui::Panel::bottom("lab_timeline")
             .resizable(false)
-            .exact_size(194.0)
+            .exact_size(142.0)
             .frame(surface_frame())
             .show(ui, |ui| {
-                timeline(
-                    ui,
-                    session,
-                    self.replay_frames_back,
-                    resolve_selected_index(&self.selected_neuron, session),
-                );
+                timeline(ui, session);
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("EVENT").strong().color(VIOLET));
@@ -408,56 +336,33 @@ impl BrainLabState {
                             key_value(ui, "API", backend);
                         }
                         ui.separator();
-                        ui.label(egui::RichText::new("Circuit explorer").strong());
-                        ui.label(
-                            egui::RichText::new(
-                                "Enter a model index or graph root ID, or click a modeled point.",
-                            )
-                            .size(10.5)
-                            .color(MUTED),
-                        );
+                        ui.label(egui::RichText::new("Neuron lookup").strong());
                         ui.text_edit_singleline(&mut self.selected_neuron);
-                        if let Some(index) = resolve_selected_index(&self.selected_neuron, session)
-                        {
-                            self.ensure_neighborhood(session, index);
-                            key_value(ui, "Model index", &index.to_string());
-                            key_value(
-                                ui,
-                                "Graph root ID",
-                                &session.graph.neuron_ids[index].to_string(),
-                            );
-                            key_value(
-                                ui,
-                                "Activation q15",
-                                &session.engine.state.activation[index].to_string(),
-                            );
-                            key_value(
-                                ui,
-                                "Current spike",
-                                if session.engine.state.spikes[index] == 0 {
-                                    "no"
-                                } else {
-                                    "YES"
-                                },
-                            );
-                            connection_list(
-                                ui,
-                                "STRONGEST INBOUND",
-                                self.inbound_count,
-                                &self.inbound,
-                                session,
-                                ACTUAL,
-                            );
-                            connection_list(
-                                ui,
-                                "STRONGEST OUTBOUND",
-                                self.outbound_count,
-                                &self.outbound,
-                                session,
-                                ALTERNATIVE,
-                            );
-                        } else if !self.selected_neuron.trim().is_empty() {
-                            ui.colored_label(WARNING, "No model index or root ID matched.");
+                        if let Ok(index) = self.selected_neuron.trim().parse::<usize>() {
+                            if index < session.engine.state.activation.len() {
+                                key_value(ui, "Index", &index.to_string());
+                                key_value(
+                                    ui,
+                                    "Root ID",
+                                    &session.graph.neuron_ids[index].to_string(),
+                                );
+                                key_value(
+                                    ui,
+                                    "Activation",
+                                    &session.engine.state.activation[index].to_string(),
+                                );
+                                key_value(
+                                    ui,
+                                    "Spiked",
+                                    if session.engine.state.spikes[index] == 0 {
+                                        "no"
+                                    } else {
+                                        "yes"
+                                    },
+                                );
+                            } else {
+                                ui.colored_label(WARNING, "Index is outside this graph.");
+                            }
                         }
                         ui.separator();
                         ui.label(egui::RichText::new("Learning boundary").strong());
@@ -490,7 +395,7 @@ impl BrainLabState {
                 });
                 ui.add_space(12.0);
                 match self.view {
-                    LabView::Overview => overview(ui, session, self),
+                    LabView::Overview => overview(ui, session),
                     LabView::Compare => comparison_view(ui, self, &mut commands),
                     LabView::Provenance => provenance_view(ui, session),
                     LabView::Learning => learning_view(ui, policy, &mut commands),
@@ -537,49 +442,6 @@ impl BrainLabState {
             }
             Err(error) => self.message = format!("Preview rejected: {error}"),
         }
-    }
-
-    fn ensure_neighborhood(&mut self, session: &SimulationSession, index: usize) {
-        if self.neighborhood_for == Some(index)
-            && self.neighborhood_graph_sha256.as_deref()
-                == Some(session.graph.identity.sha256.as_str())
-        {
-            return;
-        }
-        let offsets = &session.graph.incoming_offsets;
-        let sources = &session.graph.incoming_sources;
-        let weights = &session.graph.modeled_weights;
-        let start = offsets[index] as usize;
-        let end = offsets[index + 1] as usize;
-        self.inbound = (start..end)
-            .map(|edge| Connection {
-                index: sources[edge] as usize,
-                weight: weights[edge],
-            })
-            .collect();
-        self.inbound_count = self.inbound.len();
-        self.outbound.clear();
-        for target in 0..session.graph.neuron_ids.len() {
-            let target_start = offsets[target] as usize;
-            let target_end = offsets[target + 1] as usize;
-            for edge in target_start..target_end {
-                if sources[edge] as usize == index {
-                    self.outbound.push(Connection {
-                        index: target,
-                        weight: weights[edge],
-                    });
-                }
-            }
-        }
-        self.outbound_count = self.outbound.len();
-        self.inbound
-            .sort_by_key(|connection| std::cmp::Reverse(connection.weight.unsigned_abs()));
-        self.outbound
-            .sort_by_key(|connection| std::cmp::Reverse(connection.weight.unsigned_abs()));
-        self.inbound.truncate(24);
-        self.outbound.truncate(24);
-        self.neighborhood_for = Some(index);
-        self.neighborhood_graph_sha256 = Some(session.graph.identity.sha256.clone());
     }
 }
 
@@ -668,13 +530,13 @@ fn view_tab(ui: &mut egui::Ui, selected: &mut LabView, view: LabView, label: &st
     }
 }
 
-fn overview(ui: &mut egui::Ui, session: &SimulationSession, state: &mut BrainLabState) {
+fn overview(ui: &mut egui::Ui, session: &SimulationSession) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
-            ui.heading("Anatomical activity observatory");
+            ui.heading("Modeled population field");
             ui.label(
                 egui::RichText::new(
-                    "FlyWire-derived anatomical context + real modeled frame state · never measured activity",
+                    "Fixed structural projection · presentation context, never measured activity",
                 )
                 .color(MUTED),
             );
@@ -695,185 +557,39 @@ fn overview(ui: &mut egui::Ui, session: &SimulationSession, state: &mut BrainLab
             metric_card(ui, "FRAME", &session.last_summary.frame.to_string(), ACTUAL);
         });
     });
-    ui.add_space(7.0);
-    ui.horizontal(|ui| {
-        causal_stage(ui, "01", "CONTEXT", "environment + policy", VIOLET);
-        ui.colored_label(MUTED, "→");
-        causal_stage(ui, "02", "MODEL", "fixed-point dynamics", ACTUAL);
-        ui.colored_label(MUTED, "→");
-        causal_stage(ui, "03", "SPIKES", "current modeled frame", POSITIVE);
-        ui.colored_label(MUTED, "→");
-        causal_stage(ui, "04", "BEHAVIOR", "bounded state machine", ALTERNATIVE);
-        ui.colored_label(MUTED, "→");
-        causal_stage(ui, "05", "PET POSE", "authored presentation", WARNING);
-    });
-    ui.add_space(7.0);
+    ui.add_space(10.0);
     let available = ui.available_size();
     let height = (available.y - 8.0).max(220.0);
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(available.x, height), Sense::click());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(available.x, height), Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 8, Color32::from_rgb(4, 10, 17));
     painter.rect_stroke(rect, 8, Stroke::new(1.0, GRID), StrokeKind::Inside);
     draw_field_grid(&painter, rect.shrink(14.0));
-    let field = rect.shrink2(Vec2::new(30.0, 30.0));
-    draw_anatomical_context(&painter, field, &state.atlas);
-    let selected = resolve_selected_index(&state.selected_neuron, session);
-    draw_live_graph(
-        &painter,
-        field,
-        session,
-        &state.atlas,
-        selected,
-        &state.inbound,
-        &state.outbound,
-    );
-    let pointer = ui.input(|input| input.pointer.hover_pos());
-    let hovered = pointer
-        .filter(|position| rect.contains(*position))
-        .and_then(|position| {
-            nearest_displayed_neuron(position, field, session, &state.atlas, 18.0)
-        });
-    if let (Some(position), Some(index)) = (pointer, hovered) {
-        let box_size = Vec2::new(238.0, 43.0);
-        let box_min = Pos2::new(
-            (position.x + 13.0).min(rect.right() - box_size.x - 8.0),
-            (position.y + 13.0).min(rect.bottom() - box_size.y - 8.0),
-        );
-        let tooltip = Rect::from_min_size(box_min, box_size);
-        painter.rect_filled(tooltip, 4, Color32::from_rgba_unmultiplied(5, 12, 20, 238));
-        painter.rect_stroke(tooltip, 4, Stroke::new(1.0, ACTUAL), StrokeKind::Inside);
-        painter.text(
-            tooltip.left_top() + Vec2::new(8.0, 6.0),
-            Align2::LEFT_TOP,
-            format!(
-                "INDEX {index}  ·  ROOT {}\nactivation {}  ·  spike {}  ·  click to inspect",
-                session.graph.neuron_ids[index],
-                session.engine.state.activation[index],
-                if session.engine.state.spikes[index] == 0 {
-                    "no"
-                } else {
-                    "YES"
-                }
-            ),
-            FontId::monospace(10.0),
-            INK,
-        );
-    }
-    if response.clicked()
-        && let Some(position) = response.interact_pointer_pos()
-        && let Some(index) = nearest_displayed_neuron(position, field, session, &state.atlas, 22.0)
-    {
-        state.selected_neuron = index.to_string();
-        state.neighborhood_for = None;
-        state.message = format!(
-            "Selected modeled neuron {index} (root {}). Circuit neighborhood is synchronized.",
-            session.graph.neuron_ids[index]
-        );
-    }
+    draw_live_graph(&painter, rect.shrink2(Vec2::new(30.0, 26.0)), session);
     painter.text(
         rect.left_top() + Vec2::new(14.0, 12.0),
         Align2::LEFT_TOP,
-        format!(
-            "FAFB ANATOMICAL CONTEXT  ·  {} SOMA POINTS  ·  NOT SIMULATED",
-            state.atlas.points.len()
-        ),
+        "L  ·  BILATERAL STRUCTURAL PROJECTION  ·  R",
         FontId::monospace(12.0),
         MUTED,
     );
     painter.text(
         rect.right_bottom() - Vec2::new(14.0, 12.0),
         Align2::RIGHT_BOTTOM,
-        "MODELED ACTIVITY  ●   CURRENT SPIKES  ◆   ORDINAL DISPLAY REGISTRATION — NO IDENTITY MAPPING",
+        "MODELED ACTIVATION  ●     CURRENT SPIKES  ◆",
         FontId::monospace(10.5),
         ACTUAL,
     );
-    painter.text(
-        rect.left_bottom() + Vec2::new(14.0, -12.0),
-        Align2::LEFT_BOTTOM,
-        format!(
-            "{}  ·  {} classes",
-            state.atlas.source,
-            state.atlas.classes.len()
-        ),
-        FontId::monospace(9.5),
-        MUTED,
-    );
 }
 
-fn causal_stage(ui: &mut egui::Ui, number: &str, label: &str, detail: &str, accent: Color32) {
-    egui::Frame::new()
-        .fill(SURFACE_RAISED)
-        .stroke(Stroke::new(1.0, accent.gamma_multiply(0.55)))
-        .corner_radius(4)
-        .inner_margin(egui::Margin::symmetric(7, 4))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.colored_label(accent, egui::RichText::new(number).strong().monospace());
-                ui.vertical(|ui| {
-                    ui.label(egui::RichText::new(label).strong().size(9.5).color(INK));
-                    ui.label(egui::RichText::new(detail).size(8.5).color(MUTED));
-                });
-            });
-        });
-}
-
-fn draw_anatomical_context(painter: &egui::Painter, rect: Rect, atlas: &AnatomicalAtlas) {
-    for point in atlas.points.iter().step_by(2) {
-        let position = project(rect, point.position);
-        let color = atlas_color(point.class, 18 + (point.depth * 20.0) as u8);
-        painter.circle_filled(position, 0.75 + point.depth * 0.45, color);
-    }
-}
-
-fn atlas_color(class: usize, alpha: u8) -> Color32 {
-    let (red, green, blue) = match class % 9 {
-        0 => (55, 112, 132),
-        1 => (70, 112, 101),
-        2 => (98, 95, 132),
-        3 => (67, 123, 125),
-        4 => (112, 86, 122),
-        5 => (126, 99, 73),
-        6 => (77, 104, 139),
-        7 => (111, 116, 73),
-        _ => (112, 78, 94),
-    };
-    Color32::from_rgba_unmultiplied(red, green, blue, alpha)
-}
-
-fn draw_live_graph(
-    painter: &egui::Painter,
-    rect: Rect,
-    session: &SimulationSession,
-    atlas: &AnatomicalAtlas,
-    selected: Option<usize>,
-    inbound: &[Connection],
-    outbound: &[Connection],
-) {
-    if let Some(index) = selected {
-        let center = displayed_model_position(rect, session, atlas, index);
-        for connection in inbound.iter().take(12) {
-            painter.line_segment(
-                [
-                    displayed_model_position(rect, session, atlas, connection.index),
-                    center,
-                ],
-                Stroke::new(0.8, ACTUAL.gamma_multiply(0.52)),
-            );
-        }
-        for connection in outbound.iter().take(12) {
-            painter.line_segment(
-                [
-                    center,
-                    displayed_model_position(rect, session, atlas, connection.index),
-                ],
-                Stroke::new(0.8, ALTERNATIVE.gamma_multiply(0.48)),
-            );
-        }
-    }
+fn draw_live_graph(painter: &egui::Painter, rect: Rect, session: &SimulationSession) {
     let count = session.graph.positions.len();
+    // An even stride sampled only even synthetic indices, which selected one
+    // modeled hemisphere and produced the old triangular wedge. An odd stride
+    // alternates parity and preserves the bilateral presentation.
     let stride = display_stride(count);
     for index in (0..count).step_by(stride) {
-        let position = displayed_model_position(rect, session, atlas, index);
+        let position = project(rect, session.graph.positions[index]);
         let activation = session.engine.state.activation[index];
         let normalized = ((activation + 8_192) as f32 / 16_384.0).clamp(0.0, 1.0);
         let color = blend(Color32::from_rgb(35, 51, 67), ACTUAL, normalized);
@@ -898,64 +614,6 @@ fn draw_live_graph(
             },
         );
     }
-    if let Some(index) = selected {
-        let position = displayed_model_position(rect, session, atlas, index);
-        painter.circle_filled(position, 10.0, VIOLET.gamma_multiply(0.14));
-        painter.circle_stroke(position, 7.0, Stroke::new(1.8, VIOLET));
-        painter.circle_filled(
-            position,
-            3.2,
-            if session.engine.state.spikes[index] == 0 {
-                INK
-            } else {
-                POSITIVE
-            },
-        );
-    }
-}
-
-fn displayed_model_position(
-    rect: Rect,
-    session: &SimulationSession,
-    atlas: &AnatomicalAtlas,
-    index: usize,
-) -> Pos2 {
-    if atlas.points.is_empty() {
-        return project(rect, session.graph.positions[index]);
-    }
-    let root = session.graph.neuron_ids[index];
-    let atlas_index = presentation_hash(root ^ index as u64) as usize % atlas.points.len();
-    project(rect, atlas.points[atlas_index].position)
-}
-
-fn presentation_hash(mut value: u64) -> u64 {
-    value ^= value >> 30;
-    value = value.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    value ^= value >> 27;
-    value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
-    value ^ (value >> 31)
-}
-
-fn nearest_displayed_neuron(
-    pointer: Pos2,
-    rect: Rect,
-    session: &SimulationSession,
-    atlas: &AnatomicalAtlas,
-    maximum_distance: f32,
-) -> Option<usize> {
-    let mut nearest = None;
-    let mut nearest_squared = maximum_distance * maximum_distance;
-    for index in
-        (0..session.graph.positions.len()).step_by(display_stride(session.graph.positions.len()))
-    {
-        let position = displayed_model_position(rect, session, atlas, index);
-        let distance = position.distance_sq(pointer);
-        if distance < nearest_squared {
-            nearest_squared = distance;
-            nearest = Some(index);
-        }
-    }
-    nearest
 }
 
 fn display_stride(count: usize) -> usize {
@@ -1378,81 +1036,10 @@ fn learning_view(ui: &mut egui::Ui, policy: &PetPolicy, commands: &mut Vec<LabCo
     });
 }
 
-fn resolve_selected_index(text: &str, session: &SimulationSession) -> Option<usize> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let explicit_root = trimmed
-        .strip_prefix("root:")
-        .or_else(|| trimmed.strip_prefix("id:"));
-    let value = explicit_root
-        .unwrap_or(trimmed)
-        .trim()
-        .parse::<u64>()
-        .ok()?;
-    if explicit_root.is_none() && (value as usize) < session.graph.neuron_ids.len() {
-        return Some(value as usize);
-    }
-    session
-        .graph
-        .neuron_ids
-        .iter()
-        .position(|root_id| *root_id == value)
-}
-
-fn connection_list(
-    ui: &mut egui::Ui,
-    label: &str,
-    total: usize,
-    connections: &[Connection],
-    session: &SimulationSession,
-    accent: Color32,
-) {
-    ui.add_space(5.0);
-    ui.horizontal(|ui| {
-        ui.colored_label(accent, egui::RichText::new(label).strong().size(9.5));
-        ui.label(
-            egui::RichText::new(format!("{total} total"))
-                .size(9.5)
-                .color(MUTED),
-        );
-    });
-    for connection in connections.iter().take(6) {
-        let sign = if connection.weight >= 0 { "+" } else { "" };
-        ui.monospace(format!(
-            "#{:<6} root {:<12}  {sign}{}",
-            connection.index, session.graph.neuron_ids[connection.index], connection.weight
-        ));
-    }
-    if total == 0 {
-        ui.label(egui::RichText::new("none").size(10.0).color(MUTED));
-    }
-}
-
-fn timeline(
-    ui: &mut egui::Ui,
-    session: &SimulationSession,
-    replay_frames_back: usize,
-    selected_neuron: Option<usize>,
-) {
-    let current_fraction = session.last_summary.spike_count as f64
-        / session.graph.identity.neuron_count.max(1) as f64
-        * 100.0;
+fn timeline(ui: &mut egui::Ui, session: &SimulationSession) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("ACTIVITY TIMELINE").strong());
         ui.label(format!("last {} retained frames", session.replay.len()));
-        ui.colored_label(
-            POSITIVE,
-            format!(
-                "current {} spikes ({current_fraction:.3}%/frame)",
-                session.last_summary.spike_count
-            ),
-        );
-        ui.colored_label(
-            VIOLET,
-            format!("mean q15 {}", session.last_summary.mean_activation_q15),
-        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(format!(
                 "{:?} persisted {} frames",
@@ -1460,13 +1047,12 @@ fn timeline(
             ));
         });
     });
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 126.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 76.0), Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 4, Color32::from_rgb(4, 10, 17));
     painter.rect_stroke(rect, 3, Stroke::new(1.0, GRID), StrokeKind::Inside);
-    let frames: Vec<_> = session.replay.frames().collect();
-    if frames.is_empty() {
+    let summaries: Vec<_> = session.replay.summaries().collect();
+    if summaries.is_empty() {
         painter.text(
             rect.center(),
             Align2::CENTER_CENTER,
@@ -1476,85 +1062,24 @@ fn timeline(
         );
         return;
     }
-    let max_spikes = frames
+    let max_spikes = summaries
         .iter()
-        .map(|frame| frame.summary.spike_count)
+        .map(|summary| summary.spike_count)
         .max()
         .unwrap_or(1)
         .max(1);
-    let plot = Rect::from_min_max(
-        rect.left_top() + Vec2::new(58.0, 8.0),
-        rect.right_bottom() - Vec2::new(8.0, 8.0),
-    );
-    let spike_rect =
-        Rect::from_min_max(plot.left_top(), Pos2::new(plot.right(), plot.top() + 62.0));
-    let activation_rect = Rect::from_min_max(
-        Pos2::new(plot.left(), spike_rect.bottom() + 4.0),
-        Pos2::new(plot.right(), spike_rect.bottom() + 30.0),
-    );
-    let behavior_y = plot.bottom() - 6.0;
-    painter.text(
-        Pos2::new(rect.left() + 7.0, spike_rect.center().y),
-        Align2::LEFT_CENTER,
-        "SPIKES",
-        FontId::monospace(9.5),
-        ACTUAL,
-    );
-    painter.text(
-        Pos2::new(rect.left() + 7.0, activation_rect.center().y),
-        Align2::LEFT_CENTER,
-        "MEAN",
-        FontId::monospace(9.5),
-        VIOLET,
-    );
-    painter.text(
-        Pos2::new(rect.left() + 7.0, behavior_y),
-        Align2::LEFT_CENTER,
-        "STATE",
-        FontId::monospace(9.5),
-        MUTED,
-    );
-    for fraction in [0.0_f32, 0.5, 1.0] {
-        let y = egui::lerp(spike_rect.bottom()..=spike_rect.top(), fraction);
-        painter.line_segment(
-            [Pos2::new(plot.left(), y), Pos2::new(plot.right(), y)],
-            Stroke::new(0.6, GRID.gamma_multiply(0.5)),
-        );
-    }
-    painter.text(
-        spike_rect.right_top(),
-        Align2::RIGHT_TOP,
-        format!("scale 0–{max_spikes}"),
-        FontId::monospace(8.5),
-        MUTED,
-    );
-    let zero_y = egui::lerp(activation_rect.bottom()..=activation_rect.top(), 0.5);
-    painter.line_segment(
-        [
-            Pos2::new(activation_rect.left(), zero_y),
-            Pos2::new(activation_rect.right(), zero_y),
-        ],
-        Stroke::new(0.7, GRID),
-    );
-    let bar_width = plot.width() / frames.len() as f32;
-    let mut activation_points = Vec::with_capacity(frames.len());
-    for (index, frame) in frames.iter().enumerate() {
-        let summary = &frame.summary;
-        let height = summary.spike_count as f32 / max_spikes as f32 * spike_rect.height();
-        let x = plot.left() + index as f32 * bar_width;
+    let bar_width = rect.width() / summaries.len() as f32;
+    for (index, summary) in summaries.into_iter().enumerate() {
+        let height = summary.spike_count as f32 / max_spikes as f32 * (rect.height() - 22.0);
+        let x = rect.left() + index as f32 * bar_width;
         painter.rect_filled(
             Rect::from_min_max(
-                Pos2::new(x, spike_rect.bottom() - height),
-                Pos2::new(x + bar_width.max(1.0), spike_rect.bottom()),
+                Pos2::new(x, rect.bottom() - height - 12.0),
+                Pos2::new(x + bar_width.max(1.0), rect.bottom() - 12.0),
             ),
             0,
-            ACTUAL.gamma_multiply(0.76),
+            ACTUAL,
         );
-        let mean = ((summary.mean_activation_q15 as f32 + 32_768.0) / 65_535.0).clamp(0.0, 1.0);
-        activation_points.push(Pos2::new(
-            x + bar_width * 0.5,
-            egui::lerp(activation_rect.bottom()..=activation_rect.top(), mean),
-        ));
         let behavior_color = match summary.behavior {
             mechofly_core::Behavior::Rest | mechofly_core::Behavior::Quiet => GRID,
             mechofly_core::Behavior::Walk | mechofly_core::Behavior::Reverse => POSITIVE,
@@ -1563,69 +1088,11 @@ fn timeline(
         };
         painter.rect_filled(
             Rect::from_min_size(
-                Pos2::new(x, behavior_y - 3.0),
-                Vec2::new(bar_width.max(1.0), 6.0),
+                Pos2::new(x, rect.bottom() - 8.0),
+                Vec2::new(bar_width.max(1.0), 5.0),
             ),
             0,
             behavior_color,
-        );
-        if let Some(neuron) = selected_neuron
-            && frame.state.spikes.get(neuron).copied().unwrap_or_default() != 0
-        {
-            painter.circle_filled(
-                Pos2::new(x + bar_width * 0.5, activation_rect.bottom() - 2.5),
-                1.8,
-                POSITIVE,
-            );
-        }
-    }
-    painter.add(egui::Shape::line(
-        activation_points,
-        Stroke::new(1.3, VIOLET),
-    ));
-    let replay_index = frames
-        .len()
-        .saturating_sub(1)
-        .saturating_sub(replay_frames_back.min(frames.len() - 1));
-    let replay_x = plot.left() + (replay_index as f32 + 0.5) * bar_width;
-    painter.line_segment(
-        [
-            Pos2::new(replay_x, plot.top()),
-            Pos2::new(replay_x, plot.bottom()),
-        ],
-        Stroke::new(1.4, ALTERNATIVE),
-    );
-    painter.text(
-        Pos2::new(replay_x + 4.0, plot.top() + 3.0),
-        Align2::LEFT_TOP,
-        format!("replay −{replay_frames_back}"),
-        FontId::monospace(8.5),
-        ALTERNATIVE,
-    );
-    if response.hovered()
-        && let Some(pointer) = ui.input(|input| input.pointer.hover_pos())
-        && plot.contains(pointer)
-    {
-        let index =
-            (((pointer.x - plot.left()) / bar_width).floor() as usize).min(frames.len() - 1);
-        let frame = frames[index];
-        let x = plot.left() + (index as f32 + 0.5) * bar_width;
-        painter.line_segment(
-            [Pos2::new(x, plot.top()), Pos2::new(x, plot.bottom())],
-            Stroke::new(1.0, INK.gamma_multiply(0.55)),
-        );
-        painter.text(
-            Pos2::new(plot.right() - 6.0, plot.top() + 5.0),
-            Align2::RIGHT_TOP,
-            format!(
-                "FRAME {}  ·  {} spikes  ·  mean {}  ·  {:?}",
-                frame.summary.frame,
-                frame.summary.spike_count,
-                frame.summary.mean_activation_q15,
-                frame.summary.behavior
-            ),
-            FontId::monospace(9.5),
-            INK,
         );
     }
 }
@@ -1670,16 +1137,5 @@ mod tests {
     #[test]
     fn preview_targets_accept_commas_and_whitespace() {
         assert_eq!(parse_targets("3, 7  11\n19"), Ok(vec![3, 7, 11, 19]));
-    }
-
-    #[test]
-    fn embedded_anatomical_context_has_expected_scope() {
-        let atlas = AnatomicalAtlas::load();
-        assert_eq!(atlas.points.len(), 23_210);
-        assert_eq!(atlas.classes.len(), 9);
-        assert!(atlas.source.contains("FlyWire"));
-        assert!(atlas.points.iter().all(|point| {
-            (-1.0..=1.0).contains(&point.position[0]) && (-1.0..=1.0).contains(&point.position[1])
-        }));
     }
 }
