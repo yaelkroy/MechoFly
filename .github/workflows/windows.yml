@@ -181,6 +181,25 @@ jobs:
             -ExecutablePath .\host-windows\bin\MechoFly.exe `
             -OutputDirectory .\artifacts\runtime-smoke `
             -ObservationSeconds 12
+          $summary = Get-Content `
+            -LiteralPath .\artifacts\runtime-smoke\summary.json `
+            -Raw | ConvertFrom-Json
+          if ($summary.schema_version -ne 3) { throw 'GUI evidence receipt schema is stale.' }
+          if ($summary.status -ne 'PASS') { throw 'GUI evidence receipt failed.' }
+          if (-not $summary.pet_foreground_captured) { throw 'Layered pet foreground evidence is absent.' }
+          if (-not $summary.neural_frames_synchronized) { throw 'Neural viewport evidence is not frame-synchronized.' }
+          if (-not $summary.skin_titles_matched) { throw 'Neural viewport titles do not match the active skin.' }
+          if (-not $summary.full_window_captures) { throw 'A GUI evidence image is clipped.' }
+          foreach ($case in @($summary.cases)) {
+            if (-not $case.evidence_hold_posted) { throw 'Evidence hold was not acknowledged.' }
+            if (-not $case.neural_capture_frame_synchronized) { throw 'A GUI case has divergent neural frames.' }
+            $pet = @($case.screenshots | Where-Object {
+              $_.source_window.class_name -eq 'MechoFlyDesktopPetLayeredWindowV1'
+            })
+            if ($pet.Count -ne 1 -or [int]$pet[0].foreground_difference_pixels -lt 500) {
+              throw 'A GUI case lacks an isolated normal-scale pet foreground.'
+            }
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
