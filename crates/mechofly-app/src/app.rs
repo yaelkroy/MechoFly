@@ -21,6 +21,7 @@ use crate::{
 };
 
 const MODEL_INTERVAL: Duration = Duration::from_millis(mechofly_core::MODEL_STEP_MS as u64);
+const MAX_CATCH_UP_STEPS: usize = 8;
 const CATCHUP_WARNING: &str =
     "Model fell behind the wall clock; catch-up was bounded and excess elapsed time was dropped.";
 
@@ -382,7 +383,7 @@ impl eframe::App for MechoFlyApp {
         self.last_wall = now;
         self.accumulator += elapsed;
         let mut steps = 0;
-        while self.accumulator >= MODEL_INTERVAL && steps < 5 {
+        while self.accumulator >= MODEL_INTERVAL && steps < MAX_CATCH_UP_STEPS {
             self.session.step();
             self.accumulator -= MODEL_INTERVAL;
             steps += 1;
@@ -390,7 +391,7 @@ impl eframe::App for MechoFlyApp {
                 self.select_policy_action();
             }
         }
-        if steps == 5 && self.accumulator >= MODEL_INTERVAL {
+        if steps == MAX_CATCH_UP_STEPS && self.accumulator >= MODEL_INTERVAL {
             self.accumulator = Duration::ZERO;
             self.session.runtime_warning = Some(CATCHUP_WARNING.to_owned());
         } else if self.session.runtime_warning.as_deref() == Some(CATCHUP_WARNING) {

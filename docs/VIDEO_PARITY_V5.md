@@ -33,6 +33,13 @@ All movement is elapsed-time based. Tests compare refresh-rate trajectories and
 require distinct rendered frames for walking, grooming, escape, flight, and
 landing. Rest frames at different timestamps must be byte-identical.
 
+The Windows evidence run exercises the complete four-second flight envelope,
+requires more than 900 pixels of curved travel with material horizontal and
+vertical displacement, and renders two successive walk → escape → flight →
+landing → groom cycles on a 1920×1080 trajectory. Each recorded pose carries
+its own behavior age so the visible grooming and landing substate stays aligned
+with the controller receipt.
+
 ## Live Brain
 
 Live Brain is a separate compact window and includes:
@@ -60,6 +67,11 @@ The experiment window keeps all four reference work areas visible at once:
 The bottom strip shows the macro motor program and grooming/motor substate
 timeline. Structural rows use the active graph's CSR edges and signed modeled
 weights. Presentation role names are labeled as presentation groupings.
+
+Windows GUI validation posts the same bounded Groom and Loom window messages
+used by the registered global hotkeys before capture. This makes the evidence
+show an active motor program and an active escape/flight circuit, rather than
+proving only that idle windows opened.
 
 ## Scientific and safety boundary
 

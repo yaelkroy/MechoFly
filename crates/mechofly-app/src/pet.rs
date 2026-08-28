@@ -239,7 +239,7 @@ pub fn run_motion_self_test() -> MotionSelfTest {
         screen_position: Pos2::new(760.0, 610.0),
         ..PetMotion::default()
     };
-    let cursor = Pos2::new(1_030.0, 900.0);
+    let cursor = airborne.screen_position + Vec2::new(-90.0, 200.0);
     let escape_start = airborne.screen_position;
     for _ in 0..12 {
         airborne.advance(
@@ -255,7 +255,7 @@ pub fn run_motion_self_test() -> MotionSelfTest {
 
     let flight_start = airborne.screen_position;
     let mut flight_path_pixels = 0.0;
-    for _ in 0..72 {
+    for _ in 0..240 {
         let before = airborne.screen_position;
         airborne.advance(1.0 / 60.0, Behavior::Flight, origin, screen, false, None);
         flight_path_pixels += airborne.screen_position.distance(before);
@@ -274,9 +274,9 @@ pub fn run_motion_self_test() -> MotionSelfTest {
     MotionSelfTest {
         passed: walking_translation_pixels > 100.0
             && escape_translation_pixels > 90.0
-            && flight_path_pixels > 250.0
-            && flight_horizontal_pixels > 40.0
-            && flight_vertical_pixels > 20.0
+            && flight_path_pixels > 900.0
+            && flight_horizontal_pixels > 150.0
+            && flight_vertical_pixels > 100.0
             && landing_descent_pixels > 45.0
             && landing_reached_surface,
         walking_translation_pixels,
@@ -1825,6 +1825,7 @@ mod tests {
         y: f32,
         heading_radians: f32,
         phase: f32,
+        behavior_age_seconds: f32,
     }
 
     #[test]
@@ -2011,6 +2012,7 @@ mod tests {
                 y: motion.screen_position.y,
                 heading_radians: motion.heading_radians,
                 phase: motion.animation_seconds,
+                behavior_age_seconds: motion.behavior_age_seconds,
             });
         };
 
@@ -2022,7 +2024,45 @@ mod tests {
                 record(&motion, Behavior::Walk, elapsed);
             }
         }
-        let cursor = motion.screen_position + Vec2::new(390.0, 330.0);
+        let cursor = motion.screen_position + Vec2::new(-90.0, 200.0);
+        for _ in 0..12 {
+            motion.advance(
+                1.0 / 60.0,
+                Behavior::PreEscape,
+                origin,
+                screen,
+                false,
+                Some(cursor),
+            );
+            elapsed += 1.0 / 60.0;
+        }
+        record(&motion, Behavior::PreEscape, elapsed);
+        for frame in 1_u32..=240 {
+            motion.advance(1.0 / 60.0, Behavior::Flight, origin, screen, false, None);
+            elapsed += 1.0 / 60.0;
+            if frame.is_multiple_of(48) {
+                record(&motion, Behavior::Flight, elapsed);
+            }
+        }
+        for _ in 0..30 {
+            motion.advance(1.0 / 60.0, Behavior::Landing, origin, screen, false, None);
+            elapsed += 1.0 / 60.0;
+        }
+        record(&motion, Behavior::Landing, elapsed);
+        for _ in 0..90 {
+            motion.advance(1.0 / 60.0, Behavior::Groom, origin, screen, false, None);
+            elapsed += 1.0 / 60.0;
+        }
+        record(&motion, Behavior::Groom, elapsed);
+
+        for frame in 1_u32..=60 {
+            motion.advance(1.0 / 60.0, Behavior::Walk, origin, screen, false, None);
+            elapsed += 1.0 / 60.0;
+            if frame == 60 {
+                record(&motion, Behavior::Walk, elapsed);
+            }
+        }
+        let cursor = motion.screen_position + Vec2::new(-90.0, 200.0);
         for _ in 0..12 {
             motion.advance(
                 1.0 / 60.0,
@@ -2065,11 +2105,12 @@ mod tests {
                     _ => Behavior::Rest,
                 };
                 let mut pet = vec![0; PET_WIDTH * PET_HEIGHT * 4];
-                render_pet_bgra(
+                render_pet_bgra_at_age(
                     &mut pet,
                     skin,
                     behavior,
                     sample.phase,
+                    sample.behavior_age_seconds,
                     sample.heading_radians,
                     false,
                 );

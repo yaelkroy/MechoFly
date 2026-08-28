@@ -7,7 +7,7 @@ param(
     [string] $OutputDirectory = (Join-Path $PSScriptRoot '..\artifacts\runtime-smoke'),
 
     [ValidateRange(3, 60)]
-    [int] $ObservationSeconds = 8
+    [int] $ObservationSeconds = 12
 )
 
 Set-StrictMode -Version Latest
@@ -75,6 +75,13 @@ namespace MechoFly.RuntimeSmoke
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hwnd);
 
+        [DllImport("user32.dll", EntryPoint = "PostMessageW", SetLastError = true)]
+        private static extern bool PostMessage(
+            IntPtr hwnd,
+            uint message,
+            UIntPtr wParam,
+            IntPtr lParam);
+
         [DllImport("user32.dll")]
         private static extern bool PrintWindow(
             IntPtr hwnd,
@@ -84,6 +91,16 @@ namespace MechoFly.RuntimeSmoke
         public static bool Activate(long handle)
         {
             return SetForegroundWindow(new IntPtr(handle));
+        }
+
+        public static bool PostHotkey(long handle, int hotkeyId)
+        {
+            const uint HotkeyMessage = 0x0312;
+            return PostMessage(
+                new IntPtr(handle),
+                HotkeyMessage,
+                new UIntPtr((uint)hotkeyId),
+                IntPtr.Zero);
         }
 
         public static bool Print(long handle, IntPtr targetDeviceContext)
@@ -266,7 +283,12 @@ function Invoke-GuiCase {
         [string] $Name,
 
         [Parameter(Mandatory = $true)]
-        [string[]] $Arguments
+        [string[]] $Arguments,
+
+        [int] $StimulusHotkeyId = 0,
+
+        [ValidateRange(0, 5000)]
+        [int] $StimulusSettleMilliseconds = 0
     )
 
     $CaseDirectory = Join-Path $OutputDirectory $Name
@@ -321,6 +343,30 @@ function Invoke-GuiCase {
             throw 'The normal-scale layered desktop pet window was not visible.'
         }
 
+        $StimulusPosted = $false
+        if ($StimulusHotkeyId -ne 0) {
+            $PetWindow = @($Windows | Where-Object {
+                [string]$_.title -eq 'MechoFly desktop pet'
+            }) | Select-Object -First 1
+            $StimulusPosted = [MechoFly.RuntimeSmoke.WindowProbe]::PostHotkey(
+                [int64]$PetWindow.handle,
+                $StimulusHotkeyId)
+            if (-not $StimulusPosted) {
+                throw ('Could not post bounded behavior stimulus 0x' +
+                    $StimulusHotkeyId.ToString('X4') + '.')
+            }
+            if ($StimulusSettleMilliseconds -gt 0) {
+                Start-Sleep -Milliseconds $StimulusSettleMilliseconds
+            }
+            $Process.Refresh()
+            if ($Process.HasExited) {
+                throw ('MechoFly exited after bounded behavior stimulus 0x' +
+                    $StimulusHotkeyId.ToString('X4') + '.')
+            }
+            $Windows = @([MechoFly.RuntimeSmoke.WindowProbe]::ForProcess(
+                [uint32]$Process.Id))
+        }
+
         $Captures = New-Object System.Collections.Generic.List[object]
         $CaptureIndex = 0
         foreach ($Window in @($Windows | Sort-Object title, handle)) {
@@ -342,6 +388,9 @@ function Invoke-GuiCase {
             started_utc = $StartedUtc.ToString('o')
             observed_until_utc = [DateTime]::UtcNow.ToString('o')
             observation_seconds = $ObservationSeconds
+            stimulus_hotkey_id = $StimulusHotkeyId
+            stimulus_hotkey_posted = $StimulusPosted
+            stimulus_settle_milliseconds = $StimulusSettleMilliseconds
             process_id = $Process.Id
             survived_startup_boundary = $true
             visible_window_count = $Windows.Count
@@ -377,10 +426,14 @@ try {
     $Cases = @(
         Invoke-GuiCase `
             -Name 'cpu-brain-lab' `
-            -Arguments @('--skin', 'drosophila', '--compute', 'cpu', '--brain-lab', '--reduced-motion')
+            -Arguments @('--skin', 'drosophila', '--compute', 'cpu', '--brain-lab', '--reduced-motion') `
+            -StimulusHotkeyId 0x4D05 `
+            -StimulusSettleMilliseconds 500
         Invoke-GuiCase `
             -Name 'auto-brain-lab' `
-            -Arguments @('--skin', 'firefly', '--compute', 'auto', '--brain-lab', '--reduced-motion')
+            -Arguments @('--skin', 'firefly', '--compute', 'auto', '--brain-lab') `
+            -StimulusHotkeyId 0x4D03 `
+            -StimulusSettleMilliseconds 1000
     )
 }
 finally {

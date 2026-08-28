@@ -161,7 +161,8 @@ jobs:
           if (-not $receipt.recorded_motion_contract_passed) { throw 'Recorded motion trajectory contract failed.' }
           if ($receipt.walking_translation_pixels -le 100) { throw 'Walking translation is not visible.' }
           if ($receipt.escape_translation_pixels -le 90) { throw 'Escape burst is not visible.' }
-          if ($receipt.flight_path_pixels -le 250) { throw 'Flight path is too short.' }
+          if ($receipt.flight_path_pixels -le 900) { throw 'Full-duration flight path is too short.' }
+          if ($receipt.flight_horizontal_pixels -le 150 -or $receipt.flight_vertical_pixels -le 100) { throw 'Full-duration flight did not roam in both dimensions.' }
           if ($receipt.landing_descent_pixels -le 45 -or -not $receipt.landing_reached_surface) { throw 'Landing did not end in a bounded touchdown.' }
           if (-not $receipt.two_dimensional_flight_motion) { throw 'Flight remained one-dimensional.' }
           if (-not $receipt.separate_live_brain_and_brain_lab) { throw 'Live Brain and Brain Lab were not separated.' }
@@ -179,7 +180,7 @@ jobs:
           .\tools\Test-Windows-GuiStartup.ps1 `
             -ExecutablePath .\host-windows\bin\MechoFly.exe `
             -OutputDirectory .\artifacts\runtime-smoke `
-            -ObservationSeconds 8
+            -ObservationSeconds 12
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
