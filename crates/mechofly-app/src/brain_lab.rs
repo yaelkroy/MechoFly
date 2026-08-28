@@ -793,7 +793,6 @@ fn structural_row(
             },
         );
     });
-    let _ = (source, target);
 }
 
 fn counterfactual_panel(

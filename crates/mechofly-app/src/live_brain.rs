@@ -98,9 +98,10 @@ impl LiveBrainState {
                                 self.show_context = !self.show_context;
                             }
                             ui.monospace(format!(
-                                "{} modeled  ·  {} context",
+                                "{} modeled  ·  {} context  ·  {} classes",
                                 session.graph.identity.neuron_count,
-                                atlas().points.len()
+                                atlas().points.len(),
+                                atlas().classes.len()
                             ));
                         },
                     );

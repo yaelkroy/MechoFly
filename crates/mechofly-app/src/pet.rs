@@ -473,19 +473,20 @@ fn pet_scene(
 
 fn behavior_accent(behavior: Behavior, skin: Skin) -> Rgba {
     if skin == Skin::Drosophila {
-        return match behavior {
+        match behavior {
             Behavior::PreEscape | Behavior::Flight => Rgba(245, 93, 55, 210),
             Behavior::Groom => Rgba(220, 144, 64, 190),
             Behavior::Landing => Rgba(104, 181, 158, 190),
             _ => Rgba(164, 117, 64, 160),
-        };
-    }
-    match behavior {
-        Behavior::PreEscape | Behavior::Flight => Rgba(255, 105, 72, 220),
-        Behavior::Groom => Rgba(178, 108, 226, 200),
-        Behavior::Landing => Rgba(63, 226, 170, 200),
-        Behavior::Walk | Behavior::Reverse => Rgba(244, 190, 62, 185),
-        _ => Rgba(89, 238, 226, 160),
+        }
+    } else {
+        match behavior {
+            Behavior::PreEscape | Behavior::Flight => Rgba(255, 105, 72, 220),
+            Behavior::Groom => Rgba(178, 108, 226, 200),
+            Behavior::Landing => Rgba(63, 226, 170, 200),
+            Behavior::Walk | Behavior::Reverse => Rgba(244, 190, 62, 185),
+            _ => Rgba(89, 238, 226, 160),
+        }
     }
 }
 
