@@ -21,8 +21,14 @@ $OutputDirectory = (Resolve-Path -LiteralPath $OutputDirectory).Path
 
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
+$WindowProbeReferences = @(
+    [System.Drawing.Bitmap].Assembly.Location
+    [System.Windows.Forms.Application].Assembly.Location
+)
 if ($null -eq ('MechoFly.RuntimeSmoke.WindowProbe' -as [type])) {
-    Add-Type -TypeDefinition @'
+    Add-Type `
+        -ReferencedAssemblies $WindowProbeReferences `
+        -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.Drawing;
