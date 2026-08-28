@@ -75,9 +75,24 @@ namespace MechoFly.RuntimeSmoke
         [DllImport("user32.dll")]
         private static extern bool SetForegroundWindow(IntPtr hwnd);
 
+        [DllImport("user32.dll")]
+        private static extern bool PrintWindow(
+            IntPtr hwnd,
+            IntPtr targetDeviceContext,
+            uint flags);
+
         public static bool Activate(long handle)
         {
             return SetForegroundWindow(new IntPtr(handle));
+        }
+
+        public static bool Print(long handle, IntPtr targetDeviceContext)
+        {
+            const uint RenderFullContent = 2;
+            return PrintWindow(
+                new IntPtr(handle),
+                targetDeviceContext,
+                RenderFullContent);
         }
 
         public static WindowInfo[] ForProcess(uint expectedProcessId)
@@ -152,42 +167,82 @@ function Save-WindowCapture {
         [string] $LiteralPath
     )
 
-    [void][MechoFly.RuntimeSmoke.WindowProbe]::Activate(
-        [int64]$Window.handle)
-    Start-Sleep -Milliseconds 250
-    $Virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
-    $Left = [Math]::Max($Virtual.Left, [int]$Window.x)
-    $Top = [Math]::Max($Virtual.Top, [int]$Window.y)
-    $Right = [Math]::Min(
-        $Virtual.Right,
-        [int]$Window.x + [int]$Window.width)
-    $Bottom = [Math]::Min(
-        $Virtual.Bottom,
-        [int]$Window.y + [int]$Window.height)
-    $Width = $Right - $Left
-    $Height = $Bottom - $Top
-    if ($Width -le 0 -or $Height -le 0) {
-        throw ('Visible application window was outside the virtual screen: ' +
-            [string]$Window.title)
+    $CaptureMethod = 'desktop-composition'
+    $CaptureWidth = 0
+    $CaptureHeight = 0
+    if ([string]$Window.class_name -eq 'Window Class') {
+        $CaptureMethod = 'print-window-full-content'
+        $CaptureWidth = [int]$Window.width
+        $CaptureHeight = [int]$Window.height
+        $Bitmap = New-Object System.Drawing.Bitmap(
+            $CaptureWidth,
+            $CaptureHeight)
+        $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
+        try {
+            $DeviceContext = $Graphics.GetHdc()
+            try {
+                $Printed = [MechoFly.RuntimeSmoke.WindowProbe]::Print(
+                    [int64]$Window.handle,
+                    $DeviceContext)
+            }
+            finally {
+                $Graphics.ReleaseHdc($DeviceContext)
+            }
+            if (-not $Printed) {
+                throw ('Full-content window capture failed: ' +
+                    [string]$Window.title)
+            }
+            $Bitmap.Save(
+                $LiteralPath,
+                [System.Drawing.Imaging.ImageFormat]::Png)
+        }
+        finally {
+            $Graphics.Dispose()
+            $Bitmap.Dispose()
+        }
     }
+    else {
+        [void][MechoFly.RuntimeSmoke.WindowProbe]::Activate(
+            [int64]$Window.handle)
+        Start-Sleep -Milliseconds 250
+        $Virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
+        $Left = [Math]::Max($Virtual.Left, [int]$Window.x)
+        $Top = [Math]::Max($Virtual.Top, [int]$Window.y)
+        $Right = [Math]::Min(
+            $Virtual.Right,
+            [int]$Window.x + [int]$Window.width)
+        $Bottom = [Math]::Min(
+            $Virtual.Bottom,
+            [int]$Window.y + [int]$Window.height)
+        $CaptureWidth = $Right - $Left
+        $CaptureHeight = $Bottom - $Top
+        if ($CaptureWidth -le 0 -or $CaptureHeight -le 0) {
+            throw ('Visible application window was outside the virtual screen: ' +
+                [string]$Window.title)
+        }
 
-    $Bitmap = New-Object System.Drawing.Bitmap($Width, $Height)
-    $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
-    try {
-        $Graphics.CopyFromScreen(
-            $Left,
-            $Top,
-            0,
-            0,
-            (New-Object System.Drawing.Size($Width, $Height)),
-            [System.Drawing.CopyPixelOperation]::SourceCopy)
-        $Bitmap.Save(
-            $LiteralPath,
-            [System.Drawing.Imaging.ImageFormat]::Png)
-    }
-    finally {
-        $Graphics.Dispose()
-        $Bitmap.Dispose()
+        $Bitmap = New-Object System.Drawing.Bitmap(
+            $CaptureWidth,
+            $CaptureHeight)
+        $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
+        try {
+            $Graphics.CopyFromScreen(
+                $Left,
+                $Top,
+                0,
+                0,
+                (New-Object System.Drawing.Size(
+                    $CaptureWidth,
+                    $CaptureHeight)),
+                [System.Drawing.CopyPixelOperation]::SourceCopy)
+            $Bitmap.Save(
+                $LiteralPath,
+                [System.Drawing.Imaging.ImageFormat]::Png)
+        }
+        finally {
+            $Graphics.Dispose()
+            $Bitmap.Dispose()
+        }
     }
 
     return [pscustomobject][ordered]@{
@@ -195,8 +250,12 @@ function Save-WindowCapture {
         sha256 = (Get-FileHash `
             -LiteralPath $LiteralPath `
             -Algorithm SHA256).Hash
-        width = $Width
-        height = $Height
+        width = $CaptureWidth
+        height = $CaptureHeight
+        capture_method = $CaptureMethod
+        full_window = (
+            $CaptureWidth -eq [int]$Window.width -and
+            $CaptureHeight -eq [int]$Window.height)
         source_window = $Window
     }
 }
@@ -329,6 +388,16 @@ finally {
     $env:RUST_LOG = $PreviousLog
 }
 
+$AllCaptures = @($Cases | ForEach-Object {
+    @($_.screenshots)
+})
+$FullWindowCaptures = @($AllCaptures | Where-Object {
+    -not [bool]$_.full_window
+}).Count -eq 0
+if (-not $FullWindowCaptures) {
+    throw 'At least one GUI evidence image was clipped.'
+}
+
 Write-JsonFile `
     -LiteralPath (Join-Path $OutputDirectory 'summary.json') `
     -Value ([ordered]@{
@@ -337,6 +406,7 @@ Write-JsonFile `
         cases = @($Cases)
         normal_scale_desktop_capture = $true
         comprehensive_neural_window_capture = $true
+        full_window_captures = $FullWindowCaptures
         source_mutation = $false
         live_hardware_authority = 'NONE'
     })
