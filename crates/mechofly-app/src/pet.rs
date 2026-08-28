@@ -1665,7 +1665,7 @@ mod tests {
         };
 
         record(&motion, Behavior::Walk, elapsed);
-        for frame in 1..=120 {
+        for frame in 1_u32..=120 {
             motion.advance(1.0 / 60.0, Behavior::Walk, origin, screen, false, None);
             elapsed += 1.0 / 60.0;
             if frame.is_multiple_of(60) {
