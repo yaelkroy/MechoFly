@@ -1855,12 +1855,12 @@ mod tests {
     fn heading_points_the_head_along_the_velocity_vector() {
         let right = pet_scene(Skin::Firefly, Behavior::Rest, 0.0, 0.0, 0.0, true);
         let left = pet_scene(Skin::Firefly, Behavior::Rest, 0.0, 0.0, PI, true);
-        let eye_x = |scene: &[Primitive]| {
+        let head_x = |scene: &[Primitive]| {
             scene
                 .iter()
                 .filter_map(|primitive| match primitive {
                     Primitive::Ellipse { center, fill, .. }
-                        if fill.0 >= 200 && fill.1 < 100 && fill.2 < 50 && fill.3 == 255 =>
+                        if fill.0 == 4 && fill.1 == 13 && fill.2 == 17 && fill.3 == 255 =>
                     {
                         Some(center[0])
                     }
@@ -1869,8 +1869,8 @@ mod tests {
                 .next()
                 .unwrap()
         };
-        assert!(eye_x(&right) > CENTER[0]);
-        assert!(eye_x(&left) < CENTER[0]);
+        assert!(head_x(&right) > CENTER[0]);
+        assert!(head_x(&left) < CENTER[0]);
     }
 
     #[test]
