@@ -1,0 +1,209 @@
+name: Validate Screen Ecotope desktop terrain
+
+on:
+  push:
+    branches:
+      - feat/screen-ecotope-desktop-terrain-v1
+    paths:
+      - .github/workflows/validate-screen-ecotope-desktop-terrain-v1.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: screen-ecotope-desktop-terrain-v1-finalization
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-gnu
+      - name: Apply exact desktop-terrain integration
+        shell: bash
+        run: python3 tools/Apply-ScreenEcotope-DesktopTerrain-V1.py
+      - name: Validate native and Windows-visible Rust
+        shell: bash
+        run: |
+          cargo fmt --all
+          git diff --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo check --workspace --locked --target x86_64-pc-windows-gnu
+          grep -q '^mod desktop_terrain;$' crates/mechofly-app/src/main.rs
+          grep -q 'EnumWindows' crates/mechofly-app/src/desktop_terrain.rs
+          grep -q 'LOCAL_TOP_LEVEL_GEOMETRY_ONLY_NO_CONTENT_CAPTURE' crates/mechofly-app/src/desktop_terrain.rs
+          if grep -R --line-number -E 'GetWindowText|OCR|clipboard|typed.content' crates/mechofly-app/src/desktop_terrain.rs; then
+            echo 'The structural census contains prohibited content collection.' >&2
+            exit 1
+          fi
+      - name: Publish exact desktop-terrain candidate
+        id: candidate
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm \
+            .github/workflows/validate-screen-ecotope-desktop-terrain-v1.yml \
+            tools/Apply-ScreenEcotope-DesktopTerrain-V1.py
+          git add -A
+          git diff --cached --check
+          git commit -m "Add privacy-preserving desktop terrain census"
+          git push origin HEAD:feat/screen-ecotope-desktop-terrain-v1
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  windows_acceptance:
+    needs: integrate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.integrate.outputs.candidate_sha }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          components: rustfmt, clippy
+      - name: Parse Windows PowerShell scripts
+        shell: powershell
+        run: |
+          $errors = @()
+          Get-ChildItem -Recurse -Filter '*.ps1' | ForEach-Object {
+            $tokens = $null
+            $parse = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parse) | Out-Null
+            $errors += @($parse)
+          }
+          if ($errors.Count -gt 0) { $errors | Format-List -Force; throw 'PowerShell parser failure.' }
+      - name: Verify source tree and Rust quality
+        shell: powershell
+        run: |
+          .\tools\Verify-Tree.ps1
+          cargo fmt --all --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Compile Windows executable
+        shell: powershell
+        run: .\host-windows\build.ps1
+      - name: Run deterministic schema-v8 safety receipt
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Path .\artifacts -Force | Out-Null
+          $executable = (Resolve-Path .\host-windows\bin\MechoFly.exe).Path
+          $receiptPath = Join-Path $PWD 'artifacts\self-test.json'
+          $arguments = '--self-test "{0}"' -f $receiptPath
+          $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Self-test exited $($process.ExitCode)" }
+          $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+          if ($receipt.schema_version -ne 8 -or $receipt.status -ne 'PASS') { throw 'Desktop terrain safety receipt failed.' }
+          foreach ($name in @(
+            'screen_ecotope_enabled',
+            'ecotope_deterministic_replay',
+            'ecotope_stationary_source',
+            'ecotope_plume_changes_without_source_motion',
+            'ecotope_reward_updates_belief',
+            'ecotope_generated_only_resource_semantics',
+            'ecotope_habitat_hidden_in_work_mode',
+            'cursor_stationary_not_loom',
+            'cursor_approach_loom',
+            'clock_ethogram_removed',
+            'work_mode_click_through',
+            'observatory_preserves_topmost',
+            'no_focus_activation',
+            'habitat_shelf_available',
+            'habitat_shelf_default_closed',
+            'habitat_shelf_explicit_open_supported',
+            'habitat_shelf_map_dimensions_valid',
+            'habitat_shelf_art_has_no_resource_authority',
+            'observe_hotkey_contract',
+            'desktop_terrain_enabled',
+            'desktop_terrain_deterministic_summary',
+            'desktop_terrain_stable_edges_available',
+            'desktop_terrain_peripheral_refuge_selected',
+            'desktop_terrain_no_content_capture',
+            'desktop_terrain_no_semantic_resource_inference'
+          )) {
+            if (-not [bool]$receipt.$name) { throw "Receipt invariant failed: $name" }
+          }
+          if ($receipt.desktop_terrain_claim -ne 'LOCAL_TOP_LEVEL_GEOMETRY_ONLY_NO_CONTENT_CAPTURE') {
+            throw 'Desktop terrain evidence claim is incorrect.'
+          }
+          Get-Content -LiteralPath $receiptPath -Raw | Write-Host
+      - name: Exercise Work and Observe GUI boundaries
+        shell: powershell
+        run: |
+          .\tools\Test-Windows-GuiStartup.ps1 `
+            -ExecutablePath .\host-windows\bin\MechoFly.exe `
+            -OutputDirectory .\artifacts\runtime-smoke `
+            -ObservationSeconds 12
+          $summary = Get-Content .\artifacts\runtime-smoke\summary.json -Raw | ConvertFrom-Json
+          if ($summary.schema_version -ne 3 -or $summary.status -ne 'PASS') { throw 'GUI evidence receipt failed.' }
+          if (@($summary.cases).Count -ne 3) { throw 'Expected three GUI cases.' }
+          if (-not $summary.pet_foreground_captured) { throw 'Pet foreground evidence is absent.' }
+          if (-not $summary.neural_frames_synchronized) { throw 'Neural windows are not synchronized.' }
+          if (-not $summary.skin_titles_matched) { throw 'Skin titles do not match.' }
+          if (-not $summary.full_window_captures) { throw 'A GUI evidence image is clipped.' }
+          $observe = @($summary.cases | Where-Object { $_.case -eq 'observe-ecotope' })
+          if ($observe.Count -ne 1) { throw 'Observe Mode GUI case is absent.' }
+          $shelf = @($observe[0].screenshots | Where-Object {
+            [string]$_.source_window.title -like '*Screen Ecotope*'
+          })
+          if ($shelf.Count -ne 1 -or -not [bool]$shelf[0].full_window) {
+            throw 'Habitat Shelf evidence is absent or clipped.'
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mechofly-screen-ecotope-desktop-terrain-v1
+          path: |
+            artifacts/
+            host-windows/bin/
+          if-no-files-found: error
+
+  open_draft_pr:
+    needs: [integrate, windows_acceptance]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open validated draft pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ needs.integrate.outputs.candidate_sha }}
+        run: |
+          body=$(cat <<EOF
+          ## Implemented desktop-terrain increment
+
+          - one-hertz, event-bounded census of visible top-level Windows rectangles;
+          - persistence tracking for stable surfaces and their edge segments;
+          - focused-window area and cursor-proximity human-risk proxy;
+          - deterministic peripheral refuge selection;
+          - stable window-edge exploration targets supplied to the hidden Screen Ecotope;
+          - surface, edge, focus, and human-risk evidence in Brain Lab and the Habitat Shelf;
+          - no window-title, control-text, screenshot, OCR, URL, file-name, clipboard, or typed-content collection;
+          - no semantic conversion of ordinary UI content into food, water, or shelter.
+
+          ## Validated candidate
+
+          Commit: \`$CANDIDATE_SHA\`
+
+          The exact candidate passed native formatting/tests/Clippy, a Windows-target cross-check, PowerShell parsing, native Windows tests and warnings-denied Clippy, release compilation, schema-v8 deterministic safety receipt, two Work Mode GUI cases, and the Observe Mode shelf case before this draft was opened.
+
+          ## Evidence boundary
+
+          This is geometric desktop terrain, not computer-vision understanding and not measured animal perception. UI Automation control-level no-go regions, screenshot semantics, OCR, and content classification are absent. The human-risk value is a software proxy, not a measured gaze or annoyance score.
+          EOF
+          )
+          gh pr create \
+            --repo yaelkroy/MechoFly \
+            --draft \
+            --base feat/screen-ecotope-observe-mode-v1 \
+            --head feat/screen-ecotope-desktop-terrain-v1 \
+            --title 'Add privacy-preserving desktop terrain census' \
+            --body "$body"
