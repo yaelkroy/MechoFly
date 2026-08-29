@@ -48,6 +48,7 @@ jobs:
           output.write_text('\n'.join(reconstructed) + '\n', encoding='utf-8')
           PY
           python3 /tmp/apply-screen-ecotope-v1.py
+          nl -ba crates/mechofly-app/src/screen_ecotope.rs | sed -n '150,195p'
           cargo fmt --all
           cargo test --workspace --locked
           git diff --check
