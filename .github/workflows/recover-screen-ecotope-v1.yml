@@ -1,0 +1,70 @@
+name: Recover Screen Ecotope work-mode implementation
+
+on:
+  push:
+    branches:
+      - feat/screen-ecotope-work-mode-v1
+    paths:
+      - .github/workflows/recover-screen-ecotope-v1.yml
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Reconstruct and execute the implementation payload
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('.github/workflows/apply-screen-ecotope-v1.yml').read_text(encoding='utf-8')
+          opening = "          python3 - <<'PY'\n"
+          start = source.index(opening) + len(opening)
+          end = source.index("\n          PY\n", start)
+          payload = source[start:end]
+          prefix = '          '
+          reconstructed = []
+          inside_triple = False
+          for line_number, raw_line in enumerate(payload.splitlines(), start=1):
+              line = raw_line
+              if not inside_triple and line:
+                  if not line.startswith(prefix):
+                      raise SystemExit(
+                          f'embedded implementation line {line_number} lacks YAML indentation'
+                      )
+                  line = line[len(prefix):]
+              if line.count("'''") % 2 == 1:
+                  inside_triple = not inside_triple
+              reconstructed.append(line)
+          if inside_triple:
+              raise SystemExit('embedded implementation ended inside a triple-quoted string')
+          output = Path('/tmp/apply-screen-ecotope-v1.py')
+          output.write_text('\n'.join(reconstructed) + '\n', encoding='utf-8')
+          PY
+          python3 /tmp/apply-screen-ecotope-v1.py
+          cargo fmt --all
+          cargo test --workspace --locked
+          git diff --check
+      - name: Publish implementation candidate
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm -r tools/.screen-ecotope-patch
+          git add \
+            crates/mechofly-app/src/app.rs \
+            crates/mechofly-app/src/brain_lab.rs \
+            crates/mechofly-app/src/desktop_pet.rs \
+            crates/mechofly-app/src/main.rs \
+            crates/mechofly-app/src/pet.rs \
+            crates/mechofly-app/src/screen_ecotope.rs \
+            crates/mechofly-app/src/self_test.rs \
+            crates/mechofly-core/src/model.rs
+          git commit -m "Implement Screen Ecotope work mode"
+          git push origin HEAD:feat/screen-ecotope-work-mode-v1
