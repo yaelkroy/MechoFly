@@ -601,20 +601,26 @@ function Invoke-GuiCase {
             throw ('Expected exactly two neural evidence windows; found ' +
                 [string]$NeuralWindows.Count + '.')
         }
-        $ExpectedSkinTitlePassed = @($NeuralWindows | Where-Object {
-            [string]$_.title -notlike ($ExpectedSkinLabel + ' — *')
+        $NeuralWindowTitles = @($NeuralWindows | ForEach-Object {
+            [string]$_.title
+        })
+        $ExpectedSkinTitlePassed = @($NeuralWindowTitles | Where-Object {
+            -not $_.StartsWith(
+                $ExpectedSkinLabel + ' ',
+                [System.StringComparison]::Ordinal)
         }).Count -eq 0
         if (-not $ExpectedSkinTitlePassed) {
             throw ('A neural window title does not match skin ' +
-                $ExpectedSkinLabel + '.')
+                $ExpectedSkinLabel + '; actual=' +
+                ($NeuralWindowTitles -join ' | '))
         }
-        $NeuralFrames = @($NeuralWindows | ForEach-Object {
+        $NeuralFrames = @($NeuralWindowTitles | ForEach-Object {
             $Match = [regex]::Match(
-                [string]$_.title,
-                ' — frame (?<frame>[0-9]{8})$')
+                $_,
+                'frame (?<frame>[0-9]{8})$')
             if (-not $Match.Success) {
                 throw ('Neural evidence title has no frozen frame: ' +
-                    [string]$_.title)
+                    [string]$_)
             }
             [uint64]$Match.Groups['frame'].Value
         })
