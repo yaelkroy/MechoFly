@@ -1,0 +1,98 @@
+name: Repair Screen Ecotope integration gate
+
+on:
+  push:
+    branches:
+      - feat/screen-ecotope-work-mode-v2
+    paths:
+      - .github/workflows/repair-screen-ecotope-integration-v1.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Apply or recover integration
+        shell: bash
+        run: |
+          if ! grep -q '^mod ecotope;$' crates/mechofly-app/src/main.rs; then
+            python3 tools/Apply-ScreenEcotope-WorkMode-V1.py
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+
+          app = Path('crates/mechofly-app/src/app.rs')
+          text = app.read_text(encoding='utf-8')
+          old = '''            cursor_over_pet,
+          );
+          self.session.set_cursor_loom_strength'''
+          new = '''            cursor_over_pet && held,
+          );
+          self.session.set_cursor_loom_strength'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          app.write_text(text, encoding='utf-8', newline='\n')
+
+          model = Path('crates/mechofly-core/src/model.rs')
+          text = model.read_text(encoding='utf-8')
+          old = '''            .map(|frame| match (frame / 90) % 9 {
+                0 => Behavior::Rest,'''
+          new = '''            .map(|frame| {
+                let legacy_slot = (frame / 90).rem_euclid(9);
+                match legacy_slot {
+                0 => Behavior::Rest,'''
+          if old in text:
+              text = text.replace(old, new, 1)
+              old_tail = '''                _ => Behavior::Reverse,
+            })
+            .collect::<Vec<_>>();'''
+              new_tail = '''                _ => Behavior::Reverse,
+                }
+            })
+            .collect::<Vec<_>>();'''
+              if text.count(old_tail) != 1:
+                  raise SystemExit('Legacy comparison tail is not unique.')
+              text = text.replace(old_tail, new_tail, 1)
+          model.write_text(text, encoding='utf-8', newline='\n')
+          PY
+      - name: Format and validate recovered candidate
+        shell: bash
+        run: |
+          cargo fmt --all
+          git diff --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          if grep -R --line-number --fixed-strings 'HWND_NOTOPMOST' crates/mechofly-app/src; then
+            echo 'The pet still contains a neural-window Z-order demotion path.' >&2
+            exit 1
+          fi
+          if grep -R --line-number --fixed-strings '(state.frame / 90) % 9' crates/mechofly-core/src; then
+            echo 'The clock-driven fallback ethogram remains.' >&2
+            exit 1
+          fi
+      - name: Publish recovered candidate
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm \
+            .github/workflows/apply-screen-ecotope-work-mode-v1.yml \
+            .github/workflows/repair-screen-ecotope-integration-v1.yml \
+            tools/Apply-ScreenEcotope-WorkMode-V1.py
+          git add \
+            .github/workflows/windows.yml \
+            crates/mechofly-app/src/app.rs \
+            crates/mechofly-app/src/brain_lab.rs \
+            crates/mechofly-app/src/desktop_pet.rs \
+            crates/mechofly-app/src/main.rs \
+            crates/mechofly-app/src/pet.rs \
+            crates/mechofly-app/src/self_test.rs \
+            crates/mechofly-core/src/model.rs
+          git diff --cached --check
+          git commit -m "Implement Screen Ecotope work mode"
+          git push origin HEAD:feat/screen-ecotope-work-mode-v2
