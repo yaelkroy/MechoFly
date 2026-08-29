@@ -6,6 +6,7 @@ on:
       - feat/screen-ecotope-work-mode-v1
     paths:
       - .github/workflows/run-screen-ecotope-lint-repair.yml
+      - tools/fix_screen_ecotope_clippy.py
 
 permissions:
   contents: write
