@@ -1,0 +1,57 @@
+name: Apply Screen Ecotope work-mode integration
+
+on:
+  push:
+    branches:
+      - feat/screen-ecotope-work-mode-v2
+    paths:
+      - .github/workflows/apply-screen-ecotope-work-mode-v1.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Apply exact integration
+        shell: bash
+        run: python3 tools/Apply-ScreenEcotope-WorkMode-V1.py
+      - name: Format and validate Rust
+        shell: bash
+        run: |
+          cargo fmt --all
+          git diff --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          if grep -R --line-number --fixed-strings 'HWND_NOTOPMOST' crates/mechofly-app/src; then
+            echo 'The pet still contains a neural-window Z-order demotion path.' >&2
+            exit 1
+          fi
+          if grep -R --line-number --fixed-strings '(state.frame / 90) % 9' crates/mechofly-core/src; then
+            echo 'The clock-driven fallback ethogram remains.' >&2
+            exit 1
+          fi
+      - name: Publish integrated candidate
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm \
+            .github/workflows/apply-screen-ecotope-work-mode-v1.yml \
+            tools/Apply-ScreenEcotope-WorkMode-V1.py
+          git add \
+            .github/workflows/windows.yml \
+            crates/mechofly-app/src/app.rs \
+            crates/mechofly-app/src/brain_lab.rs \
+            crates/mechofly-app/src/desktop_pet.rs \
+            crates/mechofly-app/src/main.rs \
+            crates/mechofly-app/src/pet.rs \
+            crates/mechofly-app/src/self_test.rs \
+            crates/mechofly-core/src/model.rs
+          git diff --cached --check
+          git commit -m "Implement Screen Ecotope work mode"
+          git push origin HEAD:feat/screen-ecotope-work-mode-v2
