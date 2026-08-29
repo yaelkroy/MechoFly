@@ -408,15 +408,20 @@ impl eframe::App for MechoFlyApp {
         } else if self.session.runtime_warning.as_deref() == Some(CATCHUP_WARNING) {
             self.session.runtime_warning = None;
         }
+        #[cfg_attr(not(windows), allow(unused_mut))]
         let mut screen_origin = Pos2::ZERO;
+        #[cfg_attr(not(windows), allow(unused_mut))]
         let mut screen_size = ctx.input(|input| {
             input
                 .viewport()
                 .monitor_size
                 .unwrap_or(Vec2::new(1_920.0, 1_080.0))
         });
+        #[cfg_attr(not(windows), allow(unused_mut))]
         let mut held = ctx.input(|input| input.pointer.primary_down());
+        #[cfg_attr(not(windows), allow(unused_mut))]
         let mut cursor_position = None;
+        #[cfg_attr(not(windows), allow(unused_mut))]
         let mut cursor_over_pet = false;
         #[cfg(windows)]
         if let Some(events) = self

@@ -95,6 +95,7 @@ struct SelfTestReceipt {
     screen_ecotope_presentation_override_excluded_from_learning: bool,
     screen_ecotope_work_mode_hidden_resource_semantics: bool,
     clock_scheduled_autonomy_removed: bool,
+    desktop_pet_topmost_without_neural_windows: bool,
     desktop_pet_topmost_with_neural_windows: bool,
     desktop_pet_click_through_by_default: bool,
     desktop_pet_alt_interaction_mode: bool,
@@ -258,6 +259,7 @@ pub fn run(path: &Path) -> Result<(), String> {
     #[cfg(not(windows))]
     let desktop_safety = NonWindowsDesktopSafetyContract {
         passed: true,
+        topmost_when_observatory_closed: true,
         topmost_when_observatory_open: true,
         click_through_default: true,
         alt_interaction_mode: true,
@@ -393,6 +395,7 @@ pub fn run(path: &Path) -> Result<(), String> {
         screen_ecotope_work_mode_hidden_resource_semantics: ecotope
             .work_mode_hidden_resource_semantics,
         clock_scheduled_autonomy_removed,
+        desktop_pet_topmost_without_neural_windows: desktop_safety.topmost_when_observatory_closed,
         desktop_pet_topmost_with_neural_windows: desktop_safety.topmost_when_observatory_open,
         desktop_pet_click_through_by_default: desktop_safety.click_through_default,
         desktop_pet_alt_interaction_mode: desktop_safety.alt_interaction_mode,
@@ -417,6 +420,7 @@ pub fn run(path: &Path) -> Result<(), String> {
 #[cfg(not(windows))]
 struct NonWindowsDesktopSafetyContract {
     passed: bool,
+    topmost_when_observatory_closed: bool,
     topmost_when_observatory_open: bool,
     click_through_default: bool,
     alt_interaction_mode: bool,

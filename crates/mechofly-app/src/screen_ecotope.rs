@@ -617,7 +617,7 @@ impl ScreenEcotope {
         let contamination_bucket = self.last_frame / 1_800;
         let next_bucket = (self.last_frame + frames as u64) / 1_800;
         if next_bucket > contamination_bucket
-            && mix64(self.seed ^ next_bucket ^ 0xC07A_61A7) % 4 == 0
+            && mix64(self.seed ^ next_bucket ^ 0xC07A_61A7).is_multiple_of(4)
         {
             self.motivation.contamination_q15 = self
                 .motivation
@@ -753,7 +753,7 @@ impl ScreenEcotope {
         };
         let distance_factor = (1.0 - pet_center.distance(plume) / radius).clamp(0.0, 1.0);
         let dropout_bucket = frame / 45;
-        let dropout = mix64(self.seed ^ dropout_bucket ^ 0xD20F_0F5E) % 13 == 0;
+        let dropout = mix64(self.seed ^ dropout_bucket ^ 0xD20F_0F5E).is_multiple_of(13);
         let continuity = if dropout { 0.08 } else { 1.0 };
         (distance_factor * continuity * self.source.quality_q15 as f32)
             .round()
@@ -827,8 +827,8 @@ pub struct ScreenEcotopeSelfTest {
 pub fn run_screen_ecotope_self_test() -> ScreenEcotopeSelfTest {
     let origin = Pos2::ZERO;
     let size = Vec2::new(1_920.0, 1_080.0);
-    let mut a = ScreenEcotope::new(0xEC07_0FE, EcotopeMode::Work);
-    let mut b = ScreenEcotope::new(0xEC07_0FE, EcotopeMode::Work);
+    let mut a = ScreenEcotope::new(0x0EC0_70FE, EcotopeMode::Work);
+    let mut b = ScreenEcotope::new(0x0EC0_70FE, EcotopeMode::Work);
     let mut deterministic_replay = true;
     for frame in 1..=1_200 {
         let cursor = if (300..360).contains(&frame) {
@@ -876,7 +876,7 @@ pub fn run_screen_ecotope_self_test() -> ScreenEcotopeSelfTest {
     }
     let stationary_cursor_safe = stationary_threat < 0.25;
 
-    let mut closing = ScreenEcotope::new(0xC105_1A6, EcotopeMode::Work);
+    let mut closing = ScreenEcotope::new(0x0C10_51A6, EcotopeMode::Work);
     let mut maximum_threat = 0.0_f32;
     for frame in 1..=36 {
         let cursor = Pos2::new(1_520.0 - frame as f32 * 22.0, 660.0);
