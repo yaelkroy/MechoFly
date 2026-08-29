@@ -1,0 +1,245 @@
+name: Validate Screen Ecotope work mode
+
+on:
+  push:
+    branches:
+      - feat/screen-ecotope-work-mode-v2
+    paths:
+      - .github/workflows/validate-screen-ecotope-work-mode-v1.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: screen-ecotope-work-mode-v2-finalization
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Apply or recover the implementation
+        shell: bash
+        run: |
+          if ! grep -q '^mod ecotope;$' crates/mechofly-app/src/main.rs; then
+            python3 tools/Apply-ScreenEcotope-WorkMode-V1.py
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+
+          app = Path('crates/mechofly-app/src/app.rs')
+          text = app.read_text(encoding='utf-8')
+          text = text.replace(
+              '            cursor_over_pet,\n          );\n          self.session.set_cursor_loom_strength',
+              '            cursor_over_pet && held,\n          );\n          self.session.set_cursor_loom_strength',
+              1,
+          )
+          app.write_text(text, encoding='utf-8', newline='\n')
+
+          model = Path('crates/mechofly-core/src/model.rs')
+          text = model.read_text(encoding='utf-8')
+          old = '''            .map(|frame| match (frame / 90) % 9 {
+                0 => Behavior::Rest,'''
+          if old in text:
+              text = text.replace(
+                  old,
+                  '''            .map(|frame| {
+                let legacy_slot = (frame / 90).rem_euclid(9);
+                match legacy_slot {
+                    0 => Behavior::Rest,''',
+                  1,
+              )
+              tail = '''                _ => Behavior::Reverse,
+            })
+            .collect::<Vec<_>>();'''
+              replacement = '''                    _ => Behavior::Reverse,
+                }
+            })
+            .collect::<Vec<_>>();'''
+              if text.count(tail) != 1:
+                  raise SystemExit('Legacy comparison tail is not unique.')
+              text = text.replace(tail, replacement, 1)
+          model.write_text(text, encoding='utf-8', newline='\n')
+
+          desktop = Path('crates/mechofly-app/src/desktop_pet.rs')
+          text = desktop.read_text(encoding='utf-8')
+          text = text.replace(
+              '            if self.topmost_refresh_ticks >= 120 {\n',
+              '            if self.topmost_refresh_ticks >= 120\n                && !self.shared.evidence_hold.load(Ordering::Acquire)\n            {\n',
+              1,
+          )
+          desktop.write_text(text, encoding='utf-8', newline='\n')
+          PY
+      - name: Validate Linux-visible implementation
+        shell: bash
+        run: |
+          cargo fmt --all
+          git diff --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          if grep -R --line-number --fixed-strings 'HWND_NOTOPMOST' crates/mechofly-app/src; then
+            echo 'The pet still contains a neural-window Z-order demotion path.' >&2
+            exit 1
+          fi
+          if grep -R --line-number --fixed-strings '(state.frame / 90) % 9' crates/mechofly-core/src; then
+            echo 'The clock-driven fallback ethogram remains.' >&2
+            exit 1
+          fi
+      - name: Publish exact candidate
+        id: candidate
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm -f --ignore-unmatch \
+            .github/workflows/apply-screen-ecotope-work-mode-v1.yml \
+            .github/workflows/repair-screen-ecotope-integration-v1.yml \
+            .github/workflows/validate-screen-ecotope-work-mode-v1.yml \
+            tools/Apply-ScreenEcotope-WorkMode-V1.py
+          git add -A
+          git diff --cached --check
+          git commit -m "Implement Screen Ecotope work mode"
+          git push origin HEAD:feat/screen-ecotope-work-mode-v2
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  windows_acceptance:
+    needs: integrate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.integrate.outputs.candidate_sha }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          components: rustfmt, clippy
+      - name: Parse Windows PowerShell scripts
+        shell: powershell
+        run: |
+          $errors = @()
+          Get-ChildItem -Recurse -Filter '*.ps1' | ForEach-Object {
+            $tokens = $null
+            $parse = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parse) | Out-Null
+            $errors += @($parse)
+          }
+          if ($errors.Count -gt 0) { $errors | Format-List -Force; throw 'PowerShell parser failure.' }
+      - name: Verify source tree and Rust quality
+        shell: powershell
+        run: |
+          .\tools\Verify-Tree.ps1
+          cargo fmt --all --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Compile Windows executable
+        shell: powershell
+        run: .\host-windows\build.ps1
+      - name: Run deterministic safety receipt
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Path .\artifacts -Force | Out-Null
+          $executable = (Resolve-Path .\host-windows\bin\MechoFly.exe).Path
+          $receiptPath = Join-Path $PWD 'artifacts\self-test.json'
+          $arguments = '--self-test "{0}"' -f $receiptPath
+          $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Self-test exited $($process.ExitCode)" }
+          $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+          if ($receipt.schema_version -ne 6 -or $receipt.status -ne 'PASS') { throw 'Screen Ecotope receipt failed.' }
+          foreach ($name in @(
+            'screen_ecotope_enabled',
+            'ecotope_deterministic_replay',
+            'ecotope_stationary_source',
+            'ecotope_plume_changes_without_source_motion',
+            'ecotope_reward_updates_belief',
+            'ecotope_generated_only_resource_semantics',
+            'ecotope_habitat_hidden_in_work_mode',
+            'cursor_stationary_not_loom',
+            'cursor_approach_loom',
+            'clock_ethogram_removed',
+            'work_mode_click_through',
+            'observatory_preserves_topmost',
+            'no_focus_activation'
+          )) {
+            if (-not [bool]$receipt.$name) { throw "Receipt invariant failed: $name" }
+          }
+          Get-Content -LiteralPath $receiptPath -Raw | Write-Host
+      - name: Exercise real Windows GUI boundary
+        shell: powershell
+        run: |
+          .\tools\Test-Windows-GuiStartup.ps1 `
+            -ExecutablePath .\host-windows\bin\MechoFly.exe `
+            -OutputDirectory .\artifacts\runtime-smoke `
+            -ObservationSeconds 12
+          $summary = Get-Content .\artifacts\runtime-smoke\summary.json -Raw | ConvertFrom-Json
+          if ($summary.schema_version -ne 3 -or $summary.status -ne 'PASS') { throw 'GUI evidence receipt failed.' }
+          if (-not $summary.pet_foreground_captured) { throw 'Pet foreground evidence is absent.' }
+          if (-not $summary.neural_frames_synchronized) { throw 'Neural windows are not synchronized.' }
+          if (-not $summary.skin_titles_matched) { throw 'Skin titles do not match.' }
+          if (-not $summary.full_window_captures) { throw 'A GUI evidence image is clipped.' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mechofly-screen-ecotope-work-mode-v1
+          path: |
+            artifacts/
+            host-windows/bin/
+          if-no-files-found: error
+
+  open_draft_pr:
+    needs: [integrate, windows_acceptance]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open validated draft pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ needs.integrate.outputs.candidate_sha }}
+        run: |
+          existing=$(gh pr list \
+            --repo yaelkroy/MechoFly \
+            --head feat/screen-ecotope-work-mode-v2 \
+            --base feat/original-video-parity-rust-v5 \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+          body=$(cat <<EOF
+          ## Implemented vertical slice
+
+          - deterministic hidden Screen Ecotope with a stationary generated fermentation source;
+          - bounded drifting virtual plume separated from source truth;
+          - 32 by 18 interpretable spatial belief map with reward value and uncertainty;
+          - hunger, fatigue, approach, local search, exploration, refuge, alert, escape, quiet-wake, and rest state;
+          - cursor threat based on radial closing speed and time to contact rather than proximity alone;
+          - deterministic semi-Markov autonomous bouts replacing the fixed 90-frame behavior schedule;
+          - discrete navigation saccades, stationary alert, and non-billiard boundary response;
+          - Work Mode body input passes through unless Alt explicitly arms interaction;
+          - the layered pet remains topmost when Live Brain or Brain Lab is open;
+          - generated habitat remains invisible by default and untagged UI content never becomes a biological resource.
+
+          ## Validated candidate
+
+          Commit: \`$CANDIDATE_SHA\`
+
+          The branch passed formatting, all workspace tests, warnings-denied Clippy, Windows PowerShell parsing, Windows release compilation, schema-v6 deterministic safety receipt, and both real Windows GUI cases before this draft was opened.
+
+          ## Evidence boundary
+
+          This is a first work-mode implementation, not a complete biological calibration. The fermentation source, plume, motivation, ecological state, and spatial learning are authored or derived software constructs. No screenshots, OCR, document text, URLs, clipboard data, or typed content are collected. The Habitat Shelf, UI Automation census, visible resource art, and controlled learning experiment remain later milestones.
+          EOF
+          )
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --repo yaelkroy/MechoFly --body "$body"
+          else
+            gh pr create \
+              --repo yaelkroy/MechoFly \
+              --draft \
+              --base feat/original-video-parity-rust-v5 \
+              --head feat/screen-ecotope-work-mode-v2 \
+              --title 'Implement Screen Ecotope work mode' \
+              --body "$body"
+          fi
