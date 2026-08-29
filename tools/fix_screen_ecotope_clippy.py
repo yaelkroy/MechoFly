@@ -42,12 +42,12 @@ replace_once(
 )
 replace_once(
     self_test,
-    "        desktop_pet_topmost_with_neural_windows:\n"
-    "            desktop_safety.topmost_when_observatory_open,\n",
-    "        desktop_pet_topmost_without_neural_windows:\n"
-    "            desktop_safety.topmost_when_observatory_closed,\n"
-    "        desktop_pet_topmost_with_neural_windows:\n"
-    "            desktop_safety.topmost_when_observatory_open,\n",
+    "        desktop_pet_topmost_with_neural_windows: "
+    "desktop_safety.topmost_when_observatory_open,\n",
+    "        desktop_pet_topmost_without_neural_windows: "
+    "desktop_safety.topmost_when_observatory_closed,\n"
+    "        desktop_pet_topmost_with_neural_windows: "
+    "desktop_safety.topmost_when_observatory_open,\n",
     "self-test topmost assignment",
 )
 replace_once(
