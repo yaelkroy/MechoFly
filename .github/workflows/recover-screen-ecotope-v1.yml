@@ -48,7 +48,17 @@ jobs:
           output.write_text('\n'.join(reconstructed) + '\n', encoding='utf-8')
           PY
           python3 /tmp/apply-screen-ecotope-v1.py
-          nl -ba crates/mechofly-app/src/screen_ecotope.rs | sed -n '150,195p'
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('crates/mechofly-app/src/screen_ecotope.rs')
+          text = path.read_text(encoding='utf-8')
+          old = "}\n        }\n    }\n}\n\n#[derive(Clone, Debug, Eq, PartialEq)]\npub struct BeliefMap"
+          new = "}\n\n#[derive(Clone, Debug, Eq, PartialEq)]\npub struct BeliefMap"
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one duplicated BeliefCell boundary, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8', newline='\n')
+          PY
           cargo fmt --all
           cargo test --workspace --locked
           git diff --check
