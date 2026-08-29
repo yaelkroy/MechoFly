@@ -124,15 +124,7 @@ impl PetMotion {
         }
 
         self.speed_pixels_per_second = match behavior {
-            Behavior::Walk => {
-                self.heading_radians = wrapped_angle(
-                    self.heading_radians
-                        + (self.animation_seconds * 0.53).sin()
-                            * (0.025 / REFERENCE_TICK_SECONDS)
-                            * dt,
-                );
-                WALK_SPEED_PIXELS_PER_SECOND
-            }
+            Behavior::Walk => WALK_SPEED_PIXELS_PER_SECOND,
             Behavior::Reverse => REVERSE_SPEED_PIXELS_PER_SECOND,
             Behavior::PreEscape => ESCAPE_SPEED_PIXELS_PER_SECOND,
             Behavior::Flight => {
@@ -191,15 +183,40 @@ impl PetMotion {
             bounced_y = true;
         }
         if bounced_x {
-            self.heading_radians = wrapped_angle(PI - self.heading_radians);
+            let downward = (self.animation_seconds * 0.73).sin() >= 0.0;
+            self.heading_radians = if self.screen_position.x <= left {
+                if downward { 0.35 } else { -0.35 }
+            } else if downward {
+                PI - 0.35
+            } else {
+                -PI + 0.35
+            };
         }
         if bounced_y {
             if behavior == Behavior::Landing && self.screen_position.y >= bottom {
                 self.heading_radians = PI * 0.5;
                 self.speed_pixels_per_second = 0.0;
             } else {
-                self.heading_radians = wrapped_angle(-self.heading_radians);
+                let rightward = (self.animation_seconds * 0.61).cos() >= 0.0;
+                self.heading_radians = if self.screen_position.y <= top {
+                    if rightward {
+                        PI * 0.5 - 0.35
+                    } else {
+                        PI * 0.5 + 0.35
+                    }
+                } else if rightward {
+                    -PI * 0.5 + 0.35
+                } else {
+                    -PI * 0.5 - 0.35
+                };
             }
+        }
+    }
+
+    pub fn orient_toward(&mut self, target_position: Pos2) {
+        let displacement = target_position - self.screen_position;
+        if displacement.length_sq() > 4.0 {
+            self.heading_radians = wrapped_angle(displacement.y.atan2(displacement.x));
         }
     }
 }
@@ -255,13 +272,21 @@ pub fn run_motion_self_test() -> MotionSelfTest {
 
     let flight_start = airborne.screen_position;
     let mut flight_path_pixels = 0.0;
+    let mut flight_min_x = flight_start.x;
+    let mut flight_max_x = flight_start.x;
+    let mut flight_min_y = flight_start.y;
+    let mut flight_max_y = flight_start.y;
     for _ in 0..240 {
         let before = airborne.screen_position;
         airborne.advance(1.0 / 60.0, Behavior::Flight, origin, screen, false, None);
         flight_path_pixels += airborne.screen_position.distance(before);
+        flight_min_x = flight_min_x.min(airborne.screen_position.x);
+        flight_max_x = flight_max_x.max(airborne.screen_position.x);
+        flight_min_y = flight_min_y.min(airborne.screen_position.y);
+        flight_max_y = flight_max_y.max(airborne.screen_position.y);
     }
-    let flight_horizontal_pixels = (airborne.screen_position.x - flight_start.x).abs();
-    let flight_vertical_pixels = (airborne.screen_position.y - flight_start.y).abs();
+    let flight_horizontal_pixels = flight_max_x - flight_min_x;
+    let flight_vertical_pixels = flight_max_y - flight_min_y;
 
     airborne.screen_position.y = bottom - 48.0;
     let landing_start_y = airborne.screen_position.y;

@@ -17,6 +17,7 @@ use crate::{
     live_brain::{LiveBrainCommand, LiveBrainState},
     pet::{PET_HEIGHT, PET_WIDTH, PetMotion, Skin, draw_pet_at_age, transparent_frame},
     runtime::SimulationSession,
+    screen_ecotope::{EcotopeInput, EcotopeMode, EcotopeOutput, ScreenEcotope},
     tray::{TrayAction, TrayController},
 };
 
@@ -31,6 +32,7 @@ pub struct AppConfig {
     pub compute: ComputePreference,
     pub open_brain_lab: bool,
     pub reduced_motion: bool,
+    pub ecotope_mode: EcotopeMode,
     pub source_identity: RuntimeSourceIdentity,
 }
 
@@ -63,6 +65,8 @@ pub struct MechoFlyApp {
     pub live_brain: LiveBrainState,
     pub lab: BrainLabState,
     pub policy: PetPolicy,
+    pub ecotope_output: EcotopeOutput,
+    ecotope: ScreenEcotope,
     pub skin: Skin,
     source_identity: RuntimeSourceIdentity,
     pet: PetMotion,
@@ -90,6 +94,8 @@ impl MechoFlyApp {
             SimulationSession::calibrated(render_state.as_ref(), config.compute, seed, now);
         diagnostics::mark("capacity assessment and simulation session initialized");
         let policy = load_policy().unwrap_or_default();
+        let ecotope = ScreenEcotope::new(seed ^ 0x4543_4F54_4F50_4501, config.ecotope_mode);
+        let ecotope_output = ecotope.current_output();
         let tray_result = TrayController::new();
         let (tray, tray_warning) = match tray_result {
             Ok(tray) => (Some(tray), None),
@@ -139,6 +145,8 @@ impl MechoFlyApp {
             live_brain: LiveBrainState::new(config.open_brain_lab),
             lab: BrainLabState::new(config.open_brain_lab, config.compute),
             policy,
+            ecotope_output: ecotope_output.clone(),
+            ecotope,
             skin: config.skin,
             source_identity: config.source_identity,
             pet,
@@ -146,7 +154,7 @@ impl MechoFlyApp {
             desktop_pet,
             tray,
             tray_warning,
-            current_action: Action::Explore,
+            current_action: ecotope_output.action,
             last_context: PolicyContext {
                 behavior: Behavior::Rest,
                 recent_interaction: false,
@@ -190,12 +198,11 @@ impl MechoFlyApp {
             behavior: self.session.engine.state.behavior,
             recent_interaction,
         };
-        self.current_action = self.policy.choose(
-            self.last_context,
-            self.session.engine.state.frame,
-            self.seed,
-        );
-        self.session.stimulate_action(self.current_action);
+        self.current_action = self.ecotope_output.action;
+        if let Some(drive) = self.ecotope_output.drive {
+            self.session
+                .stimulate_behavior(drive.behavior, drive.duration_ms);
+        }
     }
 
     #[cfg(windows)]
@@ -392,9 +399,6 @@ impl eframe::App for MechoFlyApp {
                 self.session.step();
                 self.accumulator -= MODEL_INTERVAL;
                 steps += 1;
-                if self.session.engine.state.frame.is_multiple_of(90) {
-                    self.select_policy_action();
-                }
             }
         }
         if !self.evidence_hold && steps == MAX_CATCH_UP_STEPS && self.accumulator >= MODEL_INTERVAL
@@ -442,19 +446,34 @@ impl eframe::App for MechoFlyApp {
             }
             self.handle_hotkeys(events);
         }
-        let cursor_loom_strength = cursor_position
-            .map(|cursor| {
-                let pet_center =
-                    self.pet.screen_position + Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * 0.5;
-                let distance = pet_center.distance(cursor);
-                ((360.0 - distance) / 240.0).clamp(0.0, 1.0)
-            })
-            .unwrap_or(0.0);
-        self.session.set_cursor_loom_strength(if cursor_over_pet {
-            1.0
-        } else {
-            cursor_loom_strength
+        let recent_interaction = self
+            .last_interaction
+            .is_some_and(|time| time.elapsed() < Duration::from_secs(12));
+        let ecotope_output = self.ecotope.step(EcotopeInput {
+            frame: self.session.engine.state.frame,
+            behavior: self.session.engine.state.behavior,
+            pet_position: self.pet.screen_position,
+            screen_origin,
+            screen_size,
+            cursor_position,
+            cursor_over_pet,
+            observatory_open: self.live_brain.open || self.lab.open,
+            recent_interaction,
         });
+        if let Some(position) = ecotope_output.presentation_position {
+            self.pet.screen_position = position;
+        }
+        if ecotope_output.drive.is_some()
+            && let Some(target) = ecotope_output.target_position
+        {
+            self.pet.orient_toward(target);
+        }
+        self.lab.ecotope_status = ecotope_output.snapshot.status_line();
+        self.lab.ecotope_detail = ecotope_output.snapshot.detail_line();
+        self.ecotope_output = ecotope_output;
+        self.select_policy_action();
+        self.session
+            .set_cursor_loom_strength(self.ecotope_output.cursor_threat_strength);
         let presentation_elapsed = if self.evidence_hold {
             Duration::ZERO
         } else {

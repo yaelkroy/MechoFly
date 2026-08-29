@@ -9,6 +9,7 @@ mod diagnostics;
 mod live_brain;
 mod pet;
 mod runtime;
+mod screen_ecotope;
 mod self_test;
 mod tray;
 
@@ -19,6 +20,7 @@ use compute::ComputePreference;
 use pet::Skin;
 #[cfg(not(windows))]
 use pet::{PET_HEIGHT, PET_WIDTH};
+use screen_ecotope::EcotopeMode;
 use serde::Deserialize;
 
 fn main() {
@@ -96,6 +98,7 @@ struct RuntimeProfile {
     skin: Option<String>,
     compute: Option<ComputePreference>,
     reduced_motion: Option<bool>,
+    ecotope_mode: Option<String>,
     source_branch: Option<String>,
     source_commit: Option<String>,
     source_tree: Option<String>,
@@ -115,6 +118,11 @@ impl AppConfig {
             open_brain_lab: args.iter().any(|arg| arg == "--brain-lab"),
             reduced_motion: profile.reduced_motion.unwrap_or(false)
                 || args.iter().any(|arg| arg == "--reduced-motion"),
+            ecotope_mode: profile
+                .ecotope_mode
+                .as_deref()
+                .and_then(|value| EcotopeMode::from_str(value).ok())
+                .unwrap_or_default(),
             source_identity: RuntimeSourceIdentity {
                 branch: profile.source_branch,
                 commit: profile.source_commit,
@@ -132,6 +140,9 @@ impl AppConfig {
                 "gpu" => ComputePreference::Gpu,
                 _ => return Err(format!("unknown compute preference {value:?}")),
             };
+        }
+        if let Some(value) = option_value(args, "--ecotope") {
+            config.ecotope_mode = EcotopeMode::from_str(value)?;
         }
         Ok(config)
     }

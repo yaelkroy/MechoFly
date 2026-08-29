@@ -125,6 +125,7 @@ impl SimulationSession {
         true
     }
 
+    #[allow(dead_code)]
     pub fn stimulate_action(&mut self, action: Action) -> bool {
         let Some((behavior, duration_ms)) = neural_drive_for_action(action) else {
             self.authored_drive = None;

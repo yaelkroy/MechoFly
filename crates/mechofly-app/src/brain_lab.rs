@@ -62,6 +62,8 @@ pub struct BrainLabState {
     selected_index: usize,
     show_only_spiking: bool,
     pub message: String,
+    pub ecotope_status: String,
+    pub ecotope_detail: String,
 }
 
 impl BrainLabState {
@@ -85,6 +87,8 @@ impl BrainLabState {
             selected_index: 0,
             show_only_spiking: false,
             message: "No preview receipt. Live state cannot be targeted from this UI.".to_owned(),
+            ecotope_status: "ECOTOPE WORK · QUIET WAKE".to_owned(),
+            ecotope_detail: "modeled software ecology · generated fermentation source · no desktop content inference".to_owned(),
         }
     }
 
@@ -554,6 +558,18 @@ fn reference_layout(
         .frame(surface_frame())
         .show(ui, |ui| {
             behavior_program_panel(ui, session);
+            ui.add_space(3.0);
+            ui.separator();
+            ui.label(
+                egui::RichText::new(&state.ecotope_status)
+                    .strong()
+                    .color(POSITIVE),
+            );
+            ui.label(
+                egui::RichText::new(&state.ecotope_detail)
+                    .small()
+                    .color(MUTED),
+            );
             ui.add_space(3.0);
             ui.horizontal_wrapped(|ui| {
                 ui.label(egui::RichText::new("EVENT").strong().color(VIOLET));

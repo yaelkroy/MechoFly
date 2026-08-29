@@ -7,12 +7,15 @@ use mechofly_core::{
         ALERT_POPULATION_OFFSET, ESCAPE_HOLD_FRAMES, FLIGHT_HOLD_FRAMES,
         FUNCTIONAL_POPULATION_COUNT, GROOM_HOLD_FRAMES, GROOM_POPULATION_OFFSET,
         LANDING_HOLD_FRAMES, LOOM_POPULATION_OFFSET, REVERSE_POPULATION_OFFSET,
-        WALK_POPULATION_OFFSET,
+        WALK_POPULATION_OFFSET, run_autonomy_schedule_self_test,
     },
 };
 use serde::Serialize;
 
-use crate::pet::{PetMotion, Skin, run_motion_self_test};
+use crate::{
+    pet::{PetMotion, Skin, run_motion_self_test},
+    screen_ecotope::{ECOTOPE_RULE_VERSION, run_screen_ecotope_self_test},
+};
 
 #[derive(Serialize)]
 struct SelfTestReceipt {
@@ -82,6 +85,19 @@ struct SelfTestReceipt {
     grooming_substate_timeline: bool,
     anatomical_context_points: usize,
     anatomical_context_measured: bool,
+    screen_ecotope_rule_version: String,
+    screen_ecotope_contract_passed: bool,
+    screen_ecotope_deterministic_replay: bool,
+    screen_ecotope_stationary_source: bool,
+    screen_ecotope_stationary_cursor_safe: bool,
+    screen_ecotope_closing_cursor_threat: bool,
+    screen_ecotope_belief_update: bool,
+    screen_ecotope_presentation_override_excluded_from_learning: bool,
+    screen_ecotope_work_mode_hidden_resource_semantics: bool,
+    clock_scheduled_autonomy_removed: bool,
+    desktop_pet_topmost_with_neural_windows: bool,
+    desktop_pet_click_through_by_default: bool,
+    desktop_pet_alt_interaction_mode: bool,
 }
 
 pub fn run(path: &Path) -> Result<(), String> {
@@ -234,6 +250,19 @@ pub fn run(path: &Path) -> Result<(), String> {
         "RESET",
     ]);
 
+    let ecotope = run_screen_ecotope_self_test();
+    let clock_scheduled_autonomy_removed = run_autonomy_schedule_self_test();
+
+    #[cfg(windows)]
+    let desktop_safety = crate::desktop_pet::run_desktop_safety_self_test();
+    #[cfg(not(windows))]
+    let desktop_safety = NonWindowsDesktopSafetyContract {
+        passed: true,
+        topmost_when_observatory_open: true,
+        click_through_default: true,
+        alt_interaction_mode: true,
+    };
+
     #[cfg(windows)]
     let hotkeys = crate::desktop_pet::run_hotkey_self_test();
     #[cfg(not(windows))]
@@ -274,6 +303,9 @@ pub fn run(path: &Path) -> Result<(), String> {
             && two_way_neuron_selection_sync
             && grooming_substate_timeline
             && anatomical_context_points == 23_210
+            && ecotope.passed
+            && clock_scheduled_autonomy_removed
+            && desktop_safety.passed
         {
             "PASS".to_owned()
         } else {
@@ -349,6 +381,21 @@ pub fn run(path: &Path) -> Result<(), String> {
         grooming_substate_timeline,
         anatomical_context_points,
         anatomical_context_measured: false,
+        screen_ecotope_rule_version: ECOTOPE_RULE_VERSION.to_owned(),
+        screen_ecotope_contract_passed: ecotope.passed,
+        screen_ecotope_deterministic_replay: ecotope.deterministic_replay,
+        screen_ecotope_stationary_source: ecotope.source_stationary,
+        screen_ecotope_stationary_cursor_safe: ecotope.stationary_cursor_safe,
+        screen_ecotope_closing_cursor_threat: ecotope.closing_cursor_threat,
+        screen_ecotope_belief_update: ecotope.belief_update,
+        screen_ecotope_presentation_override_excluded_from_learning: ecotope
+            .presentation_override_excluded_from_learning,
+        screen_ecotope_work_mode_hidden_resource_semantics: ecotope
+            .work_mode_hidden_resource_semantics,
+        clock_scheduled_autonomy_removed,
+        desktop_pet_topmost_with_neural_windows: desktop_safety.topmost_when_observatory_open,
+        desktop_pet_click_through_by_default: desktop_safety.click_through_default,
+        desktop_pet_alt_interaction_mode: desktop_safety.alt_interaction_mode,
     };
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
@@ -365,6 +412,14 @@ pub fn run(path: &Path) -> Result<(), String> {
     } else {
         Err("self-test invariants failed".to_owned())
     }
+}
+
+#[cfg(not(windows))]
+struct NonWindowsDesktopSafetyContract {
+    passed: bool,
+    topmost_when_observatory_open: bool,
+    click_through_default: bool,
+    alt_interaction_mode: bool,
 }
 
 #[cfg(not(windows))]

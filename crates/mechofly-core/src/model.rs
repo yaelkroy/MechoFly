@@ -297,16 +297,29 @@ fn modeled_behavior(state: &ModelState, spike_count: usize) -> Behavior {
     let rate_per_10k = spike_count.saturating_mul(10_000) / state.activation.len().max(1);
     if rate_per_10k > 1_200 {
         Behavior::Alert
+    } else if rate_per_10k > 320 {
+        Behavior::Quiet
     } else {
-        match (state.frame / 90) % 9 {
-            0 => Behavior::Rest,
-            1..=3 => Behavior::Walk,
-            4 => Behavior::Groom,
-            5 | 6 => Behavior::Walk,
-            7 => Behavior::Quiet,
-            _ => Behavior::Reverse,
-        }
+        Behavior::Rest
     }
+}
+
+pub fn run_autonomy_schedule_self_test() -> bool {
+    let mut state = ModelState {
+        frame: 0,
+        seed: 11,
+        activation: vec![0; FUNCTIONAL_POPULATION_COUNT * 4],
+        spikes: vec![0; FUNCTIONAL_POPULATION_COUNT * 4],
+        behavior: Behavior::Rest,
+        behavior_age_frames: 0,
+    };
+    (0..900).all(|frame| {
+        state.frame = frame;
+        matches!(
+            modeled_behavior(&state, 0),
+            Behavior::Rest | Behavior::Quiet
+        )
+    })
 }
 
 fn functional_population_activation(state: &ModelState, offset: usize) -> i32 {
@@ -371,6 +384,11 @@ mod tests {
             escaped,
             "loom neural population never crossed the controller threshold"
         );
+    }
+
+    #[test]
+    fn frame_counter_no_longer_schedules_motor_actions() {
+        assert!(run_autonomy_schedule_self_test());
     }
 
     #[test]

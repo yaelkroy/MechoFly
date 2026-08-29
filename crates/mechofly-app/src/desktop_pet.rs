@@ -32,12 +32,12 @@ use windows_sys::Win32::{
         WindowsAndMessaging::{
             CS_DBLCLKS, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
             GetCursorPos, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, HTCLIENT,
-            HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, RegisterClassExW, SM_CXVIRTUALSCREEN,
-            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE,
-            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-            ULW_ALPHA, UpdateLayeredWindow, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-            WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCHITTEST, WM_RBUTTONUP, WNDCLASSEXW,
-            WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+            HTTRANSPARENT, HWND_TOPMOST, RegisterClassExW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
+            SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow, ULW_ALPHA,
+            UpdateLayeredWindow, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+            WM_MOUSEMOVE, WM_NCCREATE, WM_NCHITTEST, WM_RBUTTONUP, WNDCLASSEXW, WS_EX_LAYERED,
+            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
 };
@@ -426,13 +426,13 @@ impl PetOverlay {
         if self.observatory_open == open {
             return;
         }
-        // Keep the companion available without painting it over Brain Lab's
-        // controls. Closing the observatory restores normal desktop topmost
-        // behavior.
+        // The companion remains topmost and non-activating. Work-mode
+        // interaction safety is enforced by hit testing and shelf placement,
+        // never by hiding the pet behind the neural observatory.
         unsafe {
             SetWindowPos(
                 self.hwnd,
-                if open { HWND_NOTOPMOST } else { HWND_TOPMOST },
+                observatory_z_order_target(open),
                 0,
                 0,
                 0,
@@ -599,7 +599,7 @@ unsafe extern "system" fn window_proc(
                 let mut rect: RECT = unsafe { zeroed() };
                 let hit = unsafe { GetWindowRect(hwnd, &mut rect) != 0 }
                     && shared.hit_test_screen(screen_x, screen_y, &rect);
-                return if hit {
+                return if interactive_body_hit(hit, key_down(VK_MENU as u32)) {
                     HTCLIENT as LRESULT
                 } else {
                     HTTRANSPARENT as LRESULT
@@ -677,6 +677,40 @@ fn last_error(operation: &str) -> String {
 fn key_down(key: u32) -> bool {
     // SAFETY: GetAsyncKeyState has no pointer preconditions.
     unsafe { (GetAsyncKeyState(key as i32) as u16 & 0x8000) != 0 }
+}
+
+fn observatory_z_order_target(_open: bool) -> HWND {
+    HWND_TOPMOST
+}
+
+fn interactive_body_hit(body_hit: bool, alt_down: bool) -> bool {
+    body_hit && alt_down
+}
+
+#[derive(Clone, Debug)]
+pub struct DesktopSafetySelfTest {
+    pub passed: bool,
+    pub topmost_when_observatory_closed: bool,
+    pub topmost_when_observatory_open: bool,
+    pub click_through_default: bool,
+    pub alt_interaction_mode: bool,
+}
+
+pub fn run_desktop_safety_self_test() -> DesktopSafetySelfTest {
+    let topmost_when_observatory_closed = observatory_z_order_target(false) == HWND_TOPMOST;
+    let topmost_when_observatory_open = observatory_z_order_target(true) == HWND_TOPMOST;
+    let click_through_default = !interactive_body_hit(true, false);
+    let alt_interaction_mode = interactive_body_hit(true, true);
+    DesktopSafetySelfTest {
+        passed: topmost_when_observatory_closed
+            && topmost_when_observatory_open
+            && click_through_default
+            && alt_interaction_mode,
+        topmost_when_observatory_closed,
+        topmost_when_observatory_open,
+        click_through_default,
+        alt_interaction_mode,
+    }
 }
 
 #[derive(Clone, Debug)]
