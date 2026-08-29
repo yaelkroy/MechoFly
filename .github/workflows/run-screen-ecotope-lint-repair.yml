@@ -1,0 +1,40 @@
+name: Run Screen Ecotope lint repair
+
+on:
+  push:
+    branches:
+      - feat/screen-ecotope-work-mode-v1
+    paths:
+      - .github/workflows/run-screen-ecotope-lint-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Apply deterministic source repair
+        shell: bash
+        run: python3 tools/fix_screen_ecotope_clippy.py
+      - name: Validate repaired candidate
+        shell: bash
+        run: |
+          cargo fmt --all
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          git diff --check
+      - name: Publish repaired candidate
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm tools/fix_screen_ecotope_clippy.py
+          git add \
+            crates/mechofly-app/src/screen_ecotope.rs \
+            crates/mechofly-app/src/self_test.rs
+          git commit -m "Repair Screen Ecotope lint and receipt coverage"
+          git push origin HEAD:feat/screen-ecotope-work-mode-v1
