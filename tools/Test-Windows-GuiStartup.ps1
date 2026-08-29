@@ -585,51 +585,87 @@ function Invoke-GuiCase {
         if (-not $EvidenceHoldPosted) {
             throw 'Could not place the model and presentation in evidence hold.'
         }
-        $EvidenceSettleMilliseconds = 500
-        Start-Sleep -Milliseconds $EvidenceSettleMilliseconds
-        $Process.Refresh()
-        if ($Process.HasExited) {
-            throw 'MechoFly exited while entering synchronized evidence hold.'
+        $EvidenceSettleTimeoutMilliseconds = 5000
+$EvidencePollMilliseconds = 50
+$EvidencePollCount = 0
+$EvidenceSettleStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$Windows = @()
+$NeuralWindows = @()
+$NeuralWindowTitles = @()
+$ExpectedSkinTitlePassed = $false
+$NeuralFrames = @()
+$NeuralFramesSynchronized = $false
+do {
+    $EvidencePollCount++
+    $Process.Refresh()
+    if ($Process.HasExited) {
+        throw 'MechoFly exited while entering synchronized evidence hold.'
+    }
+    $Windows = @([MechoFly.RuntimeSmoke.WindowProbe]::ForProcess(
+        [uint32]$Process.Id))
+    $NeuralWindows = @($Windows | Where-Object {
+        [string]$_.title -like '*Live Brain*' -or
+        [string]$_.title -like '*Brain Lab*'
+    })
+    $NeuralWindowTitles = @($NeuralWindows | ForEach-Object {
+        [string]$_.title
+    })
+    $ExpectedSkinTitlePassed = (
+        $NeuralWindows.Count -eq 2 -and
+        @($NeuralWindowTitles | Where-Object {
+  -not $_.StartsWith(
+      $ExpectedSkinLabel + ' ',
+      [System.StringComparison]::Ordinal)
+        }).Count -eq 0)
+
+    $NeuralFrames = @()
+    $AllNeuralTitlesFrozen = $NeuralWindows.Count -eq 2
+    if ($AllNeuralTitlesFrozen) {
+        foreach ($NeuralWindowTitle in $NeuralWindowTitles) {
+  $Match = [regex]::Match(
+      $NeuralWindowTitle,
+      'frame (?<frame>[0-9]{8})$')
+  if (-not $Match.Success) {
+      $AllNeuralTitlesFrozen = $false
+      break
+  }
+  $NeuralFrames += [uint64]$Match.Groups['frame'].Value
         }
-        $Windows = @([MechoFly.RuntimeSmoke.WindowProbe]::ForProcess(
-            [uint32]$Process.Id))
-        $NeuralWindows = @($Windows | Where-Object {
-            [string]$_.title -like '*Live Brain*' -or
-            [string]$_.title -like '*Brain Lab*'
-        })
-        if ($NeuralWindows.Count -ne 2) {
-            throw ('Expected exactly two neural evidence windows; found ' +
-                [string]$NeuralWindows.Count + '.')
-        }
-        $NeuralWindowTitles = @($NeuralWindows | ForEach-Object {
-            [string]$_.title
-        })
-        $ExpectedSkinTitlePassed = @($NeuralWindowTitles | Where-Object {
-            -not $_.StartsWith(
-                $ExpectedSkinLabel + ' ',
-                [System.StringComparison]::Ordinal)
-        }).Count -eq 0
-        if (-not $ExpectedSkinTitlePassed) {
-            throw ('A neural window title does not match skin ' +
-                $ExpectedSkinLabel + '; actual=' +
-                ($NeuralWindowTitles -join ' | '))
-        }
-        $NeuralFrames = @($NeuralWindowTitles | ForEach-Object {
-            $Match = [regex]::Match(
-                $_,
-                'frame (?<frame>[0-9]{8})$')
-            if (-not $Match.Success) {
-                throw ('Neural evidence title has no frozen frame: ' +
-                    [string]$_)
-            }
-            [uint64]$Match.Groups['frame'].Value
-        })
-        $UniqueNeuralFrames = @($NeuralFrames | Sort-Object -Unique)
-        if ($UniqueNeuralFrames.Count -ne 1) {
-            throw ('Neural evidence windows are not frame-synchronized: ' +
-                ($NeuralFrames -join ', '))
-        }
-        $NeuralCaptureFrame = [uint64]$UniqueNeuralFrames[0]
+    }
+    $UniqueNeuralFrames = @($NeuralFrames | Sort-Object -Unique)
+    $NeuralFramesSynchronized = (
+        $AllNeuralTitlesFrozen -and
+        $UniqueNeuralFrames.Count -eq 1)
+    if ($ExpectedSkinTitlePassed -and $NeuralFramesSynchronized) {
+        break
+    }
+    Start-Sleep -Milliseconds $EvidencePollMilliseconds
+} while (
+    $EvidenceSettleStopwatch.ElapsedMilliseconds -lt
+        $EvidenceSettleTimeoutMilliseconds)
+$EvidenceSettleStopwatch.Stop()
+$EvidenceSettleMilliseconds =
+    [int]$EvidenceSettleStopwatch.ElapsedMilliseconds
+
+if ($NeuralWindows.Count -ne 2) {
+    throw ('Expected exactly two neural evidence windows; found ' +
+        [string]$NeuralWindows.Count + '.')
+}
+if (-not $ExpectedSkinTitlePassed) {
+    throw ('A neural window title does not match skin ' +
+        $ExpectedSkinLabel + '; actual=' +
+        ($NeuralWindowTitles -join ' | '))
+}
+if (-not $AllNeuralTitlesFrozen) {
+    throw ('Neural evidence titles did not publish a frozen frame ' +
+        'within ' + [string]$EvidenceSettleTimeoutMilliseconds +
+        ' ms; actual=' + ($NeuralWindowTitles -join ' | '))
+}
+if (-not $NeuralFramesSynchronized) {
+    throw ('Neural evidence windows are not frame-synchronized: ' +
+        ($NeuralFrames -join ', '))
+}
+$NeuralCaptureFrame = [uint64]$UniqueNeuralFrames[0]
 
         $Captures = New-Object System.Collections.Generic.List[object]
         $CaptureIndex = 0
@@ -667,6 +703,9 @@ function Invoke-GuiCase {
             evidence_hold_message = '0x804D'
             evidence_hold_posted = $EvidenceHoldPosted
             evidence_settle_milliseconds = $EvidenceSettleMilliseconds
+evidence_settle_timeout_milliseconds = $EvidenceSettleTimeoutMilliseconds
+evidence_poll_milliseconds = $EvidencePollMilliseconds
+evidence_poll_count = $EvidencePollCount
             expected_skin_label = $ExpectedSkinLabel
             expected_skin_title_passed = $ExpectedSkinTitlePassed
             neural_capture_frame = $NeuralCaptureFrame
