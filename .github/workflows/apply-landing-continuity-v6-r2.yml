@@ -1,0 +1,313 @@
+name: Apply landing continuity candidate r2
+
+on:
+  push:
+    branches: ["fix/landing-motion-continuity-rust-v6"]
+    paths: [".github/workflows/apply-landing-continuity-v6-r2.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: rustfmt, clippy
+      - name: Apply landing-continuity implementation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def read(path: str) -> str:
+              return Path(path).read_text(encoding="utf-8").replace("\r\n", "\n")
+
+          def write(path: str, text: str) -> None:
+              Path(path).write_text(text, encoding="utf-8", newline="\n")
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              text = read(path)
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f"{path}: expected one exact match, found {count}: {old[:160]!r}"
+                  )
+              write(path, text.replace(old, new, 1))
+
+          pet = "crates/mechofly-app/src/pet.rs"
+          self_test = "crates/mechofly-app/src/self_test.rs"
+          windows = ".github/workflows/windows.yml"
+
+          replace_once(
+              pet,
+              "const LANDING_SPEED_PIXELS_PER_SECOND: f32 = 3.8 / REFERENCE_TICK_SECONDS;\n"
+              "const LANDING_CONTACT_SPEED_PIXELS_PER_SECOND: f32 = 0.8 / REFERENCE_TICK_SECONDS;\n",
+              "",
+          )
+          replace_once(
+              pet,
+              "    pub behavior_age_seconds: f32,\n"
+              "    last_behavior: Behavior,\n"
+              "    pub paused: bool,\n",
+              "    pub behavior_age_seconds: f32,\n"
+              "    last_behavior: Behavior,\n"
+              "    landing_start_position: Pos2,\n"
+              "    landing_target_position: Pos2,\n"
+              "    landing_start_heading: f32,\n"
+              "    landing_active: bool,\n"
+              "    pub paused: bool,\n",
+          )
+          replace_once(
+              pet,
+              "            behavior_age_seconds: 0.0,\n"
+              "            last_behavior: Behavior::Rest,\n"
+              "            paused: false,\n",
+              "            behavior_age_seconds: 0.0,\n"
+              "            last_behavior: Behavior::Rest,\n"
+              "            landing_start_position: Pos2::new(96.0, 640.0),\n"
+              "            landing_target_position: Pos2::new(96.0, 640.0),\n"
+              "            landing_start_heading: 0.0,\n"
+              "            landing_active: false,\n"
+              "            paused: false,\n",
+          )
+          replace_once(
+              pet,
+              "        if behavior != self.last_behavior {\n"
+              "            self.last_behavior = behavior;\n"
+              "            self.behavior_age_seconds = 0.0;\n"
+              "        }\n",
+              "        if behavior != self.last_behavior {\n"
+              "            self.last_behavior = behavior;\n"
+              "            self.behavior_age_seconds = 0.0;\n"
+              "            if behavior != Behavior::Landing {\n"
+              "                self.landing_active = false;\n"
+              "            }\n"
+              "        }\n",
+          )
+          replace_once(
+              pet,
+              "            Behavior::Landing => {\n"
+              "                let descent = (bottom - self.screen_position.y).max(0.0);\n"
+              "                if descent > 12.0 {\n"
+              "                    self.heading_radians = PI * 0.5;\n"
+              "                    LANDING_SPEED_PIXELS_PER_SECOND\n"
+              "                } else {\n"
+              "                    LANDING_CONTACT_SPEED_PIXELS_PER_SECOND\n"
+              "                }\n"
+              "            }\n",
+              "            Behavior::Landing => {\n"
+              "                if !self.landing_active {\n"
+              "                    self.landing_start_position = self.screen_position;\n"
+              "                    self.landing_target_position =\n"
+              "                        Pos2::new(self.screen_position.x.clamp(left, right), bottom);\n"
+              "                    self.landing_start_heading = self.heading_radians;\n"
+              "                    self.landing_active = true;\n"
+              "                }\n"
+              "                let progress =\n"
+              "                    (self.behavior_age_seconds / LANDING_COMPLETION_SECONDS)\n"
+              "                        .clamp(0.0, 1.0);\n"
+              "                let eased = smootherstep(progress);\n"
+              "                self.screen_position = lerp_position(\n"
+              "                    self.landing_start_position,\n"
+              "                    self.landing_target_position,\n"
+              "                    eased,\n"
+              "                );\n"
+              "                let heading_delta =\n"
+              "                    wrapped_angle(PI * 0.5 - self.landing_start_heading);\n"
+              "                self.heading_radians = wrapped_angle(\n"
+              "                    self.landing_start_heading + heading_delta * eased,\n"
+              "                );\n"
+              "                0.0\n"
+              "            }\n",
+          )
+          replace_once(
+              pet,
+              "        self.screen_position +=\n"
+              "            Vec2::angled(self.heading_radians) * self.speed_pixels_per_second * dt;\n"
+              "        if behavior == Behavior::Landing && self.behavior_age_seconds >= LANDING_COMPLETION_SECONDS\n"
+              "        {\n"
+              "            self.screen_position.y = bottom;\n"
+              "            self.heading_radians = PI * 0.5;\n"
+              "            self.speed_pixels_per_second = 0.0;\n"
+              "        }\n",
+              "        if behavior != Behavior::Landing {\n"
+              "            self.screen_position +=\n"
+              "                Vec2::angled(self.heading_radians) * self.speed_pixels_per_second * dt;\n"
+              "        }\n"
+              "        if behavior == Behavior::Landing\n"
+              "            && self.behavior_age_seconds >= LANDING_COMPLETION_SECONDS\n"
+              "        {\n"
+              "            self.screen_position = self.landing_target_position;\n"
+              "            self.heading_radians = PI * 0.5;\n"
+              "            self.speed_pixels_per_second = 0.0;\n"
+              "        }\n",
+          )
+          replace_once(
+              pet,
+              "fn wrapped_angle(angle: f32) -> f32 {\n"
+              "    (angle + PI).rem_euclid(PI * 2.0) - PI\n"
+              "}\n",
+              "fn wrapped_angle(angle: f32) -> f32 {\n"
+              "    (angle + PI).rem_euclid(PI * 2.0) - PI\n"
+              "}\n\n"
+              "fn smootherstep(progress: f32) -> f32 {\n"
+              "    let progress = progress.clamp(0.0, 1.0);\n"
+              "    progress * progress * progress * (progress * (progress * 6.0 - 15.0) + 10.0)\n"
+              "}\n\n"
+              "fn lerp_position(start: Pos2, end: Pos2, progress: f32) -> Pos2 {\n"
+              "    Pos2::new(\n"
+              "        start.x + (end.x - start.x) * progress,\n"
+              "        start.y + (end.y - start.y) * progress,\n"
+              "    )\n"
+              "}\n",
+          )
+          replace_once(
+              pet,
+              "    pub landing_descent_pixels: f32,\n"
+              "    pub landing_reached_surface: bool,\n",
+              "    pub landing_descent_pixels: f32,\n"
+              "    pub landing_reached_surface: bool,\n"
+              "    pub landing_first_step_pixels: f32,\n"
+              "    pub landing_max_step_pixels: f32,\n"
+              "    pub landing_completion_step_pixels: f32,\n"
+              "    pub landing_to_rest_step_pixels: f32,\n"
+              "    pub landing_position_continuous: bool,\n"
+              "    pub teleport_detected: bool,\n",
+          )
+          replace_once(
+              pet,
+              "    airborne.screen_position.y = bottom - 48.0;\n"
+              "    let landing_start_y = airborne.screen_position.y;\n"
+              "    for _ in 0..30 {\n"
+              "        airborne.advance(1.0 / 60.0, Behavior::Landing, origin, screen, false, None);\n"
+              "    }\n"
+              "    let landing_descent_pixels = airborne.screen_position.y - landing_start_y;\n"
+              "    let landing_reached_surface = (airborne.screen_position.y - bottom).abs() < 0.01;\n",
+              "    airborne.screen_position.y = bottom - 360.0;\n"
+              "    airborne.heading_radians = -0.7;\n"
+              "    let landing_start = airborne.screen_position;\n"
+              "    let mut landing_previous = landing_start;\n"
+              "    let mut landing_first_step_pixels = 0.0_f32;\n"
+              "    let mut landing_max_step_pixels = 0.0_f32;\n"
+              "    let mut landing_completion_step_pixels = 0.0_f32;\n"
+              "    for frame in 1..=30 {\n"
+              "        airborne.advance(1.0 / 60.0, Behavior::Landing, origin, screen, false, None);\n"
+              "        let step = airborne.screen_position.distance(landing_previous);\n"
+              "        if frame == 1 {\n"
+              "            landing_first_step_pixels = step;\n"
+              "        }\n"
+              "        if frame == 30 {\n"
+              "            landing_completion_step_pixels = step;\n"
+              "        }\n"
+              "        landing_max_step_pixels = landing_max_step_pixels.max(step);\n"
+              "        landing_previous = airborne.screen_position;\n"
+              "    }\n"
+              "    let landing_descent_pixels = airborne.screen_position.y - landing_start.y;\n"
+              "    let landing_reached_surface = (airborne.screen_position.y - bottom).abs() < 0.01;\n"
+              "    let touchdown = airborne.screen_position;\n"
+              "    airborne.advance(1.0 / 60.0, Behavior::Rest, origin, screen, false, None);\n"
+              "    let landing_to_rest_step_pixels = airborne.screen_position.distance(touchdown);\n"
+              "    let landing_position_continuous = landing_first_step_pixels <= 2.5\n"
+              "        && landing_max_step_pixels <= 25.0\n"
+              "        && landing_completion_step_pixels <= 1.0\n"
+              "        && landing_to_rest_step_pixels <= 0.01;\n"
+              "    let teleport_detected = !landing_position_continuous;\n",
+          )
+          replace_once(
+              pet,
+              "            && landing_descent_pixels > 45.0\n"
+              "            && landing_reached_surface,\n",
+              "            && landing_descent_pixels > 350.0\n"
+              "            && landing_reached_surface\n"
+              "            && landing_position_continuous\n"
+              "            && !teleport_detected,\n",
+          )
+          replace_once(
+              pet,
+              "        landing_descent_pixels,\n"
+              "        landing_reached_surface,\n",
+              "        landing_descent_pixels,\n"
+              "        landing_reached_surface,\n"
+              "        landing_first_step_pixels,\n"
+              "        landing_max_step_pixels,\n"
+              "        landing_completion_step_pixels,\n"
+              "        landing_to_rest_step_pixels,\n"
+              "        landing_position_continuous,\n"
+              "        teleport_detected,\n",
+          )
+
+          replace_once(
+              self_test,
+              "    landing_descent_pixels: f32,\n"
+              "    landing_reached_surface: bool,\n"
+              "    two_dimensional_flight_motion: bool,\n",
+              "    landing_descent_pixels: f32,\n"
+              "    landing_reached_surface: bool,\n"
+              "    landing_first_step_pixels: f32,\n"
+              "    landing_max_step_pixels: f32,\n"
+              "    landing_completion_step_pixels: f32,\n"
+              "    landing_to_rest_step_pixels: f32,\n"
+              "    landing_position_continuous: bool,\n"
+              "    teleport_detected: bool,\n"
+              "    two_dimensional_flight_motion: bool,\n",
+          )
+          replace_once(self_test, "        schema_version: 5,", "        schema_version: 6,")
+          replace_once(
+              self_test,
+              "        landing_descent_pixels: motion.landing_descent_pixels,\n"
+              "        landing_reached_surface: motion.landing_reached_surface,\n"
+              "        two_dimensional_flight_motion,\n",
+              "        landing_descent_pixels: motion.landing_descent_pixels,\n"
+              "        landing_reached_surface: motion.landing_reached_surface,\n"
+              "        landing_first_step_pixels: motion.landing_first_step_pixels,\n"
+              "        landing_max_step_pixels: motion.landing_max_step_pixels,\n"
+              "        landing_completion_step_pixels: motion.landing_completion_step_pixels,\n"
+              "        landing_to_rest_step_pixels: motion.landing_to_rest_step_pixels,\n"
+              "        landing_position_continuous: motion.landing_position_continuous,\n"
+              "        teleport_detected: motion.teleport_detected,\n"
+              "        two_dimensional_flight_motion,\n",
+          )
+
+          replace_once(
+              windows,
+              "          if ($receipt.schema_version -ne 5) { throw 'Self-test receipt schema is stale.' }",
+              "          if ($receipt.schema_version -ne 6) { throw 'Self-test receipt schema is stale.' }",
+          )
+          replace_once(
+              windows,
+              "          if ($receipt.landing_descent_pixels -le 45 -or -not $receipt.landing_reached_surface) { throw 'Landing did not end in a bounded touchdown.' }",
+              "          if ($receipt.landing_descent_pixels -le 350 -or -not $receipt.landing_reached_surface) { throw 'Long-descent landing did not reach its bounded touchdown.' }\n"
+              "          if (-not $receipt.landing_position_continuous) { throw 'Flight, landing, and post-touchdown positions are discontinuous.' }\n"
+              "          if ($receipt.teleport_detected) { throw 'A teleport-like landing step was detected.' }\n"
+              "          if ($receipt.landing_first_step_pixels -gt 2.5) { throw 'Landing entry contains a visible position discontinuity.' }\n"
+              "          if ($receipt.landing_max_step_pixels -gt 25.0) { throw 'Landing interpolation contains an excessive frame step.' }\n"
+              "          if ($receipt.landing_completion_step_pixels -gt 1.0) { throw 'Landing completion still snaps to the surface.' }\n"
+              "          if ($receipt.landing_to_rest_step_pixels -gt 0.01) { throw 'Post-touchdown rest did not inherit the touchdown position.' }",
+          )
+          PY
+      - name: Format and validate candidate
+        shell: bash
+        run: |
+          cargo fmt --all
+          git diff --check
+          cargo test --workspace --locked landing -- --nocapture
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Publish candidate
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm .github/workflows/apply-landing-continuity-v6-r2.yml
+          git add \
+            .github/workflows/windows.yml \
+            crates/mechofly-app/src/pet.rs \
+            crates/mechofly-app/src/self_test.rs
+          git commit -m "Eliminate landing position discontinuities"
+          git push origin HEAD:fix/landing-motion-continuity-rust-v6
