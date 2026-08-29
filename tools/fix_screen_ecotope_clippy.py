@@ -72,3 +72,33 @@ replace_once(
     "    topmost_when_observatory_open: bool,\n",
     "non-Windows topmost contract",
 )
+
+app = Path("crates/mechofly-app/src/app.rs")
+for variable in (
+    "screen_origin",
+    "screen_size",
+    "held",
+    "cursor_position",
+    "cursor_over_pet",
+):
+    text = app.read_text(encoding="utf-8")
+    marker = f"        let mut {variable}"
+    count = text.count(marker)
+    if count != 1:
+        raise SystemExit(f"{variable} mutable binding: expected one match, found {count}")
+    text = text.replace(
+        marker,
+        "        #[cfg_attr(not(windows), allow(unused_mut))]\n" + marker,
+        1,
+    )
+    app.write_text(text, encoding="utf-8", newline="\n")
+
+tray = Path("crates/mechofly-app/src/tray.rs")
+replace_once(
+    tray,
+    "#[derive(Clone, Copy, Debug, Eq, PartialEq)]\npub enum TrayAction {\n",
+    "#[cfg_attr(not(windows), allow(dead_code))]\n"
+    "#[derive(Clone, Copy, Debug, Eq, PartialEq)]\n"
+    "pub enum TrayAction {\n",
+    "non-Windows tray action annotation",
+)
