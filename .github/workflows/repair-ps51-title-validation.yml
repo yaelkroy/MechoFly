@@ -25,51 +25,45 @@ jobs:
 
           path = Path('tools/Test-Windows-GuiStartup.ps1')
           text = path.read_text(encoding='utf-8')
-          old = '''        $ExpectedSkinTitlePassed = @($NeuralWindows | Where-Object {
-              [string]$_.title -notlike ($ExpectedSkinLabel + ' — *')
-          }).Count -eq 0
-          if (-not $ExpectedSkinTitlePassed) {
-              throw ('A neural window title does not match skin ' +
-                  $ExpectedSkinLabel + '.')
-          }
-          $NeuralFrames = @($NeuralWindows | ForEach-Object {
-              $Match = [regex]::Match(
-                  [string]$_.title,
-                  ' — frame (?<frame>[0-9]{8})$')
-              if (-not $Match.Success) {
-                  throw ('Neural evidence title has no frozen frame: ' +
-                      [string]$_.title)
-              }
-              [uint64]$Match.Groups['frame'].Value
-          })
-          '''
-          new = '''        $NeuralWindowTitles = @($NeuralWindows | ForEach-Object {
-              [string]$_.title
-          })
-          $ExpectedSkinTitlePassed = @($NeuralWindowTitles | Where-Object {
-              -not $_.StartsWith(
-                  $ExpectedSkinLabel + ' ',
-                  [System.StringComparison]::Ordinal)
-          }).Count -eq 0
-          if (-not $ExpectedSkinTitlePassed) {
-              throw ('A neural window title does not match skin ' +
-                  $ExpectedSkinLabel + '; actual=' +
-                  ($NeuralWindowTitles -join ' | '))
-          }
-          $NeuralFrames = @($NeuralWindowTitles | ForEach-Object {
-              $Match = [regex]::Match(
-                  $_,
-                  'frame (?<frame>[0-9]{8})$')
-              if (-not $Match.Success) {
-                  throw ('Neural evidence title has no frozen frame: ' +
-                      [string]$_)
-              }
-              [uint64]$Match.Groups['frame'].Value
-          })
-          '''
-          if text.count(old) != 1:
-              raise SystemExit('Expected one Unicode-sensitive neural-title validation block.')
-          updated = text.replace(old, new, 1)
+          start_marker = (
+              '        $ExpectedSkinTitlePassed = '
+              '@($NeuralWindows | Where-Object {\n'
+          )
+          end_marker = (
+              '        $UniqueNeuralFrames = '
+              '@($NeuralFrames | Sort-Object -Unique)\n'
+          )
+          if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+              raise SystemExit('Neural-title validation markers are not unique.')
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          replacement = '\n'.join([
+              '        $NeuralWindowTitles = @($NeuralWindows | ForEach-Object {',
+              '            [string]$_.title',
+              '        })',
+              '        $ExpectedSkinTitlePassed = @($NeuralWindowTitles | Where-Object {',
+              '            -not $_.StartsWith(',
+              "                $ExpectedSkinLabel + ' ',",
+              '                [System.StringComparison]::Ordinal)',
+              '        }).Count -eq 0',
+              '        if (-not $ExpectedSkinTitlePassed) {',
+              "            throw ('A neural window title does not match skin ' +",
+              "                $ExpectedSkinLabel + '; actual=' +",
+              "                ($NeuralWindowTitles -join ' | '))",
+              '        }',
+              '        $NeuralFrames = @($NeuralWindowTitles | ForEach-Object {',
+              '            $Match = [regex]::Match(',
+              '                $_,',
+              "                'frame (?<frame>[0-9]{8})$')",
+              '            if (-not $Match.Success) {',
+              "                throw ('Neural evidence title has no frozen frame: ' +",
+              '                    [string]$_)',
+              '            }',
+              "            [uint64]$Match.Groups['frame'].Value",
+              '        })',
+              '',
+          ])
+          updated = text[:start] + replacement + text[end:]
           non_ascii = sorted({character for character in updated if ord(character) > 127})
           if non_ascii:
               rendered = ', '.join(f'U+{ord(character):04X}' for character in non_ascii)
