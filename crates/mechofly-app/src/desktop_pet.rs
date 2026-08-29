@@ -32,12 +32,12 @@ use windows_sys::Win32::{
         WindowsAndMessaging::{
             CS_DBLCLKS, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA,
             GetCursorPos, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect, HTCLIENT,
-            HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, RegisterClassExW, SM_CXVIRTUALSCREEN,
-            SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE,
-            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-            ULW_ALPHA, UpdateLayeredWindow, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-            WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCHITTEST, WM_RBUTTONUP, WNDCLASSEXW,
-            WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+            HTTRANSPARENT, HWND_TOPMOST, RegisterClassExW, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+            SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
+            SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow, ULW_ALPHA,
+            UpdateLayeredWindow, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+            WM_MOUSEMOVE, WM_NCCREATE, WM_NCHITTEST, WM_RBUTTONUP, WNDCLASSEXW, WS_EX_LAYERED,
+            WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
 };
@@ -426,13 +426,12 @@ impl PetOverlay {
         if self.observatory_open == open {
             return;
         }
-        // Keep the companion available without painting it over Brain Lab's
-        // controls. Closing the observatory restores normal desktop topmost
-        // behavior.
+        // Live Brain and Brain Lab are diagnostic surfaces; they must not
+        // cover the desktop organism. Alpha holes remain click-through.
         unsafe {
             SetWindowPos(
                 self.hwnd,
-                if open { HWND_NOTOPMOST } else { HWND_TOPMOST },
+                HWND_TOPMOST,
                 0,
                 0,
                 0,
