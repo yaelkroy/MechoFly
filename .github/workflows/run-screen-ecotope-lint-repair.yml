@@ -35,7 +35,9 @@ jobs:
           git config user.email "31790191+yaelkroy@users.noreply.github.com"
           git rm tools/fix_screen_ecotope_clippy.py
           git add \
+            crates/mechofly-app/src/app.rs \
             crates/mechofly-app/src/screen_ecotope.rs \
-            crates/mechofly-app/src/self_test.rs
+            crates/mechofly-app/src/self_test.rs \
+            crates/mechofly-app/src/tray.rs
           git commit -m "Repair Screen Ecotope lint and receipt coverage"
           git push origin HEAD:feat/screen-ecotope-work-mode-v1
