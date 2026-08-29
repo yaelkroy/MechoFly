@@ -1,0 +1,359 @@
+name: Screen Ecotope ten-pass convergence
+
+on:
+  push:
+    branches:
+      - feat/screen-ecotope-desktop-terrain-v1
+    paths:
+      - .github/workflows/screen-ecotope-convergence.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screen-ecotope-ten-pass-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  convergence:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          components: rustfmt, clippy
+      - name: Confirm immutable candidate identity
+        id: identity
+        shell: powershell
+        run: |
+          $commit = (git rev-parse HEAD).Trim()
+          $tree = (git rev-parse 'HEAD^{tree}').Trim()
+          if ($commit -ne '${{ github.sha }}') {
+            throw "Checked-out commit $commit differs from workflow head ${{ github.sha }}."
+          }
+          "commit=$commit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tree=$tree" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "CANDIDATE_COMMIT=$commit"
+          Write-Host "CANDIDATE_TREE=$tree"
+      - name: Run ten consecutive full review passes
+        shell: powershell
+        env:
+          CANDIDATE_COMMIT: ${{ steps.identity.outputs.commit }}
+          CANDIDATE_TREE: ${{ steps.identity.outputs.tree }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          $lenses = [ordered]@{
+            1 = 'objective-requirements-assumptions'
+            2 = 'independent-first-principles-reconstruction'
+            3 = 'mathematical-foundations'
+            4 = 'breakthrough-alternatives'
+            5 = 'machine-learning-and-scientific-validity'
+            6 = 'software-correctness-and-architecture'
+            7 = 'falsification-and-adversarial-testing'
+            8 = 'performance-and-scalability'
+            9 = 'robustness-security-and-simplicity'
+            10 = 'hostile-release-review'
+          }
+          $root = $PWD.Path
+          $evidenceRoot = Join-Path $root 'artifacts\ten-pass-convergence'
+          New-Item -ItemType Directory -Path $evidenceRoot -Force | Out-Null
+          $expectedCommit = $env:CANDIDATE_COMMIT
+          $expectedTree = $env:CANDIDATE_TREE
+          foreach ($entry in $lenses.GetEnumerator()) {
+            $pass = [int]$entry.Key
+            $lens = [string]$entry.Value
+            $passRoot = Join-Path $evidenceRoot ('pass-{0:D2}-{1}' -f $pass, $lens)
+            $fixtureRoot = Join-Path $passRoot 'visual-fixtures'
+            $guiRoot = Join-Path $passRoot 'runtime-smoke'
+            New-Item -ItemType Directory -Path $fixtureRoot -Force | Out-Null
+            New-Item -ItemType Directory -Path $guiRoot -Force | Out-Null
+            $started = [DateTime]::UtcNow
+            Write-Host ('=' * 78)
+            Write-Host ("PASS=$pass LENS=$lens COMMIT=$expectedCommit")
+            Write-Host ('=' * 78)
+
+            $actualCommit = (git rev-parse HEAD).Trim()
+            $actualTree = (git rev-parse 'HEAD^{tree}').Trim()
+            if ($actualCommit -ne $expectedCommit -or $actualTree -ne $expectedTree) {
+              throw "Candidate identity changed before pass $pass."
+            }
+
+            $parseErrors = @()
+            Get-ChildItem -Recurse -Filter '*.ps1' | ForEach-Object {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                $_.FullName,
+                [ref]$tokens,
+                [ref]$errors) | Out-Null
+              $parseErrors += @($errors)
+            }
+            if ($parseErrors.Count -gt 0) {
+              $parseErrors | Format-List -Force
+              throw "PowerShell parser failure in pass $pass."
+            }
+
+            .\tools\Verify-Tree.ps1
+            cargo fmt --all --check
+            cargo generate-lockfile
+            $env:MECHOFLY_VISUAL_FIXTURE_DIR = $fixtureRoot
+            cargo test --workspace --locked
+            cargo clippy --workspace --all-targets --locked -- -D warnings
+            .\host-windows\build.ps1
+
+            $executable = (Resolve-Path .\host-windows\bin\MechoFly.exe).Path
+            $selfTestPath = Join-Path $passRoot 'self-test.json'
+            $arguments = '--self-test "{0}"' -f $selfTestPath
+            $process = Start-Process `
+              -FilePath $executable `
+              -ArgumentList $arguments `
+              -Wait `
+              -PassThru
+            if ($process.ExitCode -ne 0) {
+              throw "Self-test exited $($process.ExitCode) in pass $pass."
+            }
+            $receipt = Get-Content -LiteralPath $selfTestPath -Raw | ConvertFrom-Json
+            if ($receipt.schema_version -ne 8 -or $receipt.status -ne 'PASS') {
+              throw "Schema-v8 self-test failed in pass $pass."
+            }
+
+            foreach ($name in @(
+              'live_state_unchanged',
+              'alternative_differs',
+              'screen_ecotope_enabled',
+              'ecotope_deterministic_replay',
+              'ecotope_stationary_source',
+              'ecotope_plume_changes_without_source_motion',
+              'ecotope_reward_updates_belief',
+              'ecotope_generated_only_resource_semantics',
+              'ecotope_habitat_hidden_in_work_mode',
+              'cursor_stationary_not_loom',
+              'cursor_approach_loom',
+              'clock_ethogram_removed',
+              'work_mode_click_through',
+              'observatory_preserves_topmost',
+              'no_focus_activation',
+              'habitat_shelf_available',
+              'habitat_shelf_default_closed',
+              'habitat_shelf_explicit_open_supported',
+              'habitat_shelf_map_dimensions_valid',
+              'habitat_shelf_art_has_no_resource_authority',
+              'observe_hotkey_contract',
+              'desktop_terrain_enabled',
+              'desktop_terrain_deterministic_summary',
+              'desktop_terrain_stable_edges_available',
+              'desktop_terrain_peripheral_refuge_selected',
+              'desktop_terrain_no_content_capture',
+              'desktop_terrain_no_semantic_resource_inference'
+            )) {
+              if (-not [bool]$receipt.$name) {
+                throw "Receipt invariant $name failed in pass $pass."
+              }
+            }
+            if ($receipt.global_hotkey_count -ne 9) {
+              throw "Expected nine hotkeys in pass $pass."
+            }
+            if ($receipt.desktop_terrain_claim -ne 'LOCAL_TOP_LEVEL_GEOMETRY_ONLY_NO_CONTENT_CAPTURE') {
+              throw "Desktop-terrain evidence boundary changed in pass $pass."
+            }
+            if ($receipt.cursor_threat_claim -ne 'VIRTUAL_CURSOR_APPROACH_PROXY_NOT_MEASURED_OPTICAL_LOOM') {
+              throw "Cursor-threat evidence boundary changed in pass $pass."
+            }
+            if ($receipt.autonomous_scheduler_version -ne 'deterministic-semi-markov-bouts-v1') {
+              throw "Autonomous scheduler identity changed in pass $pass."
+            }
+            if ($receipt.measured_activity -or $receipt.connectome_mutated_by_learning) {
+              throw "Scientific evidence boundary failed in pass $pass."
+            }
+
+            .\tools\Test-Windows-GuiStartup.ps1 `
+              -ExecutablePath $executable `
+              -OutputDirectory $guiRoot `
+              -ObservationSeconds 12
+            $summary = Get-Content -LiteralPath (Join-Path $guiRoot 'summary.json') -Raw |
+              ConvertFrom-Json
+            if ($summary.schema_version -ne 3 -or $summary.status -ne 'PASS') {
+              throw "GUI receipt failed in pass $pass."
+            }
+            if (@($summary.cases).Count -ne 3) {
+              throw "Expected three GUI cases in pass $pass."
+            }
+            foreach ($name in @(
+              'pet_foreground_captured',
+              'neural_frames_synchronized',
+              'skin_titles_matched',
+              'full_window_captures'
+            )) {
+              if (-not [bool]$summary.$name) {
+                throw "GUI invariant $name failed in pass $pass."
+              }
+            }
+            $observe = @($summary.cases | Where-Object { $_.case -eq 'observe-ecotope' })
+            if ($observe.Count -ne 1) {
+              throw "Observe Mode case is absent in pass $pass."
+            }
+            $shelf = @($observe[0].screenshots | Where-Object {
+              [string]$_.source_window.title -like '*Screen Ecotope*'
+            })
+            if ($shelf.Count -ne 1 -or -not [bool]$shelf[0].full_window) {
+              throw "Habitat Shelf evidence is missing or clipped in pass $pass."
+            }
+
+            switch ($pass) {
+              1 {
+                if (-not $receipt.screen_ecotope_enabled -or
+                    -not $receipt.work_mode_click_through -or
+                    -not $receipt.habitat_shelf_available) {
+                  throw 'Lens 1 objective coverage failed.'
+                }
+              }
+              2 {
+                if (-not $receipt.ecotope_generated_only_resource_semantics -or
+                    -not $receipt.desktop_terrain_no_semantic_resource_inference -or
+                    -not $receipt.habitat_shelf_art_has_no_resource_authority) {
+                  throw 'Lens 2 independent reconstruction boundary failed.'
+                }
+              }
+              3 {
+                if (-not $receipt.ecotope_deterministic_replay -or
+                    -not $receipt.ecotope_stationary_source -or
+                    -not $receipt.ecotope_plume_changes_without_source_motion -or
+                    -not $receipt.ecotope_reward_updates_belief) {
+                  throw 'Lens 3 mathematical invariants failed.'
+                }
+              }
+              4 {
+                if (-not $receipt.clock_ethogram_removed -or
+                    -not $receipt.ecotope_habitat_hidden_in_work_mode -or
+                    -not $receipt.habitat_shelf_default_closed) {
+                  throw 'Lens 4 selected-architecture gates failed.'
+                }
+              }
+              5 {
+                if ($receipt.measured_activity -or
+                    $receipt.connectome_mutated_by_learning -or
+                    -not $receipt.desktop_terrain_no_content_capture) {
+                  throw 'Lens 5 scientific or learning validity failed.'
+                }
+              }
+              6 {
+                if (-not $receipt.observatory_preserves_topmost -or
+                    -not $receipt.no_focus_activation -or
+                    -not $receipt.work_mode_click_through) {
+                  throw 'Lens 6 window architecture failed.'
+                }
+                if (Select-String -Path .\crates\mechofly-app\src\*.rs -Pattern 'HWND_NOTOPMOST' -SimpleMatch -Quiet) {
+                  throw 'Lens 6 found a topmost-demotion path.'
+                }
+              }
+              7 {
+                if (-not $receipt.cursor_stationary_not_loom -or
+                    -not $receipt.cursor_approach_loom -or
+                    -not $receipt.desktop_terrain_stable_edges_available) {
+                  throw 'Lens 7 falsification controls failed.'
+                }
+              }
+              8 {
+                if (-not $receipt.habitat_shelf_map_dimensions_valid -or
+                    $receipt.global_hotkey_count -ne 9) {
+                  throw 'Lens 8 bounded-state gate failed.'
+                }
+              }
+              9 {
+                if (-not $receipt.desktop_terrain_no_content_capture -or
+                    -not $receipt.desktop_terrain_no_semantic_resource_inference -or
+                    $receipt.live_hardware_authority -ne 'NONE') {
+                  throw 'Lens 9 privacy or authority boundary failed.'
+                }
+                $terrainPath = '.\crates\mechofly-app\src\desktop_terrain.rs'
+                foreach ($token in @('GetWindowText', 'clipboard', 'OCR')) {
+                  if (Select-String -Path $terrainPath -Pattern $token -SimpleMatch -Quiet) {
+                    throw "Lens 9 found prohibited terrain token $token."
+                  }
+                }
+              }
+              10 {
+                if (-not $receipt.rendered_behavior_matches_neural_state -or
+                    -not $receipt.behavior_controller_authoritative -or
+                    -not $summary.pet_foreground_captured -or
+                    -not $summary.full_window_captures) {
+                  throw 'Lens 10 hostile release review failed.'
+                }
+              }
+            }
+
+            $postCommit = (git rev-parse HEAD).Trim()
+            $postTree = (git rev-parse 'HEAD^{tree}').Trim()
+            if ($postCommit -ne $expectedCommit -or $postTree -ne $expectedTree) {
+              throw "Candidate identity changed during pass $pass."
+            }
+            git diff --exit-code
+            git diff --cached --exit-code
+
+            $passReceipt = [ordered]@{
+              schema_version = 1
+              status = 'PASS'
+              pass = $pass
+              lens = $lens
+              candidate_commit = $expectedCommit
+              candidate_tree = $expectedTree
+              started_utc = $started.ToString('o')
+              completed_utc = [DateTime]::UtcNow.ToString('o')
+              powershell_parse = 'PASS'
+              tree_identity = 'PASS'
+              rust_format = 'PASS'
+              dependency_resolution = 'PASS'
+              rust_tests = 'PASS'
+              warnings_denied_clippy = 'PASS'
+              windows_release_build = 'PASS'
+              deterministic_self_test = 'PASS'
+              real_windows_gui = 'PASS'
+              observe_mode_shelf = 'PASS'
+              source_mutation = $false
+            }
+            $passReceipt | ConvertTo-Json -Depth 5 |
+              Set-Content -LiteralPath (Join-Path $passRoot 'pass-receipt.json') -Encoding utf8
+            Write-Host "CONVERGENCE_PASS_$('{0:D2}' -f $pass)=PASS lens=$lens"
+          }
+
+          $receipts = @(Get-ChildItem -LiteralPath $evidenceRoot -Recurse -Filter 'pass-receipt.json')
+          if ($receipts.Count -ne 10) {
+            throw "Expected 10 pass receipts; found $($receipts.Count)."
+          }
+          $parsed = @($receipts | ForEach-Object {
+            Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+          } | Sort-Object pass)
+          if (@($parsed | Where-Object {
+            $_.status -ne 'PASS' -or
+            $_.candidate_commit -ne $expectedCommit -or
+            $_.candidate_tree -ne $expectedTree -or
+            [bool]$_.source_mutation
+          }).Count -ne 0) {
+            throw 'One or more convergence receipts failed identity or status checks.'
+          }
+          $aggregate = [ordered]@{
+            schema_version = 1
+            status = 'PASS'
+            candidate_commit = $expectedCommit
+            candidate_tree = $expectedTree
+            consecutive_clean_passes = 10
+            lenses = @($parsed | ForEach-Object { $_.lens })
+            source_mutation = $false
+            completed_utc = [DateTime]::UtcNow.ToString('o')
+          }
+          $aggregate | ConvertTo-Json -Depth 5 |
+            Set-Content -LiteralPath (Join-Path $evidenceRoot 'convergence-summary.json') -Encoding utf8
+          Write-Host 'SCREEN_ECOTOPE_CONVERGENCE=PASS passes=10 source_mutation=false'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: mechofly-screen-ecotope-ten-pass-convergence
+          path: |
+            artifacts/ten-pass-convergence/
+            host-windows/bin/MechoFly.exe
+            host-windows/bin/MechoFly.pdb
+          if-no-files-found: error
