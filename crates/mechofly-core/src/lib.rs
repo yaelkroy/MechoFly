@@ -20,4 +20,4 @@ pub use stimulation::{
 };
 
 pub const MODEL_STEP_MS: u32 = 33;
-pub const MODEL_VERSION: &str = "mechofly-fixedpoint-v1";
+pub const MODEL_VERSION: &str = "mechofly-fixedpoint-v4-authoritative-actions";

@@ -14,40 +14,16 @@ use crate::{
     brain_lab::{BrainLabState, LabCommand},
     compute::ComputePreference,
     diagnostics,
-    pet::{PET_HEIGHT, PET_WIDTH, PetMotion, Skin, draw_pet, transparent_frame},
+    live_brain::{LiveBrainCommand, LiveBrainState},
+    pet::{PET_HEIGHT, PET_WIDTH, PetMotion, Skin, draw_pet_at_age, transparent_frame},
     runtime::SimulationSession,
     tray::{TrayAction, TrayController},
 };
 
 const MODEL_INTERVAL: Duration = Duration::from_millis(mechofly_core::MODEL_STEP_MS as u64);
-
-#[derive(Clone, Copy, Debug)]
-enum ManualPresentation {
-    Loom {
-        started: Instant,
-    },
-    Behavior {
-        behavior: Behavior,
-        started: Instant,
-    },
-}
-
-impl ManualPresentation {
-    fn behavior(self) -> Option<Behavior> {
-        match self {
-            Self::Loom { started } => match started.elapsed().as_secs_f32() {
-                elapsed if elapsed < 0.42 => Some(Behavior::PreEscape),
-                elapsed if elapsed < 2.15 => Some(Behavior::Flight),
-                elapsed if elapsed < 3.0 => Some(Behavior::Landing),
-                _ => None,
-            },
-            Self::Behavior { behavior, started } if started.elapsed() < Duration::from_secs(5) => {
-                Some(behavior)
-            }
-            Self::Behavior { .. } => None,
-        }
-    }
-}
+const MAX_CATCH_UP_STEPS: usize = 8;
+const CATCHUP_WARNING: &str =
+    "Model fell behind the wall clock; catch-up was bounded and excess elapsed time was dropped.";
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -84,6 +60,7 @@ impl RuntimeSourceIdentity {
 pub struct MechoFlyApp {
     render_state: Option<eframe::egui_wgpu::RenderState>,
     pub session: SimulationSession,
+    pub live_brain: LiveBrainState,
     pub lab: BrainLabState,
     pub policy: PetPolicy,
     pub skin: Skin,
@@ -98,9 +75,9 @@ pub struct MechoFlyApp {
     last_interaction: Option<Instant>,
     last_wall: Instant,
     accumulator: Duration,
+    evidence_hold: bool,
     seed: u64,
     exit_requested: bool,
-    manual_presentation: Option<ManualPresentation>,
 }
 
 impl MechoFlyApp {
@@ -119,10 +96,8 @@ impl MechoFlyApp {
             Err(error) => (None, Some(error)),
         };
         diagnostics::mark("system tray initialization attempted");
-        let pet = PetMotion {
-            reduced_motion: config.reduced_motion,
-            ..PetMotion::default()
-        };
+        let mut pet = PetMotion::default();
+        pet.reduced_motion = config.reduced_motion;
         #[cfg(windows)]
         let (desktop_pet, overlay_warning) = match crate::desktop_pet::PetOverlay::new(
             pet.screen_position,
@@ -161,6 +136,7 @@ impl MechoFlyApp {
         let app = Self {
             render_state,
             session,
+            live_brain: LiveBrainState::new(config.open_brain_lab),
             lab: BrainLabState::new(config.open_brain_lab, config.compute),
             policy,
             skin: config.skin,
@@ -178,9 +154,9 @@ impl MechoFlyApp {
             last_interaction: None,
             last_wall: Instant::now(),
             accumulator: Duration::ZERO,
+            evidence_hold: false,
             seed,
             exit_requested: false,
-            manual_presentation: None,
         };
         diagnostics::mark("eframe application construction completed");
         app
@@ -194,7 +170,7 @@ impl MechoFlyApp {
             .unwrap_or_default();
         for action in actions {
             match action {
-                TrayAction::OpenBrainLab => self.lab.open = true,
+                TrayAction::OpenBrainLab => self.live_brain.open = true,
                 TrayAction::DrosophilaSkin => self.skin = Skin::Drosophila,
                 TrayAction::FireflySkin => self.skin = Skin::Firefly,
                 TrayAction::Reevaluate => {
@@ -219,26 +195,7 @@ impl MechoFlyApp {
             self.session.engine.state.frame,
             self.seed,
         );
-    }
-
-    fn display_behavior(&self) -> Behavior {
-        if let Some(behavior) = self
-            .manual_presentation
-            .and_then(ManualPresentation::behavior)
-        {
-            return behavior;
-        }
-        match self.session.engine.state.behavior {
-            Behavior::Alert | Behavior::PreEscape | Behavior::Flight | Behavior::Landing => {
-                self.session.engine.state.behavior
-            }
-            _ => match self.current_action {
-                Action::Pause => Behavior::Rest,
-                Action::Explore => Behavior::Walk,
-                Action::Inspect => Behavior::Alert,
-                Action::Groom => Behavior::Groom,
-            },
-        }
+        self.session.stimulate_action(self.current_action);
     }
 
     #[cfg(windows)]
@@ -257,29 +214,26 @@ impl MechoFlyApp {
             );
         }
         if events.hotkey(HotkeyAction::BrainLab) {
-            self.lab.open = !self.lab.open;
-            self.lab.message = "Global hotkey Ctrl+Alt+N: Brain Lab toggled.".to_owned();
+            self.live_brain.open = !self.live_brain.open;
+            self.lab.message = "Global hotkey Ctrl+Alt+N: Live Brain toggled.".to_owned();
         }
         if events.hotkey(HotkeyAction::Loom) {
-            self.manual_presentation = Some(ManualPresentation::Loom {
-                started: Instant::now(),
-            });
-            self.lab.message =
-                "Global hotkey Ctrl+Alt+L: authored loom presentation started.".to_owned();
+            let accepted = self.session.stimulate_behavior(Behavior::PreEscape, 594);
+            self.lab.message = format!(
+                "Global hotkey Ctrl+Alt+L: bounded loom sensory drive {}.",
+                if accepted { "accepted" } else { "rejected" }
+            );
         }
-        for (action, behavior, label) in [
-            (HotkeyAction::Groom, Behavior::Groom, "Ctrl+Alt+G"),
-            (HotkeyAction::Reverse, Behavior::Reverse, "Ctrl+Alt+B"),
-            (HotkeyAction::Walk, Behavior::Walk, "Ctrl+Alt+W"),
+        for (action, behavior, duration_ms, label) in [
+            (HotkeyAction::Groom, Behavior::Groom, 500, "Ctrl+Alt+G"),
+            (HotkeyAction::Reverse, Behavior::Reverse, 400, "Ctrl+Alt+B"),
+            (HotkeyAction::Walk, Behavior::Walk, 500, "Ctrl+Alt+W"),
         ] {
             if events.hotkey(action) {
-                self.manual_presentation = Some(ManualPresentation::Behavior {
-                    behavior,
-                    started: Instant::now(),
-                });
+                let accepted = self.session.stimulate_behavior(behavior, duration_ms);
                 self.lab.message = format!(
-                    "Global hotkey {label}: temporary authored {:?} presentation. Model state unchanged.",
-                    behavior
+                    "Global hotkey {label}: bounded {behavior:?} population drive {}; animation waits for controller selection.",
+                    if accepted { "accepted" } else { "rejected" }
                 );
             }
         }
@@ -429,22 +383,26 @@ impl eframe::App for MechoFlyApp {
             .duration_since(self.last_wall)
             .min(Duration::from_millis(250));
         self.last_wall = now;
-        self.accumulator += elapsed;
         let mut steps = 0;
-        while self.accumulator >= MODEL_INTERVAL && steps < 5 {
-            self.session.step();
-            self.accumulator -= MODEL_INTERVAL;
-            steps += 1;
-            if self.session.engine.state.frame.is_multiple_of(90) {
-                self.select_policy_action();
+        if self.evidence_hold {
+            self.accumulator = Duration::ZERO;
+        } else {
+            self.accumulator += elapsed;
+            while self.accumulator >= MODEL_INTERVAL && steps < MAX_CATCH_UP_STEPS {
+                self.session.step();
+                self.accumulator -= MODEL_INTERVAL;
+                steps += 1;
+                if self.session.engine.state.frame.is_multiple_of(90) {
+                    self.select_policy_action();
+                }
             }
         }
-        if steps == 5 && self.accumulator >= MODEL_INTERVAL {
+        if !self.evidence_hold && steps == MAX_CATCH_UP_STEPS && self.accumulator >= MODEL_INTERVAL
+        {
             self.accumulator = Duration::ZERO;
-            self.session.runtime_warning = Some(
-                "Model fell behind the wall clock; catch-up was bounded and excess elapsed time was dropped."
-                    .to_owned(),
-            );
+            self.session.runtime_warning = Some(CATCHUP_WARNING.to_owned());
+        } else if self.session.runtime_warning.as_deref() == Some(CATCHUP_WARNING) {
+            self.session.runtime_warning = None;
         }
         let mut screen_origin = Pos2::ZERO;
         let mut screen_size = ctx.input(|input| {
@@ -453,7 +411,9 @@ impl eframe::App for MechoFlyApp {
                 .monitor_size
                 .unwrap_or(Vec2::new(1_920.0, 1_080.0))
         });
-        let mut held = ctx.input(|input| input.pointer.hover_pos().is_some());
+        let mut held = ctx.input(|input| input.pointer.primary_down());
+        let mut cursor_position = None;
+        let mut cursor_over_pet = false;
         #[cfg(windows)]
         if let Some(events) = self
             .desktop_pet
@@ -466,12 +426,15 @@ impl eframe::App for MechoFlyApp {
                 .expect("overlay existed while its events were polled");
             screen_origin = overlay.screen_origin();
             screen_size = overlay.screen_size();
-            held = events.dragging || events.hovered;
+            held = events.dragging;
+            cursor_position = events.cursor_position;
+            cursor_over_pet = events.hovered;
+            self.evidence_hold = events.evidence_hold;
             if let Some(position) = events.position {
                 self.pet.screen_position = position;
             }
             if events.open_lab {
-                self.lab.open = true;
+                self.live_brain.open = true;
             }
             if events.interacted {
                 self.last_interaction = Some(Instant::now());
@@ -479,25 +442,45 @@ impl eframe::App for MechoFlyApp {
             }
             self.handle_hotkeys(events);
         }
+        let cursor_loom_strength = cursor_position
+            .map(|cursor| {
+                let pet_center =
+                    self.pet.screen_position + Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * 0.5;
+                let distance = pet_center.distance(cursor);
+                ((360.0 - distance) / 240.0).clamp(0.0, 1.0)
+            })
+            .unwrap_or(0.0);
+        self.session.set_cursor_loom_strength(if cursor_over_pet {
+            1.0
+        } else {
+            cursor_loom_strength
+        });
+        let presentation_elapsed = if self.evidence_hold {
+            Duration::ZERO
+        } else {
+            elapsed
+        };
         self.pet.advance(
-            elapsed.as_secs_f32(),
-            self.display_behavior(),
+            presentation_elapsed.as_secs_f32(),
+            authoritative_display_behavior(self.session.engine.state.behavior),
             screen_origin,
             screen_size,
             held,
+            cursor_position,
         );
         #[cfg(windows)]
         {
-            let behavior = self.display_behavior();
+            let behavior = authoritative_display_behavior(self.session.engine.state.behavior);
             let update_error = self.desktop_pet.as_mut().and_then(|overlay| {
-                overlay.set_observatory_open(self.lab.open);
+                overlay.set_observatory_open(self.live_brain.open || self.lab.open);
                 overlay
                     .update(
                         self.pet.screen_position,
                         self.skin,
                         behavior,
                         self.pet.animation_seconds,
-                        self.pet.facing,
+                        self.pet.behavior_age_seconds,
+                        self.pet.heading_radians,
                         self.pet.reduced_motion,
                     )
                     .err()
@@ -544,23 +527,70 @@ impl eframe::App for MechoFlyApp {
                 .show(ui, |_ui| {});
         }
 
+        if self.live_brain.open {
+            let behavior = authoritative_display_behavior(self.session.engine.state.behavior);
+            let skin = self.skin;
+            let title = neural_viewport_title(
+                skin,
+                "Live Brain",
+                self.evidence_hold,
+                self.session.last_summary.frame,
+            );
+            let commands = {
+                let live_brain = &mut self.live_brain;
+                let session = &self.session;
+                let source_identity = &self.source_identity;
+                ui.ctx().show_viewport_immediate(
+                    egui::ViewportId::from_hash_of("mechofly-live-brain-v5"),
+                    egui::ViewportBuilder::default()
+                        .with_title(title)
+                        .with_inner_size([1_120.0, 760.0])
+                        .with_min_inner_size([840.0, 620.0])
+                        .with_resizable(true)
+                        .with_transparent(false)
+                        .with_taskbar(true),
+                    |brain_ui, _class| {
+                        brain_ui.ctx().request_repaint();
+                        if brain_ui.input(|input| input.viewport().close_requested()) {
+                            live_brain.open = false;
+                        }
+                        live_brain.draw(brain_ui, session, behavior, skin, source_identity)
+                    },
+                )
+            };
+            for command in commands {
+                match command {
+                    LiveBrainCommand::OpenLab => self.lab.open = true,
+                }
+            }
+            self.lab
+                .set_selected_neuron_index(self.live_brain.selected_neuron());
+        }
+
         if self.lab.open {
+            let skin = self.skin;
+            let title = neural_viewport_title(
+                skin,
+                "Brain Lab",
+                self.evidence_hold,
+                self.session.last_summary.frame,
+            );
             let commands = {
                 let lab = &mut self.lab;
                 let session = &self.session;
                 let policy = &self.policy;
-                let skin = self.skin;
                 let source_identity = &self.source_identity;
                 ui.ctx().show_viewport_immediate(
-                    egui::ViewportId::from_hash_of("mechofly-brain-lab-v3"),
+                    egui::ViewportId::from_hash_of("mechofly-brain-lab-v5"),
                     egui::ViewportBuilder::default()
-                        .with_title("MechoFly Brain Lab — Neural Observatory")
-                        .with_inner_size([1_420.0, 900.0])
-                        .with_min_inner_size([1_150.0, 720.0])
+                        .with_title(title)
+                        .with_inner_size([1_580.0, 820.0])
+                        .with_min_inner_size([1_260.0, 720.0])
                         .with_resizable(true)
                         .with_transparent(false)
                         .with_taskbar(true),
                     |lab_ui, _class| {
+                        lab_ui.ctx().request_repaint();
                         if lab_ui.input(|input| input.viewport().close_requested()) {
                             lab.open = false;
                         }
@@ -569,6 +599,8 @@ impl eframe::App for MechoFlyApp {
                 )
             };
             self.handle_lab_commands(commands);
+            self.live_brain
+                .set_selected_neuron(self.lab.selected_neuron_index());
         }
 
         if let Some(warning) = self.tray_warning.take() {
@@ -581,7 +613,7 @@ impl eframe::App for MechoFlyApp {
 impl MechoFlyApp {
     fn draw_fallback_pet(&mut self, ui: &mut egui::Ui) {
         ui.send_viewport_cmd(ViewportCommand::OuterPosition(self.pet.screen_position));
-        let behavior = self.display_behavior();
+        let behavior = authoritative_display_behavior(self.session.engine.state.behavior);
         egui::CentralPanel::default()
             .frame(transparent_frame())
             .show(ui, |ui| {
@@ -589,13 +621,14 @@ impl MechoFlyApp {
                     Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32),
                     Sense::click_and_drag(),
                 );
-                draw_pet(
+                draw_pet_at_age(
                     ui.painter(),
                     rect,
                     self.skin,
                     behavior,
                     self.pet.animation_seconds,
-                    self.pet.facing,
+                    self.pet.behavior_age_seconds,
+                    self.pet.heading_radians,
                     self.pet.reduced_motion,
                 );
                 let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -604,7 +637,7 @@ impl MechoFlyApp {
                     self.last_interaction = Some(Instant::now());
                 }
                 if response.double_clicked() || response.secondary_clicked() {
-                    self.lab.open = true;
+                    self.live_brain.open = true;
                     self.last_interaction = Some(Instant::now());
                 } else if response.clicked() {
                     self.last_interaction = Some(Instant::now());
@@ -612,6 +645,18 @@ impl MechoFlyApp {
                 }
             });
     }
+}
+
+fn neural_viewport_title(skin: Skin, panel: &str, evidence_hold: bool, frame: u64) -> String {
+    if evidence_hold {
+        format!("{} — {panel} — frame {frame:08}", skin.label())
+    } else {
+        format!("{} — {panel}", skin.label())
+    }
+}
+
+pub(crate) const fn authoritative_display_behavior(neural_behavior: Behavior) -> Behavior {
+    neural_behavior
 }
 
 fn app_data_dir() -> PathBuf {

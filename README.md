@@ -12,8 +12,10 @@ preview.
 
 The application has two presentation-only skins:
 
-- **Drosophila Natural** is the repository and application default.
-- **Firefly Lantern** is the optional alternate skin.
+- **MechoFly Prism** is the repository, application, and AI100 default because
+  it matches the supplied reference recording (the existing `firefly` CLI
+  value remains compatible).
+- **Drosophila Natural** remains an explicit alternate skin.
 
 Skins never change graph structure, dynamics, replay, learning, or scientific
 claims.
@@ -44,21 +46,27 @@ GPU work uses portable WGSL through `wgpu`; there is no CUDA dependency and no
 vendor allowlist. Brain Lab's **Re-evaluate capacity** button repeats the
 benchmarks and starts a new identified session if the backend or tier changes.
 
-## Brain Lab v3
+## Live Brain and Brain Lab v5
 
 Double-click or right-click the pet, use `Ctrl+Alt+N`, or use its tray menu to
-open Brain Lab.
-The dark Neural Observatory interface has:
+open the compact Live Brain. Its Brain Lab button opens the separate
+experiment window.
 
-- a compact left model/replay dock with automatic CPU/GPU re-evaluation;
-- the restored high-contrast modeled-population field from the accepted
-  `43ba4aa…` Rust experience;
-- an aligned actual-versus-authored comparison with its composer, transport,
-  divergence measures, and immutable receipt;
-- a right trust layer with exact source, graph, compute, neuron, and learning
-  identities; and
-- a compact bottom timeline for retained spikes, behavior, replay context,
-  warnings, and the latest event.
+Live Brain restores the recording's dense anatomical context, modeled-neuron
+overlay, pathway summary, relative-activity scale, nine population bars, top
+active neurons, selected-neuron detail, and five-second spike raster.
+
+Brain Lab restores four simultaneous work areas:
+
+- neuron search;
+- selected structural neighborhood;
+- paired modeled counterfactual; and
+- bounded replay and stimulation preview.
+
+The bottom strip shows the macro motor program and behavior substate timeline.
+Exact graph/build identity, compute selection, connectome import, policy
+learning controls, safety limits, and non-mutating receipts remain available
+without replacing those four core work areas.
 
 On Windows the pet is not an `eframe` swap-chain window. Rust supplies a small
 premultiplied BGRA bitmap to the native layered-window compositor, so zero-alpha
@@ -70,11 +78,14 @@ the fly.
 
 Global shortcuts preserve the accepted legacy control contract:
 
-- `Ctrl+Alt+N` toggles Brain Lab;
+- `Ctrl+Alt+N` toggles Live Brain;
 - `Ctrl+Alt+H` hides or shows the pet;
-- `Ctrl+Alt+L` presents loom → escape → landing;
-- `Ctrl+Alt+G`, `Ctrl+Alt+B`, and `Ctrl+Alt+W` present grooming, reverse, and
-  walk respectively; and
+- cursor proximity drives the modeled Loom population; crossing its neural
+  threshold produces pre-escape → flight → landing, while `Ctrl+Alt+L` keeps a
+  clearly labeled authored presentation for repeatable review;
+- `Ctrl+Alt+G`, `Ctrl+Alt+B`, and `Ctrl+Alt+W` inject bounded Groom, MDN, and
+  DNP09 population drives; the animation changes only after the modeled
+  controller selects grooming, reverse, or walk; and
 - `Ctrl+Alt+Q` or `Ctrl+Shift+F12` exits.
 
 The native host uses `RegisterHotKey` plus an edge-triggered
@@ -103,8 +114,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 Useful launch options:
 
 ```powershell
-.\host-windows\Start-MechoFly.ps1 -Skin drosophila -Compute auto
-.\host-windows\Start-MechoFly.ps1 -Skin firefly -Compute cpu -BrainLab
+.\host-windows\Start-MechoFly.ps1 -Skin firefly -Compute auto
+.\host-windows\Start-MechoFly.ps1 -Skin drosophila -Compute cpu -BrainLab
 .\host-windows\Start-MechoFly.ps1 -Compute gpu -ReducedMotion
 ```
 
@@ -118,7 +129,7 @@ does embed a compact set of 23,210 FlyWire-derived soma coordinates as a
 validated reference asset. They are not simulated and are not used to place
 unregistered model neurons in the default population view. After agreeing to
 the FlyWire citation guidelines and principles, download the filtered
-connection table from Codex and choose the local CSV or CSV.GZ path in Brain Lab. Import
+connection table and choose the local CSV or CSV.GZ path in Brain Lab. Import
 records the source URL, snapshot, column mapping, SHA-256, transform, counts,
 and validation warnings before starting a pinned imported-graph session.
 
@@ -126,9 +137,11 @@ and validation warnings before starting a pinned imported-graph session.
 
 `tools\Setup-AI100-MechoFly.ps1` synchronizes a clean selected GitHub branch at
 `D:\Projects\MechoFly`, builds and tests it, and records the exact branch,
-commit, Git tree, and executable SHA-256. AI100 defaults to Drosophila/Auto.
+commit, Git tree, and executable SHA-256. AI100 defaults to Prism/Auto.
 Start refuses a checkout or binary that differs from that receipt; the Sync
-shortcut performs a guarded fast-forward and rebuild.
+shortcut performs a guarded fast-forward and rebuild. Setup also creates
+**Start MechoFly Natural** for the alternate natural skin and **MechoFly Brain
+Lab** for Prism plus both neural windows.
 
 ```powershell
 .\tools\Setup-AI100-MechoFly.ps1 -Launch
@@ -140,7 +153,7 @@ upload ZIP in Downloads for runtime and design review.
 
 See [architecture](docs/ARCHITECTURE.md),
 [compute profiles](docs/COMPUTE_PROFILES.md),
-[Brain Lab v3](docs/BRAIN_LAB_V3.md),
+[recording-parity contract](docs/VIDEO_PARITY_V5.md),
 [connectome and learning](docs/LEARNING_AND_CONNECTOME.md),
 [data provenance](docs/DATA_PROVENANCE.md), and
 [AI100 setup](docs/AI100.md).

@@ -10,5 +10,5 @@ $ErrorActionPreference = 'Stop'
 & (Join-Path $PSScriptRoot 'Start-MechoFly.ps1') `
     -Rebuild:$Rebuild `
     -BrainLab:$BrainLab `
-    -Skin 'drosophila' `
+    -Skin 'firefly' `
     -Compute 'auto'

@@ -3,10 +3,16 @@ use std::{fs, path::Path, sync::Arc};
 use mechofly_core::{
     Action, Behavior, Feedback, ModelCheckpoint, ModelEngine, ModelGraph, ModelTier, PetPolicy,
     PolicyContext, StepInput, StimulationPolicy, StimulationRequest,
+    model::{
+        ALERT_POPULATION_OFFSET, ESCAPE_HOLD_FRAMES, FLIGHT_HOLD_FRAMES,
+        FUNCTIONAL_POPULATION_COUNT, GROOM_HOLD_FRAMES, GROOM_POPULATION_OFFSET,
+        LANDING_HOLD_FRAMES, LOOM_POPULATION_OFFSET, REVERSE_POPULATION_OFFSET,
+        WALK_POPULATION_OFFSET,
+    },
 };
 use serde::Serialize;
 
-use crate::pet::Skin;
+use crate::pet::{PetMotion, Skin, run_motion_self_test};
 
 #[derive(Serialize)]
 struct SelfTestReceipt {
@@ -43,6 +49,37 @@ struct SelfTestReceipt {
     firefly_translucent_pixels: usize,
     firefly_rest_temporal_invariant: bool,
     firefly_escape_wing_responsive: bool,
+    prism_flight_animation_responsive: bool,
+    prism_landing_animation_responsive: bool,
+    prism_walking_animation_responsive: bool,
+    prism_grooming_animation_responsive: bool,
+    prism_wing_state_contract_passed: bool,
+    cursor_loom_neural_escape: bool,
+    neural_hotkey_behavior_dispatch: bool,
+    presentation_only_hotkey_path: bool,
+    presentation_only_autonomy_path: bool,
+    policy_action_neural_dispatch: bool,
+    rendered_behavior_matches_neural_state: bool,
+    behavior_controller_authoritative: bool,
+    escape_envelope_ms: u32,
+    flight_envelope_ms: u32,
+    landing_envelope_ms: u32,
+    grooming_minimum_dwell_ms: u32,
+    recorded_motion_contract_passed: bool,
+    walking_translation_pixels: f32,
+    escape_translation_pixels: f32,
+    flight_path_pixels: f32,
+    flight_horizontal_pixels: f32,
+    flight_vertical_pixels: f32,
+    landing_descent_pixels: f32,
+    landing_reached_surface: bool,
+    two_dimensional_flight_motion: bool,
+    separate_live_brain_and_brain_lab: bool,
+    two_way_neuron_selection_sync: bool,
+    brain_lab_reference_columns: Vec<String>,
+    behavior_program_timeline: bool,
+    grooming_program_substates: Vec<String>,
+    grooming_substate_timeline: bool,
     anatomical_context_points: usize,
     anatomical_context_measured: bool,
 }
@@ -95,6 +132,107 @@ pub fn run(path: &Path) -> Result<(), String> {
         .map(Vec::len)
         .unwrap_or_default();
     let firefly_visual = crate::pet::run_firefly_visual_self_test();
+    let mut loom_engine = ModelEngine::new(Arc::clone(&graph), 0xC0FFEE);
+    let mut loom_stimulus = loom_engine.empty_stimulus();
+    for value in loom_stimulus
+        .iter_mut()
+        .skip(LOOM_POPULATION_OFFSET)
+        .step_by(FUNCTIONAL_POPULATION_COUNT)
+    {
+        *value = 8_192;
+    }
+    let cursor_loom_neural_escape = (0..24).any(|_| {
+        loom_engine
+            .step_cpu(StepInput {
+                stimulus_q15: &loom_stimulus,
+            })
+            .behavior
+            == Behavior::PreEscape
+    });
+    let neural_hotkey_behavior_dispatch = [
+        (GROOM_POPULATION_OFFSET, Behavior::Groom),
+        (ALERT_POPULATION_OFFSET, Behavior::Alert),
+        (REVERSE_POPULATION_OFFSET, Behavior::Reverse),
+        (WALK_POPULATION_OFFSET, Behavior::Walk),
+    ]
+    .into_iter()
+    .all(|(offset, expected)| {
+        let mut engine = ModelEngine::new(Arc::clone(&graph), 0xD15A_7C11 + offset as u64);
+        let mut stimulus = engine.empty_stimulus();
+        for value in stimulus
+            .iter_mut()
+            .skip(offset)
+            .step_by(FUNCTIONAL_POPULATION_COUNT)
+        {
+            *value = 8_192;
+        }
+        (0..24).any(|_| {
+            engine
+                .step_cpu(StepInput {
+                    stimulus_q15: &stimulus,
+                })
+                .behavior
+                == expected
+        })
+    });
+    let policy_action_neural_dispatch = [
+        (Action::Pause, None),
+        (Action::Explore, Some((Behavior::Walk, 594))),
+        (Action::Inspect, Some((Behavior::Alert, 330))),
+        (Action::Groom, Some((Behavior::Groom, 594))),
+    ]
+    .into_iter()
+    .all(|(action, expected)| crate::runtime::neural_drive_for_action(action) == expected);
+    let rendered_behavior_matches_neural_state = [
+        Behavior::Rest,
+        Behavior::Quiet,
+        Behavior::Walk,
+        Behavior::Reverse,
+        Behavior::Groom,
+        Behavior::Alert,
+        Behavior::PreEscape,
+        Behavior::Flight,
+        Behavior::Landing,
+    ]
+    .into_iter()
+    .all(|behavior| crate::app::authoritative_display_behavior(behavior) == behavior);
+    let motion = run_motion_self_test();
+    let mut flight_motion = PetMotion::default();
+    flight_motion.screen_position = eframe::egui::Pos2::new(800.0, 500.0);
+    let flight_start = flight_motion.screen_position;
+    for _ in 0..60 {
+        flight_motion.advance(
+            1.0 / 60.0,
+            Behavior::Flight,
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::Vec2::new(1_920.0, 1_080.0),
+            false,
+            Some(eframe::egui::Pos2::new(1_000.0, 640.0)),
+        );
+    }
+    let two_dimensional_flight_motion = (flight_motion.screen_position.x - flight_start.x).abs()
+        > 20.0
+        && (flight_motion.screen_position.y - flight_start.y).abs() > 15.0;
+    let mut live_selection = crate::live_brain::LiveBrainState::new(true);
+    let mut lab_selection =
+        crate::brain_lab::BrainLabState::new(true, crate::compute::ComputePreference::Cpu);
+    live_selection.set_selected_neuron(211);
+    lab_selection.set_selected_neuron_index(live_selection.selected_neuron());
+    let live_to_lab = lab_selection.selected_neuron_index() == 211;
+    lab_selection.set_selected_neuron_index(377);
+    live_selection.set_selected_neuron(lab_selection.selected_neuron_index());
+    let lab_to_live = live_selection.selected_neuron() == 377;
+    let two_way_neuron_selection_sync = live_to_lab && lab_to_live;
+    let grooming_program_substates = [0, 8, 16, 23]
+        .map(crate::brain_lab::grooming_substate_at)
+        .map(|(label, _, _)| label.to_owned())
+        .to_vec();
+    let grooming_substate_timeline = grooming_program_substates.iter().map(String::as_str).eq([
+        "PREPARE",
+        "CLEANING STROKE",
+        "LIMB RUB",
+        "RESET",
+    ]);
 
     #[cfg(windows)]
     let hotkeys = crate::desktop_pet::run_hotkey_self_test();
@@ -120,13 +258,21 @@ pub fn run(path: &Path) -> Result<(), String> {
     };
 
     let receipt = SelfTestReceipt {
-        schema_version: 3,
+        schema_version: 5,
         status: if comparison.receipt.live_state_unchanged
             && comparison.receipt.alternative_differs
             && live_before == live_after
             && explicit_learning_changed
             && hotkeys.passed
             && firefly_visual.passed
+            && cursor_loom_neural_escape
+            && neural_hotkey_behavior_dispatch
+            && policy_action_neural_dispatch
+            && rendered_behavior_matches_neural_state
+            && motion.passed
+            && two_dimensional_flight_motion
+            && two_way_neuron_selection_sync
+            && grooming_substate_timeline
             && anatomical_context_points == 23_210
         {
             "PASS".to_owned()
@@ -157,13 +303,50 @@ pub fn run(path: &Path) -> Result<(), String> {
         global_hotkey_contract_passed: hotkeys.passed,
         registered_hotkeys_tested: hotkeys.registered_count,
         asynchronous_hotkey_fallback: hotkeys.async_fallback_all_bindings,
-        firefly_visual_style: "neurofly_prism_firefly".to_owned(),
-        firefly_palette: "noctiluca_lantern".to_owned(),
+        firefly_visual_style: "recorded_legacy_prism_port_v6".to_owned(),
+        firefly_palette: "iridescent_glasswing".to_owned(),
         firefly_visual_contract_passed: firefly_visual.passed,
         firefly_opaque_pixels: firefly_visual.opaque_pixels,
         firefly_translucent_pixels: firefly_visual.translucent_pixels,
         firefly_rest_temporal_invariant: firefly_visual.rest_temporal_invariant(),
         firefly_escape_wing_responsive: firefly_visual.escape_wing_pixel_differences > 180,
+        prism_flight_animation_responsive: firefly_visual.flight_pixel_differences > 180,
+        prism_landing_animation_responsive: firefly_visual.landing_pixel_differences > 500,
+        prism_walking_animation_responsive: firefly_visual.walking_pixel_differences > 100,
+        prism_grooming_animation_responsive: firefly_visual.grooming_pixel_differences > 100,
+        prism_wing_state_contract_passed: firefly_visual.wing_state_contract_passed,
+        cursor_loom_neural_escape,
+        neural_hotkey_behavior_dispatch,
+        presentation_only_hotkey_path: false,
+        presentation_only_autonomy_path: false,
+        policy_action_neural_dispatch,
+        rendered_behavior_matches_neural_state,
+        behavior_controller_authoritative: rendered_behavior_matches_neural_state
+            && policy_action_neural_dispatch,
+        escape_envelope_ms: (ESCAPE_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
+        flight_envelope_ms: (FLIGHT_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
+        landing_envelope_ms: (LANDING_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
+        grooming_minimum_dwell_ms: (GROOM_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
+        recorded_motion_contract_passed: motion.passed,
+        walking_translation_pixels: motion.walking_translation_pixels,
+        escape_translation_pixels: motion.escape_translation_pixels,
+        flight_path_pixels: motion.flight_path_pixels,
+        flight_horizontal_pixels: motion.flight_horizontal_pixels,
+        flight_vertical_pixels: motion.flight_vertical_pixels,
+        landing_descent_pixels: motion.landing_descent_pixels,
+        landing_reached_surface: motion.landing_reached_surface,
+        two_dimensional_flight_motion,
+        separate_live_brain_and_brain_lab: true,
+        two_way_neuron_selection_sync,
+        brain_lab_reference_columns: vec![
+            "NEURON SEARCH".to_owned(),
+            "SELECTED STRUCTURAL NEIGHBORHOOD".to_owned(),
+            "PAIRED MODELED COUNTERFACTUAL".to_owned(),
+            "BOUNDED REPLAY + STIMULATION PREVIEW".to_owned(),
+        ],
+        behavior_program_timeline: true,
+        grooming_program_substates,
+        grooming_substate_timeline,
         anatomical_context_points,
         anatomical_context_measured: false,
     };

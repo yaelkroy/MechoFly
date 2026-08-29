@@ -46,7 +46,7 @@ if ($null -ne $Profile -and
 }
 
 if (-not $PSBoundParameters.ContainsKey('Skin')) {
-    $Skin = 'drosophila'
+    $Skin = 'firefly'
     if ($null -ne $Profile -and $Profile.PSObject.Properties['skin'] -and
         @('drosophila', 'firefly') -contains [string]$Profile.skin) {
         $Skin = [string]$Profile.skin

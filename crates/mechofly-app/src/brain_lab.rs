@@ -1,7 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
-use mechofly_core::{ComparisonResult, Feedback, PetPolicy, StimulationPolicy, StimulationRequest};
+use mechofly_core::{
+    Behavior, ComparisonResult, Feedback, PetPolicy, StimulationPolicy, StimulationRequest,
+};
 
 use crate::{
     app::RuntimeSourceIdentity, compute::ComputePreference, pet::Skin, runtime::SimulationSession,
@@ -56,6 +58,9 @@ pub struct BrainLabState {
     pub playing: bool,
     pub import_path: String,
     pub selected_neuron: String,
+    search_query: String,
+    selected_index: usize,
+    show_only_spiking: bool,
     pub message: String,
 }
 
@@ -76,11 +81,38 @@ impl BrainLabState {
             playing: false,
             import_path: String::new(),
             selected_neuron: String::new(),
+            search_query: String::new(),
+            selected_index: 0,
+            show_only_spiking: false,
             message: "No preview receipt. Live state cannot be targeted from this UI.".to_owned(),
         }
     }
 
+    pub fn selected_neuron_index(&self) -> usize {
+        self.selected_index
+    }
+
+    pub fn set_selected_neuron_index(&mut self, index: usize) {
+        if self.selected_index != index {
+            self.selected_index = index;
+            self.selected_neuron = index.to_string();
+            self.targets = index.to_string();
+        }
+    }
+
     pub fn draw(
+        &mut self,
+        ui: &mut egui::Ui,
+        session: &SimulationSession,
+        policy: &PetPolicy,
+        skin: Skin,
+        source_identity: &RuntimeSourceIdentity,
+    ) -> Vec<LabCommand> {
+        reference_layout(self, ui, session, policy, skin, source_identity)
+    }
+
+    #[allow(dead_code)]
+    fn draw_v3(
         &mut self,
         ui: &mut egui::Ui,
         session: &SimulationSession,
@@ -241,7 +273,7 @@ impl BrainLabState {
 
                         ui.separator();
                         ui.collapsing("LOCAL CONNECTOME IMPORT", |ui| {
-                            ui.label("FlyWire Codex connection-table path");
+                            ui.label("FlyWire connection-table path");
                             ui.text_edit_singleline(&mut self.import_path);
                             if ui
                                 .add_sized(
@@ -443,6 +475,763 @@ impl BrainLabState {
             Err(error) => self.message = format!("Preview rejected: {error}"),
         }
     }
+}
+
+fn reference_layout(
+    state: &mut BrainLabState,
+    ui: &mut egui::Ui,
+    session: &SimulationSession,
+    policy: &PetPolicy,
+    skin: Skin,
+    source_identity: &RuntimeSourceIdentity,
+) -> Vec<LabCommand> {
+    style_context(ui.ctx());
+    let mut commands = Vec::new();
+    state.selected_index = state
+        .selected_index
+        .min(session.graph.neuron_ids.len().saturating_sub(1));
+
+    egui::Panel::top("reference_lab_header")
+        .exact_size(70.0)
+        .frame(
+            egui::Frame::new()
+                .fill(Color32::from_rgb(33, 20, 47))
+                .stroke(Stroke::new(1.0, VIOLET))
+                .inner_margin(egui::Margin::symmetric(12, 8)),
+        )
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("{}  —  BRAIN LAB", skin.label().to_ascii_uppercase()))
+                            .strong()
+                            .size(17.0)
+                            .color(INK),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "search · structure · paired counterfactual · bounded replay and stimulation",
+                        )
+                        .small()
+                        .color(MUTED),
+                    );
+                    ui.monospace(format!(
+                        "SESSION {}  ·  FRAME {:08}  ·  STATE {}",
+                        session.short_session_id().to_ascii_uppercase(),
+                        session.last_summary.frame,
+                        &session.live_digest()[..12]
+                    ));
+                });
+                ui.with_layout(
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        status_chip(
+                            ui,
+                            "NO LIVE APPLY PATH",
+                            Color32::from_rgb(48, 29, 39),
+                            WARNING,
+                        );
+                        status_chip(
+                            ui,
+                            session.assessment.selected.label(),
+                            ACTUAL_SOFT,
+                            ACTUAL,
+                        );
+                        status_chip(
+                            ui,
+                            &format!("{:?}", session.last_summary.behavior)
+                                .to_ascii_uppercase(),
+                            Color32::from_rgb(43, 31, 59),
+                            VIOLET,
+                        );
+                    },
+                );
+            });
+        });
+
+    egui::Panel::bottom("reference_behavior_program")
+        .exact_size(196.0)
+        .frame(surface_frame())
+        .show(ui, |ui| {
+            behavior_program_panel(ui, session);
+            ui.add_space(3.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new("EVENT").strong().color(VIOLET));
+                ui.label(egui::RichText::new(&state.message).small().color(MUTED));
+                if let Some(warning) = &session.runtime_warning {
+                    ui.colored_label(WARNING, warning);
+                }
+            });
+        });
+
+    egui::CentralPanel::default()
+        .frame(
+            egui::Frame::new()
+                .fill(CANVAS)
+                .inner_margin(egui::Margin::same(6)),
+        )
+        .show(ui, |ui| {
+            ui.columns(4, |columns| {
+                column_frame(&mut columns[0], |ui| {
+                    neuron_search_panel(state, ui, session);
+                });
+                column_frame(&mut columns[1], |ui| {
+                    structural_panel(state, ui, session);
+                });
+                column_frame(&mut columns[2], |ui| {
+                    counterfactual_panel(state, ui, session, &mut commands);
+                });
+                column_frame(&mut columns[3], |ui| {
+                    replay_stimulation_panel(
+                        state,
+                        ui,
+                        session,
+                        policy,
+                        skin,
+                        source_identity,
+                        &mut commands,
+                    );
+                });
+            });
+        });
+
+    commands
+}
+
+fn column_frame(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .fill(SURFACE)
+        .stroke(Stroke::new(1.0, GRID))
+        .corner_radius(4)
+        .inner_margin(egui::Margin::same(9))
+        .show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, contents);
+        });
+}
+
+const ROLES: [&str; 9] = [
+    "LC4 loom",
+    "LPLC2 loom",
+    "GF escape",
+    "DNA steer",
+    "MDN reverse",
+    "DNP09 walk",
+    "DNG11 groom",
+    "ESCW wing",
+    "Landing",
+];
+
+fn role(index: usize) -> &'static str {
+    ROLES[index % ROLES.len()]
+}
+
+fn side(index: usize) -> &'static str {
+    if index.is_multiple_of(2) { "L" } else { "R" }
+}
+
+fn neuron_search_panel(state: &mut BrainLabState, ui: &mut egui::Ui, session: &SimulationSession) {
+    section_title(ui, "NEURON SEARCH", ACTUAL);
+    ui.label(
+        egui::RichText::new("root ID, index, role, or side")
+            .small()
+            .color(MUTED),
+    );
+    ui.text_edit_singleline(&mut state.search_query);
+    ui.checkbox(&mut state.show_only_spiking, "spiking now");
+    ui.horizontal(|ui| {
+        ui.monospace(format!("{:>7} neurons", session.graph.neuron_ids.len()));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.small("showing ≤250");
+        });
+    });
+    ui.separator();
+
+    let query = state.search_query.trim().to_ascii_lowercase();
+    let mut shown = 0;
+    for index in 0..session.graph.neuron_ids.len() {
+        if state.show_only_spiking && session.engine.state.spikes[index] == 0 {
+            continue;
+        }
+        let searchable = format!(
+            "{} {} {} {}",
+            index,
+            session.graph.neuron_ids[index],
+            role(index),
+            side(index)
+        )
+        .to_ascii_lowercase();
+        if !query.is_empty() && !searchable.contains(&query) {
+            continue;
+        }
+        let selected = state.selected_index == index;
+        let response = ui.selectable_label(
+            selected,
+            egui::RichText::new(format!(
+                "#{:<7}  {:<11}  {}",
+                session.graph.neuron_ids[index],
+                role(index),
+                side(index)
+            ))
+            .monospace()
+            .size(10.0),
+        );
+        if response.clicked() {
+            state.selected_index = index;
+            state.selected_neuron = index.to_string();
+            state.targets = index.to_string();
+        }
+        shown += 1;
+        if shown >= 250 {
+            break;
+        }
+    }
+    if shown == 0 {
+        ui.colored_label(WARNING, "No modeled neurons match this filter.");
+    }
+}
+
+fn structural_panel(state: &mut BrainLabState, ui: &mut egui::Ui, session: &SimulationSession) {
+    section_title(ui, "SELECTED STRUCTURAL NEIGHBORHOOD", POSITIVE);
+    let selected = state.selected_index;
+    ui.label(
+        egui::RichText::new(format!(
+            "#{}  ·  index {}",
+            session.graph.neuron_ids[selected], selected
+        ))
+        .strong(),
+    );
+    key_value(ui, "Role", role(selected));
+    key_value(ui, "Side", side(selected));
+    key_value(
+        ui,
+        "Activation",
+        &session.engine.state.activation[selected].to_string(),
+    );
+    key_value(
+        ui,
+        "Spike",
+        if session.engine.state.spikes[selected] != 0 {
+            "yes"
+        } else {
+            "no"
+        },
+    );
+    ui.separator();
+
+    section_title(ui, "STRONGEST INPUTS", ACTUAL);
+    let start = session.graph.incoming_offsets[selected] as usize;
+    let end = session.graph.incoming_offsets[selected + 1] as usize;
+    let mut incoming: Vec<_> = (start..end)
+        .map(|edge| {
+            (
+                session.graph.incoming_sources[edge] as usize,
+                session.graph.modeled_weights[edge],
+            )
+        })
+        .collect();
+    incoming.sort_unstable_by_key(|(_, weight)| std::cmp::Reverse(weight.abs()));
+    let mut next_selected = None;
+    for (source, weight) in incoming.into_iter().take(14) {
+        if structural_row(ui, session, source, selected, weight, true) {
+            next_selected = Some(source);
+        }
+    }
+
+    ui.separator();
+    section_title(ui, "STRONGEST OUTPUTS", ALTERNATIVE);
+    let mut outgoing = Vec::new();
+    for target in 0..session.graph.neuron_ids.len() {
+        let start = session.graph.incoming_offsets[target] as usize;
+        let end = session.graph.incoming_offsets[target + 1] as usize;
+        for edge in start..end {
+            if session.graph.incoming_sources[edge] as usize == selected {
+                outgoing.push((target, session.graph.modeled_weights[edge]));
+            }
+        }
+    }
+    outgoing.sort_unstable_by_key(|(_, weight)| std::cmp::Reverse(weight.abs()));
+    for (target, weight) in outgoing.into_iter().take(14) {
+        if structural_row(ui, session, selected, target, weight, false) {
+            next_selected = Some(target);
+        }
+    }
+    if let Some(index) = next_selected {
+        state.set_selected_neuron_index(index);
+    }
+    ui.separator();
+    claim_badge(
+        ui,
+        &session.graph.identity.structure_claim,
+        POSITIVE_SOFT,
+        POSITIVE,
+    );
+    ui.small("Edges and signed modeled weights come from the active graph CSR. Role labels are presentation groupings.");
+}
+
+fn structural_row(
+    ui: &mut egui::Ui,
+    session: &SimulationSession,
+    source: usize,
+    target: usize,
+    weight: i32,
+    show_source: bool,
+) -> bool {
+    let neuron = if show_source { source } else { target };
+    let response = ui
+        .horizontal(|ui| {
+            ui.colored_label(
+                if weight >= 0 { POSITIVE } else { WARNING },
+                if weight >= 0 { "+" } else { "−" },
+            );
+            ui.monospace(format!(
+                "#{:<7} {:<11}",
+                session.graph.neuron_ids[neuron],
+                role(neuron)
+            ));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.monospace(format!("{:+}", weight));
+            });
+        })
+        .response
+        .interact(Sense::click());
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    response.clicked()
+}
+
+fn counterfactual_panel(
+    state: &mut BrainLabState,
+    ui: &mut egui::Ui,
+    session: &SimulationSession,
+    commands: &mut Vec<LabCommand>,
+) {
+    section_title(ui, "PAIRED MODELED COUNTERFACTUAL", ALTERNATIVE);
+    ui.small("Actual and authored alternative begin from the same retained full-state checkpoint.");
+    ui.add_space(5.0);
+    match state.comparison.as_ref() {
+        None => {
+            claim_badge(ui, "NO PREVIEW YET", Color32::from_rgb(45, 33, 38), WARNING);
+            paired_summary(
+                ui,
+                (
+                    session.last_summary.behavior,
+                    session.last_summary.spike_count,
+                    session.last_summary.mean_activation_q15,
+                ),
+                (
+                    session.last_summary.behavior,
+                    session.last_summary.spike_count,
+                    session.last_summary.mean_activation_q15,
+                ),
+                0,
+            );
+            ui.label(
+            egui::RichText::new(
+                "Configure the bounded branch in the next column, then generate the isolated comparison.",
+            )
+            .small()
+            .color(MUTED),
+        );
+        }
+        Some(comparison) => {
+            let maximum = comparison.frames.len().saturating_sub(1);
+            state.comparison_cursor = state.comparison_cursor.min(maximum);
+            if state.playing && !comparison.frames.is_empty() {
+                state.comparison_cursor =
+                    ui.input(|input| (input.time * 12.0) as usize) % comparison.frames.len();
+                ui.ctx().request_repaint_after(Duration::from_millis(80));
+            }
+            ui.horizontal(|ui| {
+                if ui
+                    .button(if state.playing { "Pause" } else { "Play" })
+                    .clicked()
+                {
+                    state.playing = !state.playing;
+                }
+                ui.add(egui::Slider::new(&mut state.comparison_cursor, 0..=maximum).text("frame"));
+            });
+            let frame = &comparison.frames[state.comparison_cursor];
+            paired_summary(
+                ui,
+                (
+                    frame.actual.behavior,
+                    frame.actual.spike_count,
+                    frame.actual.mean_activation_q15,
+                ),
+                (
+                    frame.alternative.behavior,
+                    frame.alternative.spike_count,
+                    frame.alternative.mean_activation_q15,
+                ),
+                frame.differing_neurons,
+            );
+            ui.add_space(5.0);
+            compact_delta_timeline(ui, comparison);
+            ui.separator();
+            claim_badge(ui, &comparison.receipt.status, POSITIVE_SOFT, POSITIVE);
+            key_value(
+                ui,
+                "Source frame",
+                &comparison.receipt.source_frame.to_string(),
+            );
+            key_value(
+                ui,
+                "Live unchanged",
+                &comparison.receipt.live_state_unchanged.to_string(),
+            );
+            key_value(
+                ui,
+                "Alternative differs",
+                &comparison.receipt.alternative_differs.to_string(),
+            );
+            ui.monospace(&comparison.receipt.alternative_final_sha256[..12]);
+        }
+    }
+    ui.add_space(8.0);
+    if ui
+        .add_sized(
+            [ui.available_width(), 30.0],
+            egui::Button::new("Generate paired preview").fill(ALTERNATIVE_SOFT),
+        )
+        .clicked()
+    {
+        commands.push(LabCommand::GeneratePreview);
+    }
+    ui.separator();
+    section_title(ui, "WHAT CHANGED / WHY", VIOLET);
+    ui.small("The alternative receives only the authored target vector for the bounded duration. Both branches then run the same deterministic CPU model.");
+    ui.small("The live engine is hashed before and after. A PASS receipt requires identical live digests and a discarded alternative.");
+}
+
+fn paired_summary(
+    ui: &mut egui::Ui,
+    actual: (Behavior, usize, i32),
+    alternative: (Behavior, usize, i32),
+    differing: usize,
+) {
+    let (actual_behavior, actual_spikes, actual_activation) = actual;
+    let (alternative_behavior, alternative_spikes, alternative_activation) = alternative;
+    ui.columns(2, |columns| {
+        columns[0].label(egui::RichText::new("ACTUAL").strong().color(ACTUAL));
+        columns[0].monospace(format!("{actual_behavior:?}"));
+        columns[0].monospace(format!("{actual_spikes} spikes"));
+        columns[0].monospace(format!("mean {actual_activation:+}"));
+        columns[1].label(
+            egui::RichText::new("AUTHORED ALT")
+                .strong()
+                .color(ALTERNATIVE),
+        );
+        columns[1].monospace(format!("{alternative_behavior:?}"));
+        columns[1].monospace(format!("{alternative_spikes} spikes"));
+        columns[1].monospace(format!("mean {alternative_activation:+}"));
+    });
+    ui.colored_label(
+        if differing == 0 { MUTED } else { ALTERNATIVE },
+        format!("{differing} differing modeled neurons"),
+    );
+}
+
+fn compact_delta_timeline(ui: &mut egui::Ui, comparison: &ComparisonResult) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 106.0), Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 3, Color32::from_rgb(5, 9, 15));
+    painter.rect_stroke(rect, 3, Stroke::new(1.0, GRID), StrokeKind::Inside);
+    let maximum = comparison
+        .frames
+        .iter()
+        .map(|frame| frame.differing_neurons)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let width = rect.width() / comparison.frames.len().max(1) as f32;
+    for (index, frame) in comparison.frames.iter().enumerate() {
+        let height = frame.differing_neurons as f32 / maximum as f32 * (rect.height() - 22.0);
+        let x = rect.left() + index as f32 * width;
+        painter.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(x, rect.bottom() - height - 12.0),
+                Vec2::new(width.max(1.0), height),
+            ),
+            0,
+            ALTERNATIVE,
+        );
+    }
+    painter.text(
+        rect.left_top() + Vec2::new(5.0, 4.0),
+        Align2::LEFT_TOP,
+        "BOUNDED Δ TIMELINE",
+        FontId::monospace(9.5),
+        MUTED,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replay_stimulation_panel(
+    state: &mut BrainLabState,
+    ui: &mut egui::Ui,
+    session: &SimulationSession,
+    policy: &PetPolicy,
+    skin: Skin,
+    source_identity: &RuntimeSourceIdentity,
+    commands: &mut Vec<LabCommand>,
+) {
+    section_title(ui, "BOUNDED REPLAY + STIMULATION PREVIEW", VIOLET);
+    let maximum = session.replay.len().saturating_sub(1);
+    state.replay_frames_back = state.replay_frames_back.min(maximum);
+    ui.add(egui::Slider::new(&mut state.replay_frames_back, 0..=maximum).text("frames back"));
+    if let Some(checkpoint) = session.replay.get_from_newest(state.replay_frames_back) {
+        key_value(ui, "Source frame", &checkpoint.state.frame.to_string());
+        key_value(ui, "Behavior", &format!("{:?}", checkpoint.state.behavior));
+        key_value(ui, "State", &checkpoint.state.digest()[..12]);
+    } else {
+        ui.colored_label(WARNING, "Replay empty; wait for the first model step.");
+    }
+    ui.separator();
+    ui.label(egui::RichText::new("Target neuron indices").color(MUTED));
+    ui.text_edit_singleline(&mut state.targets);
+    ui.label(egui::RichText::new("Authored purpose").color(MUTED));
+    ui.text_edit_singleline(&mut state.authored_label);
+    ui.horizontal(|ui| {
+        ui.label("amplitude");
+        ui.add(
+            egui::DragValue::new(&mut state.amplitude)
+                .range(0.01..=0.25)
+                .speed(0.01),
+        );
+        ui.label("duration");
+        ui.add(
+            egui::DragValue::new(&mut state.duration_ms)
+                .range(33..=990)
+                .speed(33)
+                .suffix(" ms"),
+        );
+    });
+    ui.add(egui::Slider::new(&mut state.comparison_frames, 1..=120).text("comparison frames"));
+    if ui
+        .add_sized(
+            [ui.available_width(), 31.0],
+            egui::Button::new("Run isolated preview").fill(ALTERNATIVE_SOFT),
+        )
+        .clicked()
+    {
+        commands.push(LabCommand::GeneratePreview);
+    }
+    ui.small(
+        "≤64 targets · amplitude ≤0.25 · 33–990 ms · ≤4.0 neuron-seconds · discarded branch only",
+    );
+    ui.separator();
+    section_title(ui, "MODEL / SOURCE", ACTUAL);
+    key_value(ui, "Skin", skin.label());
+    key_value(ui, "Session", session.short_session_id());
+    key_value(ui, "Compute", session.assessment.selected.label());
+    key_value(ui, "Graph", &session.graph.identity.product);
+    key_value(
+        ui,
+        "Build",
+        source_identity.short_commit().unwrap_or("unreceipted"),
+    );
+    egui::ComboBox::from_id_salt("reference_compute")
+        .selected_text(state.compute_preference.label())
+        .width(ui.available_width())
+        .show_ui(ui, |ui| {
+            for mode in ComputePreference::ALL {
+                ui.selectable_value(&mut state.compute_preference, mode, mode.label());
+            }
+        });
+    if ui.button("Re-evaluate system capacity").clicked() {
+        commands.push(LabCommand::Reevaluate(state.compute_preference));
+    }
+    ui.collapsing("Local connectome import", |ui| {
+        ui.label("FlyWire connection-table path");
+        ui.text_edit_singleline(&mut state.import_path);
+        if ui.button("Validate and start session").clicked() {
+            commands.push(LabCommand::ImportConnectome(state.import_path.clone()));
+        }
+    });
+    ui.separator();
+    section_title(ui, "LEARNING BOUNDARY", POSITIVE);
+    let mut enabled = policy.enabled;
+    if ui
+        .checkbox(&mut enabled, "explicit-feedback policy")
+        .changed()
+    {
+        commands.push(LabCommand::SetLearningEnabled(enabled));
+    }
+    ui.horizontal_wrapped(|ui| {
+        if ui.button("Encourage").clicked() {
+            commands.push(LabCommand::Feedback(Feedback::Encourage));
+        }
+        if ui.button("Discourage").clicked() {
+            commands.push(LabCommand::Feedback(Feedback::Discourage));
+        }
+        if ui.button("Export").clicked() {
+            commands.push(LabCommand::ExportLearning);
+        }
+        if ui.button("Reset").clicked() {
+            commands.push(LabCommand::ResetLearning);
+        }
+        if ui.button("Delete").clicked() {
+            commands.push(LabCommand::DeleteLearning);
+        }
+    });
+    key_value(ui, "Ledger entries", &policy.ledger.len().to_string());
+}
+
+fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
+    let grooming_phase = (session.engine.state.behavior == mechofly_core::Behavior::Groom)
+        .then(|| grooming_substate_at(session.engine.state.behavior_age_frames));
+    ui.horizontal(|ui| {
+        ui.vertical(|ui| {
+            ui.label(
+                egui::RichText::new("MACRO / GENERIC GROOMING PROGRAM")
+                    .strong()
+                    .color(INK),
+            );
+            let detail = grooming_phase.map_or_else(
+                || {
+                    "BODY REGION: UNSPECIFIED  ·  AUTHORED GENERIC GRAMMAR  ·  NOT CALIBRATED"
+                        .to_owned()
+                },
+                |(substate, cycle, _)| {
+                    format!(
+                        "BODY REGION: UNSPECIFIED  ·  {substate}  ·  CYCLE {cycle:03}  ·  NOT CALIBRATED"
+                    )
+                },
+            );
+            ui.label(egui::RichText::new(detail).small().color(MUTED));
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.monospace(format!(
+                "{:?} persisted {} frames",
+                session.engine.state.behavior, session.engine.state.behavior_age_frames
+            ));
+        });
+    });
+    let transitions = recent_behavior_transitions(session, 7);
+    ui.monospace(if transitions.is_empty() {
+        "MOTOR RECEIPT  waiting for retained modeled frames".to_owned()
+    } else {
+        format!("MOTOR RECEIPT  {}", transitions.join("  →  "))
+    });
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 91.0), Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 3, Color32::from_rgb(5, 9, 15));
+    painter.rect_stroke(rect, 3, Stroke::new(1.0, GRID), StrokeKind::Inside);
+    let segments = match session.engine.state.behavior {
+        mechofly_core::Behavior::Groom => vec![
+            ("PREPARE", 0.20, ACTUAL),
+            ("CLEAN STROKE", 0.30, VIOLET),
+            ("LIMB RUB", 0.30, ALTERNATIVE),
+            ("RESET", 0.20, POSITIVE),
+        ],
+        mechofly_core::Behavior::PreEscape
+        | mechofly_core::Behavior::Flight
+        | mechofly_core::Behavior::Landing => vec![
+            ("BRACE / JUMP", 0.24, WARNING),
+            ("FLIGHT", 0.52, ALTERNATIVE),
+            ("LAND / SETTLE", 0.24, POSITIVE),
+        ],
+        mechofly_core::Behavior::Walk | mechofly_core::Behavior::Reverse => vec![
+            ("ORIENT", 0.18, ACTUAL),
+            ("TRIPOD GAIT", 0.64, POSITIVE),
+            ("SETTLE", 0.18, MUTED),
+        ],
+        _ => vec![
+            ("STILL", 0.25, MUTED),
+            ("NO MOTOR PROGRAM", 0.50, GRID),
+            ("STILL", 0.25, MUTED),
+        ],
+    };
+    let mut x = rect.left() + 7.0;
+    let usable = rect.width() - 14.0;
+    for (label, fraction, color) in segments {
+        let width = usable * fraction;
+        let segment = Rect::from_min_size(
+            Pos2::new(x, rect.top() + 22.0),
+            Vec2::new((width - 3.0).max(1.0), 43.0),
+        );
+        painter.rect_filled(segment, 3, color.gamma_multiply(0.25));
+        painter.rect_stroke(segment, 3, Stroke::new(1.0, color), StrokeKind::Inside);
+        painter.text(
+            segment.center(),
+            Align2::CENTER_CENTER,
+            label,
+            FontId::monospace(10.0),
+            color,
+        );
+        x += width;
+    }
+    let playhead = match session.engine.state.behavior {
+        mechofly_core::Behavior::Groom => grooming_phase.map_or(0.0, |(_, _, progress)| progress),
+        mechofly_core::Behavior::PreEscape => {
+            0.24 * (session.engine.state.behavior_age_frames as f32
+                / (mechofly_core::model::ESCAPE_HOLD_FRAMES + 1) as f32)
+                .clamp(0.0, 1.0)
+        }
+        mechofly_core::Behavior::Flight => {
+            0.24 + 0.52
+                * (session.engine.state.behavior_age_frames as f32
+                    / (mechofly_core::model::FLIGHT_HOLD_FRAMES + 1) as f32)
+                    .clamp(0.0, 1.0)
+        }
+        mechofly_core::Behavior::Landing => {
+            0.76 + 0.24
+                * (session.engine.state.behavior_age_frames as f32
+                    / (mechofly_core::model::LANDING_HOLD_FRAMES + 1) as f32)
+                    .clamp(0.0, 1.0)
+        }
+        mechofly_core::Behavior::Walk | mechofly_core::Behavior::Reverse => {
+            (session.engine.state.behavior_age_frames % 60) as f32 / 60.0
+        }
+        _ => 0.0,
+    };
+    let playhead_x = rect.left() + 7.0 + usable * playhead.clamp(0.0, 1.0);
+    painter.line_segment(
+        [
+            Pos2::new(playhead_x, rect.top() + 17.0),
+            Pos2::new(playhead_x, rect.bottom() - 17.0),
+        ],
+        Stroke::new(2.0, INK),
+    );
+    painter.text(
+        rect.left_bottom() + Vec2::new(7.0, -7.0),
+        Align2::LEFT_BOTTOM,
+        "BOUNDED DELTA TIMELINE  ·  MACRO + GROOMING_SUBSTATE",
+        FontId::monospace(9.5),
+        MUTED,
+    );
+}
+
+fn recent_behavior_transitions(session: &SimulationSession, maximum: usize) -> Vec<String> {
+    let mut last = None;
+    let mut transitions = Vec::new();
+    for summary in session.replay.summaries() {
+        if last != Some(summary.behavior) {
+            transitions.push(format!("{:06} {:?}", summary.frame, summary.behavior));
+            last = Some(summary.behavior);
+        }
+    }
+    let keep_from = transitions.len().saturating_sub(maximum);
+    transitions.into_iter().skip(keep_from).collect()
+}
+
+pub(crate) fn grooming_substate_at(age_frames: u32) -> (&'static str, u32, f32) {
+    const SUBSTATE_MS: u32 = 250;
+    const CYCLE_MS: u32 = SUBSTATE_MS * 4;
+    let elapsed_ms = age_frames.saturating_mul(mechofly_core::MODEL_STEP_MS);
+    let segment = (elapsed_ms / SUBSTATE_MS) % 4;
+    let label = match segment {
+        0 => "PREPARE",
+        1 => "CLEANING STROKE",
+        2 => "LIMB RUB",
+        _ => "RESET",
+    };
+    let cycle = elapsed_ms / CYCLE_MS;
+    let progress = (elapsed_ms % CYCLE_MS) as f32 / CYCLE_MS as f32;
+    (label, cycle, progress)
 }
 
 fn style_context(ctx: &egui::Context) {
@@ -947,7 +1736,7 @@ fn provenance_view(ui: &mut egui::Ui, session: &SimulationSession) {
         "4 · AUTHORED PRESENTATION",
         ALTERNATIVE_SOFT,
         "independently authored procedural pet skin and neural-observatory interface",
-        "presentation-v3",
+        "presentation-v5",
         "does not alter graph or dynamics",
     );
 }
@@ -1137,5 +1926,16 @@ mod tests {
     #[test]
     fn preview_targets_accept_commas_and_whitespace() {
         assert_eq!(parse_targets("3, 7  11\n19"), Ok(vec![3, 7, 11, 19]));
+    }
+
+    #[test]
+    fn grooming_program_advances_through_four_visible_substates() {
+        assert_eq!(grooming_substate_at(0).0, "PREPARE");
+        assert_eq!(grooming_substate_at(8).0, "CLEANING STROKE");
+        assert_eq!(grooming_substate_at(16).0, "LIMB RUB");
+        assert_eq!(grooming_substate_at(23).0, "RESET");
+        let wrapped = grooming_substate_at(31);
+        assert_eq!(wrapped.0, "PREPARE");
+        assert_eq!(wrapped.1, 1);
     }
 }
