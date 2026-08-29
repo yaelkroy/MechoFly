@@ -1,0 +1,628 @@
+name: Apply Screen Ecotope work-mode implementation
+
+on:
+  push:
+    branches:
+      - feat/screen-ecotope-work-mode-v1
+    paths:
+      - .github/workflows/apply-screen-ecotope-v1.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Assemble and integrate Screen Ecotope
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+
+          root = Path('.')
+          chunk_dir = root / 'tools/.screen-ecotope-patch'
+          chunks = sorted(chunk_dir.glob('*.b64'))
+          if len(chunks) != 8:
+              raise SystemExit(f'expected 8 Screen Ecotope chunks, found {len(chunks)}')
+          encoded = ''.join(path.read_text(encoding='ascii').strip() for path in chunks)
+          ecotope = base64.b64decode(encoded).decode('utf-8')
+          destination = root / 'crates/mechofly-app/src/screen_ecotope.rs'
+          destination.write_text(ecotope, encoding='utf-8', newline='\n')
+
+          def read(path: str) -> str:
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path: str, text: str) -> None:
+              Path(path).write_text(text, encoding='utf-8', newline='\n')
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              text = read(path)
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one match, found {count}: {old[:120]!r}')
+              write(path, text.replace(old, new, 1))
+
+          main = 'crates/mechofly-app/src/main.rs'
+          replace_once(main, 'mod runtime;\nmod self_test;\n', 'mod runtime;\nmod screen_ecotope;\nmod self_test;\n')
+          replace_once(main, 'use pet::Skin;\n', 'use pet::Skin;\nuse screen_ecotope::EcotopeMode;\n')
+          replace_once(
+              main,
+              '    reduced_motion: Option<bool>,\n    source_branch: Option<String>,\n',
+              '    reduced_motion: Option<bool>,\n    ecotope_mode: Option<String>,\n    source_branch: Option<String>,\n',
+          )
+          replace_once(
+              main,
+              '''            reduced_motion: profile.reduced_motion.unwrap_or(false)
+                || args.iter().any(|arg| arg == "--reduced-motion"),
+            source_identity: RuntimeSourceIdentity {
+''',
+              '''            reduced_motion: profile.reduced_motion.unwrap_or(false)
+                || args.iter().any(|arg| arg == "--reduced-motion"),
+            ecotope_mode: profile
+                .ecotope_mode
+                .as_deref()
+                .and_then(|value| EcotopeMode::from_str(value).ok())
+                .unwrap_or_default(),
+            source_identity: RuntimeSourceIdentity {
+''',
+          )
+          replace_once(
+              main,
+              '''        if let Some(value) = option_value(args, "--compute") {
+            config.compute = match value.to_ascii_lowercase().as_str() {
+                "auto" => ComputePreference::Auto,
+                "cpu" => ComputePreference::Cpu,
+                "gpu" => ComputePreference::Gpu,
+                _ => return Err(format!("unknown compute preference {value:?}")),
+            };
+        }
+        Ok(config)
+''',
+              '''        if let Some(value) = option_value(args, "--compute") {
+            config.compute = match value.to_ascii_lowercase().as_str() {
+                "auto" => ComputePreference::Auto,
+                "cpu" => ComputePreference::Cpu,
+                "gpu" => ComputePreference::Gpu,
+                _ => return Err(format!("unknown compute preference {value:?}")),
+            };
+        }
+        if let Some(value) = option_value(args, "--ecotope") {
+            config.ecotope_mode = EcotopeMode::from_str(value)?;
+        }
+        Ok(config)
+''',
+          )
+
+          app = 'crates/mechofly-app/src/app.rs'
+          replace_once(
+              app,
+              '    runtime::SimulationSession,\n    tray::{TrayAction, TrayController},\n',
+              '    runtime::SimulationSession,\n    screen_ecotope::{EcotopeInput, EcotopeMode, EcotopeOutput, ScreenEcotope},\n    tray::{TrayAction, TrayController},\n',
+          )
+          replace_once(
+              app,
+              '    pub reduced_motion: bool,\n    pub source_identity: RuntimeSourceIdentity,\n',
+              '    pub reduced_motion: bool,\n    pub ecotope_mode: EcotopeMode,\n    pub source_identity: RuntimeSourceIdentity,\n',
+          )
+          replace_once(
+              app,
+              '    pub policy: PetPolicy,\n    pub skin: Skin,\n',
+              '    pub policy: PetPolicy,\n    pub ecotope_output: EcotopeOutput,\n    ecotope: ScreenEcotope,\n    pub skin: Skin,\n',
+          )
+          replace_once(
+              app,
+              '''        let policy = load_policy().unwrap_or_default();
+        let tray_result = TrayController::new();
+''',
+              '''        let policy = load_policy().unwrap_or_default();
+        let ecotope = ScreenEcotope::new(seed ^ 0x4543_4F54_4F50_4501, config.ecotope_mode);
+        let ecotope_output = ecotope.current_output();
+        let tray_result = TrayController::new();
+''',
+          )
+          replace_once(
+              app,
+              '''            lab: BrainLabState::new(config.open_brain_lab, config.compute),
+            policy,
+            skin: config.skin,
+''',
+              '''            lab: BrainLabState::new(config.open_brain_lab, config.compute),
+            policy,
+            ecotope_output: ecotope_output.clone(),
+            ecotope,
+            skin: config.skin,
+''',
+          )
+          replace_once(
+              app,
+              '            current_action: Action::Explore,\n',
+              '            current_action: ecotope_output.action,\n',
+          )
+          replace_once(
+              app,
+              '''    fn select_policy_action(&mut self) {
+        let recent_interaction = self
+            .last_interaction
+            .is_some_and(|time| time.elapsed() < Duration::from_secs(12));
+        self.last_context = PolicyContext {
+            behavior: self.session.engine.state.behavior,
+            recent_interaction,
+        };
+        self.current_action = self.policy.choose(
+            self.last_context,
+            self.session.engine.state.frame,
+            self.seed,
+        );
+        self.session.stimulate_action(self.current_action);
+    }
+''',
+              '''    fn select_policy_action(&mut self) {
+        let recent_interaction = self
+            .last_interaction
+            .is_some_and(|time| time.elapsed() < Duration::from_secs(12));
+        self.last_context = PolicyContext {
+            behavior: self.session.engine.state.behavior,
+            recent_interaction,
+        };
+        self.current_action = self.ecotope_output.action;
+        if let Some(drive) = self.ecotope_output.drive {
+            self.session
+                .stimulate_behavior(drive.behavior, drive.duration_ms);
+        }
+    }
+''',
+          )
+          replace_once(
+              app,
+              '''                if self.session.engine.state.frame.is_multiple_of(90) {
+                    self.select_policy_action();
+                }
+''',
+              '',
+          )
+          old_cursor = '''        let cursor_loom_strength = cursor_position
+            .map(|cursor| {
+                let pet_center =
+                    self.pet.screen_position + Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * 0.5;
+                let distance = pet_center.distance(cursor);
+                ((360.0 - distance) / 240.0).clamp(0.0, 1.0)
+            })
+            .unwrap_or(0.0);
+        self.session.set_cursor_loom_strength(if cursor_over_pet {
+            1.0
+        } else {
+            cursor_loom_strength
+        });
+'''
+          new_cursor = '''        let recent_interaction = self
+            .last_interaction
+            .is_some_and(|time| time.elapsed() < Duration::from_secs(12));
+        let ecotope_output = self.ecotope.step(EcotopeInput {
+            frame: self.session.engine.state.frame,
+            behavior: self.session.engine.state.behavior,
+            pet_position: self.pet.screen_position,
+            screen_origin,
+            screen_size,
+            cursor_position,
+            cursor_over_pet,
+            observatory_open: self.live_brain.open || self.lab.open,
+            recent_interaction,
+        });
+        if let Some(position) = ecotope_output.presentation_position {
+            self.pet.screen_position = position;
+        }
+        if ecotope_output.drive.is_some()
+            && let Some(target) = ecotope_output.target_position
+        {
+            self.pet.orient_toward(target);
+        }
+        self.lab.ecotope_status = ecotope_output.snapshot.status_line();
+        self.lab.ecotope_detail = ecotope_output.snapshot.detail_line();
+        self.ecotope_output = ecotope_output;
+        self.select_policy_action();
+        self.session
+            .set_cursor_loom_strength(self.ecotope_output.cursor_threat_strength);
+'''
+          replace_once(app, old_cursor, new_cursor)
+
+          brain = 'crates/mechofly-app/src/brain_lab.rs'
+          replace_once(
+              brain,
+              '    pub message: String,\n}\n',
+              '    pub message: String,\n    pub ecotope_status: String,\n    pub ecotope_detail: String,\n}\n',
+          )
+          replace_once(
+              brain,
+              '''            message: "No preview receipt. Live state cannot be targeted from this UI.".to_owned(),
+        }
+''',
+              '''            message: "No preview receipt. Live state cannot be targeted from this UI.".to_owned(),
+            ecotope_status: "ECOTOPE WORK · QUIET WAKE".to_owned(),
+            ecotope_detail: "modeled software ecology · generated fermentation source · no desktop content inference".to_owned(),
+        }
+''',
+          )
+          replace_once(
+              brain,
+              '''            behavior_program_panel(ui, session);
+            ui.add_space(3.0);
+            ui.horizontal_wrapped(|ui| {
+''',
+              '''            behavior_program_panel(ui, session);
+            ui.add_space(3.0);
+            ui.separator();
+            ui.label(
+                egui::RichText::new(&state.ecotope_status)
+                    .strong()
+                    .color(POSITIVE),
+            );
+            ui.label(egui::RichText::new(&state.ecotope_detail).small().color(MUTED));
+            ui.add_space(3.0);
+            ui.horizontal_wrapped(|ui| {
+''',
+          )
+
+          desktop = 'crates/mechofly-app/src/desktop_pet.rs'
+          replace_once(desktop, '            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow,\n', '            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowLongPtrW, SetWindowPos, ShowWindow,\n')
+          replace_once(desktop, '            HTTRANSPARENT, HWND_NOTOPMOST, HWND_TOPMOST, RegisterClassExW, SM_CXVIRTUALSCREEN,\n', '            HTTRANSPARENT, HWND_TOPMOST, RegisterClassExW, SM_CXVIRTUALSCREEN,\n')
+          replace_once(
+              desktop,
+              '''        // Keep the companion available without painting it over Brain Lab's
+        // controls. Closing the observatory restores normal desktop topmost
+        // behavior.
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                if open { HWND_NOTOPMOST } else { HWND_TOPMOST },
+''',
+              '''        // The companion remains topmost and non-activating. Work-mode
+        // interaction safety is enforced by hit testing and shelf placement,
+        // never by hiding the pet behind the neural observatory.
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                observatory_z_order_target(open),
+''',
+          )
+          replace_once(
+              desktop,
+              '''                return if hit {
+                    HTCLIENT as LRESULT
+                } else {
+                    HTTRANSPARENT as LRESULT
+                };
+''',
+              '''                return if interactive_body_hit(hit, key_down(VK_MENU as u32)) {
+                    HTCLIENT as LRESULT
+                } else {
+                    HTTRANSPARENT as LRESULT
+                };
+''',
+          )
+          replace_once(
+              desktop,
+              '''fn key_down(key: u32) -> bool {
+    // SAFETY: GetAsyncKeyState has no pointer preconditions.
+    unsafe { (GetAsyncKeyState(key as i32) as u16 & 0x8000) != 0 }
+}
+
+#[derive(Clone, Debug)]
+pub struct HotkeySelfTest {
+''',
+              '''fn key_down(key: u32) -> bool {
+    // SAFETY: GetAsyncKeyState has no pointer preconditions.
+    unsafe { (GetAsyncKeyState(key as i32) as u16 & 0x8000) != 0 }
+}
+
+fn observatory_z_order_target(_open: bool) -> HWND {
+    HWND_TOPMOST
+}
+
+fn interactive_body_hit(body_hit: bool, alt_down: bool) -> bool {
+    body_hit && alt_down
+}
+
+#[derive(Clone, Debug)]
+pub struct DesktopSafetySelfTest {
+    pub passed: bool,
+    pub topmost_when_observatory_closed: bool,
+    pub topmost_when_observatory_open: bool,
+    pub click_through_default: bool,
+    pub alt_interaction_mode: bool,
+}
+
+pub fn run_desktop_safety_self_test() -> DesktopSafetySelfTest {
+    let topmost_when_observatory_closed = observatory_z_order_target(false) == HWND_TOPMOST;
+    let topmost_when_observatory_open = observatory_z_order_target(true) == HWND_TOPMOST;
+    let click_through_default = !interactive_body_hit(true, false);
+    let alt_interaction_mode = interactive_body_hit(true, true);
+    DesktopSafetySelfTest {
+        passed: topmost_when_observatory_closed
+            && topmost_when_observatory_open
+            && click_through_default
+            && alt_interaction_mode,
+        topmost_when_observatory_closed,
+        topmost_when_observatory_open,
+        click_through_default,
+        alt_interaction_mode,
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct HotkeySelfTest {
+''',
+          )
+
+          pet = 'crates/mechofly-app/src/pet.rs'
+          replace_once(
+              pet,
+              '''            Behavior::Walk => {
+                self.heading_radians = wrapped_angle(
+                    self.heading_radians
+                        + (self.animation_seconds * 0.53).sin()
+                            * (0.025 / REFERENCE_TICK_SECONDS)
+                            * dt,
+                );
+                WALK_SPEED_PIXELS_PER_SECOND
+            }
+''',
+              '''            Behavior::Walk => WALK_SPEED_PIXELS_PER_SECOND,
+''',
+          )
+          replace_once(
+              pet,
+              '''        if bounced_x {
+            self.heading_radians = wrapped_angle(PI - self.heading_radians);
+        }
+        if bounced_y {
+            if behavior == Behavior::Landing && self.screen_position.y >= bottom {
+                self.heading_radians = PI * 0.5;
+                self.speed_pixels_per_second = 0.0;
+            } else {
+                self.heading_radians = wrapped_angle(-self.heading_radians);
+            }
+        }
+    }
+}
+''',
+              '''        if bounced_x {
+            let downward = (self.animation_seconds * 0.73).sin() >= 0.0;
+            self.heading_radians = if self.screen_position.x <= left {
+                if downward { 0.35 } else { -0.35 }
+            } else if downward {
+                PI - 0.35
+            } else {
+                -PI + 0.35
+            };
+        }
+        if bounced_y {
+            if behavior == Behavior::Landing && self.screen_position.y >= bottom {
+                self.heading_radians = PI * 0.5;
+                self.speed_pixels_per_second = 0.0;
+            } else {
+                let rightward = (self.animation_seconds * 0.61).cos() >= 0.0;
+                self.heading_radians = if self.screen_position.y <= top {
+                    if rightward { PI * 0.5 - 0.35 } else { PI * 0.5 + 0.35 }
+                } else if rightward {
+                    -PI * 0.5 + 0.35
+                } else {
+                    -PI * 0.5 - 0.35
+                };
+            }
+        }
+    }
+
+    pub fn orient_toward(&mut self, target_position: Pos2) {
+        let displacement = target_position - self.screen_position;
+        if displacement.length_sq() > 4.0 {
+            self.heading_radians = wrapped_angle(displacement.y.atan2(displacement.x));
+        }
+    }
+}
+''',
+          )
+
+          model = 'crates/mechofly-core/src/model.rs'
+          replace_once(
+              model,
+              '''    let rate_per_10k = spike_count.saturating_mul(10_000) / state.activation.len().max(1);
+    if rate_per_10k > 1_200 {
+        Behavior::Alert
+    } else {
+        match (state.frame / 90) % 9 {
+            0 => Behavior::Rest,
+            1..=3 => Behavior::Walk,
+            4 => Behavior::Groom,
+            5 | 6 => Behavior::Walk,
+            7 => Behavior::Quiet,
+            _ => Behavior::Reverse,
+        }
+    }
+}
+''',
+              '''    let rate_per_10k = spike_count.saturating_mul(10_000) / state.activation.len().max(1);
+    if rate_per_10k > 1_200 {
+        Behavior::Alert
+    } else if rate_per_10k > 320 {
+        Behavior::Quiet
+    } else {
+        Behavior::Rest
+    }
+}
+
+pub fn run_autonomy_schedule_self_test() -> bool {
+    let mut state = ModelState {
+        frame: 0,
+        seed: 11,
+        activation: vec![0; FUNCTIONAL_POPULATION_COUNT * 4],
+        spikes: vec![0; FUNCTIONAL_POPULATION_COUNT * 4],
+        behavior: Behavior::Rest,
+        behavior_age_frames: 0,
+    };
+    (0..900).all(|frame| {
+        state.frame = frame;
+        matches!(modeled_behavior(&state, 0), Behavior::Rest | Behavior::Quiet)
+    })
+}
+''',
+          )
+          replace_once(
+              model,
+              '''    #[test]
+    fn zero_sensory_input_cannot_trigger_escape_sequence() {
+''',
+              '''    #[test]
+    fn frame_counter_no_longer_schedules_motor_actions() {
+        assert!(run_autonomy_schedule_self_test());
+    }
+
+    #[test]
+    fn zero_sensory_input_cannot_trigger_escape_sequence() {
+''',
+          )
+
+          self_test = 'crates/mechofly-app/src/self_test.rs'
+          replace_once(
+              self_test,
+              '''        LANDING_HOLD_FRAMES, LOOM_POPULATION_OFFSET, REVERSE_POPULATION_OFFSET,
+        WALK_POPULATION_OFFSET,
+''',
+              '''        LANDING_HOLD_FRAMES, LOOM_POPULATION_OFFSET, REVERSE_POPULATION_OFFSET,
+        WALK_POPULATION_OFFSET, run_autonomy_schedule_self_test,
+''',
+          )
+          replace_once(
+              self_test,
+              'use crate::pet::{PetMotion, Skin, run_motion_self_test};\n',
+              'use crate::{\n    pet::{PetMotion, Skin, run_motion_self_test},\n    screen_ecotope::{ECOTOPE_RULE_VERSION, run_screen_ecotope_self_test},\n};\n',
+          )
+          replace_once(
+              self_test,
+              '    anatomical_context_measured: bool,\n}\n',
+              '''    anatomical_context_measured: bool,
+    screen_ecotope_rule_version: String,
+    screen_ecotope_contract_passed: bool,
+    screen_ecotope_deterministic_replay: bool,
+    screen_ecotope_stationary_source: bool,
+    screen_ecotope_stationary_cursor_safe: bool,
+    screen_ecotope_closing_cursor_threat: bool,
+    screen_ecotope_belief_update: bool,
+    screen_ecotope_presentation_override_excluded_from_learning: bool,
+    screen_ecotope_work_mode_hidden_resource_semantics: bool,
+    clock_scheduled_autonomy_removed: bool,
+    desktop_pet_topmost_with_neural_windows: bool,
+    desktop_pet_click_through_by_default: bool,
+    desktop_pet_alt_interaction_mode: bool,
+}
+''',
+          )
+          replace_once(
+              self_test,
+              '''    #[cfg(windows)]
+    let hotkeys = crate::desktop_pet::run_hotkey_self_test();
+''',
+              '''    let ecotope = run_screen_ecotope_self_test();
+    let clock_scheduled_autonomy_removed = run_autonomy_schedule_self_test();
+
+    #[cfg(windows)]
+    let desktop_safety = crate::desktop_pet::run_desktop_safety_self_test();
+    #[cfg(not(windows))]
+    let desktop_safety = NonWindowsDesktopSafetyContract {
+        passed: true,
+        topmost_when_observatory_open: true,
+        click_through_default: true,
+        alt_interaction_mode: true,
+    };
+
+    #[cfg(windows)]
+    let hotkeys = crate::desktop_pet::run_hotkey_self_test();
+''',
+          )
+          replace_once(
+              self_test,
+              '''            && grooming_substate_timeline
+            && anatomical_context_points == 23_210
+''',
+              '''            && grooming_substate_timeline
+            && anatomical_context_points == 23_210
+            && ecotope.passed
+            && clock_scheduled_autonomy_removed
+            && desktop_safety.passed
+''',
+          )
+          replace_once(
+              self_test,
+              '''        anatomical_context_points,
+        anatomical_context_measured: false,
+    };
+''',
+              '''        anatomical_context_points,
+        anatomical_context_measured: false,
+        screen_ecotope_rule_version: ECOTOPE_RULE_VERSION.to_owned(),
+        screen_ecotope_contract_passed: ecotope.passed,
+        screen_ecotope_deterministic_replay: ecotope.deterministic_replay,
+        screen_ecotope_stationary_source: ecotope.source_stationary,
+        screen_ecotope_stationary_cursor_safe: ecotope.stationary_cursor_safe,
+        screen_ecotope_closing_cursor_threat: ecotope.closing_cursor_threat,
+        screen_ecotope_belief_update: ecotope.belief_update,
+        screen_ecotope_presentation_override_excluded_from_learning:
+            ecotope.presentation_override_excluded_from_learning,
+        screen_ecotope_work_mode_hidden_resource_semantics:
+            ecotope.work_mode_hidden_resource_semantics,
+        clock_scheduled_autonomy_removed,
+        desktop_pet_topmost_with_neural_windows:
+            desktop_safety.topmost_when_observatory_open,
+        desktop_pet_click_through_by_default: desktop_safety.click_through_default,
+        desktop_pet_alt_interaction_mode: desktop_safety.alt_interaction_mode,
+    };
+''',
+          )
+          replace_once(
+              self_test,
+              '''#[cfg(not(windows))]
+struct NonWindowsHotkeyContract {
+''',
+              '''#[cfg(not(windows))]
+struct NonWindowsDesktopSafetyContract {
+    passed: bool,
+    topmost_when_observatory_open: bool,
+    click_through_default: bool,
+    alt_interaction_mode: bool,
+}
+
+#[cfg(not(windows))]
+struct NonWindowsHotkeyContract {
+''',
+          )
+
+          for path in [main, app, brain, desktop, pet, model, self_test, str(destination)]:
+              text = read(path)
+              for marker in ('ChatGPT', 'OpenAI', 'Codex'):
+                  if marker in text:
+                      raise SystemExit(f'{path}: prohibited attribution marker {marker}')
+          PY
+          cargo fmt --all
+          cargo test --workspace --locked
+          git diff --check
+      - name: Publish implementation
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm -r tools/.screen-ecotope-patch
+          git add \
+            crates/mechofly-app/src/app.rs \
+            crates/mechofly-app/src/brain_lab.rs \
+            crates/mechofly-app/src/desktop_pet.rs \
+            crates/mechofly-app/src/main.rs \
+            crates/mechofly-app/src/pet.rs \
+            crates/mechofly-app/src/screen_ecotope.rs \
+            crates/mechofly-app/src/self_test.rs \
+            crates/mechofly-core/src/model.rs
+          git commit -m "Implement Screen Ecotope work mode"
+          git push origin HEAD:feat/screen-ecotope-work-mode-v1
