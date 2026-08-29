@@ -1,0 +1,228 @@
+name: Validate Screen Ecotope Observe Mode
+
+on:
+  push:
+    branches:
+      - feat/screen-ecotope-observe-mode-v1
+    paths:
+      - .github/workflows/validate-screen-ecotope-observe-mode-v1.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: screen-ecotope-observe-mode-v1-finalization
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Apply exact Observe Mode integration
+        shell: bash
+        run: |
+          python3 tools/Apply-ScreenEcotope-ObserveMode-V1.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('tools/Test-Windows-GuiStartup.ps1')
+          text = path.read_text(encoding='utf-8')
+          old = '''        Invoke-GuiCase `
+            -Name 'auto-brain-lab' `
+            -Arguments @('--skin', 'firefly', '--compute', 'auto', '--brain-lab') `
+            -ExpectedSkinLabel 'MechoFly Prism' `
+            -StimulusHotkeyId 0x4D03 `
+            -StimulusSettleMilliseconds 500
+    )
+'''
+          new = '''        Invoke-GuiCase `
+            -Name 'auto-brain-lab' `
+            -Arguments @('--skin', 'firefly', '--compute', 'auto', '--brain-lab') `
+            -ExpectedSkinLabel 'MechoFly Prism' `
+            -StimulusHotkeyId 0x4D03 `
+            -StimulusSettleMilliseconds 500
+        Invoke-GuiCase `
+            -Name 'observe-ecotope' `
+            -Arguments @('--skin', 'firefly', '--compute', 'cpu', '--brain-lab', '--observe-mode') `
+            -ExpectedSkinLabel 'MechoFly Prism' `
+            -StimulusHotkeyId 0x4D07 `
+            -StimulusSettleMilliseconds 500
+    )
+'''
+          if text.count(old) != 1:
+              raise SystemExit('GUI case-list anchor is not unique.')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8', newline='\n')
+          PY
+      - name: Validate Linux-visible implementation
+        shell: bash
+        run: |
+          cargo fmt --all
+          git diff --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          grep -q '^mod habitat_shelf;$' crates/mechofly-app/src/main.rs
+          grep -q 'Ctrl+Alt+E' crates/mechofly-app/src/desktop_pet.rs
+          grep -q -- '--observe-mode' crates/mechofly-app/src/main.rs
+          grep -q -- '--observe-mode' tools/Test-Windows-GuiStartup.ps1
+          if grep -R --line-number --fixed-strings 'HWND_NOTOPMOST' crates/mechofly-app/src; then
+            echo 'The pet contains a neural-window Z-order demotion path.' >&2
+            exit 1
+          fi
+      - name: Publish exact Observe Mode candidate
+        id: candidate
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm \
+            .github/workflows/validate-screen-ecotope-observe-mode-v1.yml \
+            tools/Apply-ScreenEcotope-ObserveMode-V1.py
+          git add -A
+          git diff --cached --check
+          git commit -m "Add Screen Ecotope Observe Mode"
+          git push origin HEAD:feat/screen-ecotope-observe-mode-v1
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  windows_acceptance:
+    needs: integrate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.integrate.outputs.candidate_sha }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          components: rustfmt, clippy
+      - name: Parse Windows PowerShell scripts
+        shell: powershell
+        run: |
+          $errors = @()
+          Get-ChildItem -Recurse -Filter '*.ps1' | ForEach-Object {
+            $tokens = $null
+            $parse = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parse) | Out-Null
+            $errors += @($parse)
+          }
+          if ($errors.Count -gt 0) { $errors | Format-List -Force; throw 'PowerShell parser failure.' }
+      - name: Verify source tree and Rust quality
+        shell: powershell
+        run: |
+          .\tools\Verify-Tree.ps1
+          cargo fmt --all --check
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Compile Windows executable
+        shell: powershell
+        run: .\host-windows\build.ps1
+      - name: Run deterministic schema-v7 safety receipt
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Path .\artifacts -Force | Out-Null
+          $executable = (Resolve-Path .\host-windows\bin\MechoFly.exe).Path
+          $receiptPath = Join-Path $PWD 'artifacts\self-test.json'
+          $arguments = '--self-test "{0}"' -f $receiptPath
+          $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Self-test exited $($process.ExitCode)" }
+          $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+          if ($receipt.schema_version -ne 7 -or $receipt.status -ne 'PASS') { throw 'Observe Mode safety receipt failed.' }
+          foreach ($name in @(
+            'screen_ecotope_enabled',
+            'ecotope_deterministic_replay',
+            'ecotope_stationary_source',
+            'ecotope_plume_changes_without_source_motion',
+            'ecotope_reward_updates_belief',
+            'ecotope_generated_only_resource_semantics',
+            'ecotope_habitat_hidden_in_work_mode',
+            'cursor_stationary_not_loom',
+            'cursor_approach_loom',
+            'clock_ethogram_removed',
+            'work_mode_click_through',
+            'observatory_preserves_topmost',
+            'no_focus_activation',
+            'habitat_shelf_available',
+            'habitat_shelf_default_closed',
+            'habitat_shelf_explicit_open_supported',
+            'habitat_shelf_map_dimensions_valid',
+            'habitat_shelf_art_has_no_resource_authority',
+            'observe_hotkey_contract'
+          )) {
+            if (-not [bool]$receipt.$name) { throw "Receipt invariant failed: $name" }
+          }
+          if ($receipt.global_hotkey_count -ne 9) { throw 'Expected nine global hotkeys.' }
+          Get-Content -LiteralPath $receiptPath -Raw | Write-Host
+      - name: Exercise Work and Observe GUI boundaries
+        shell: powershell
+        run: |
+          .\tools\Test-Windows-GuiStartup.ps1 `
+            -ExecutablePath .\host-windows\bin\MechoFly.exe `
+            -OutputDirectory .\artifacts\runtime-smoke `
+            -ObservationSeconds 12
+          $summary = Get-Content .\artifacts\runtime-smoke\summary.json -Raw | ConvertFrom-Json
+          if ($summary.schema_version -ne 3 -or $summary.status -ne 'PASS') { throw 'GUI evidence receipt failed.' }
+          if (@($summary.cases).Count -ne 3) { throw 'Expected three GUI cases.' }
+          if (-not $summary.pet_foreground_captured) { throw 'Pet foreground evidence is absent.' }
+          if (-not $summary.neural_frames_synchronized) { throw 'Neural windows are not synchronized.' }
+          if (-not $summary.skin_titles_matched) { throw 'Skin titles do not match.' }
+          if (-not $summary.full_window_captures) { throw 'A GUI evidence image is clipped.' }
+          $observe = @($summary.cases | Where-Object { $_.case -eq 'observe-ecotope' })
+          if ($observe.Count -ne 1) { throw 'Observe Mode GUI case is absent.' }
+          $shelf = @($observe[0].screenshots | Where-Object {
+            [string]$_.source_window.title -like '*Screen Ecotope*'
+          })
+          if ($shelf.Count -ne 1) { throw 'Habitat Shelf was not captured exactly once.' }
+          if (-not [bool]$shelf[0].full_window) { throw 'Habitat Shelf capture is clipped.' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mechofly-screen-ecotope-observe-mode-v1
+          path: |
+            artifacts/
+            host-windows/bin/
+          if-no-files-found: error
+
+  open_draft_pr:
+    needs: [integrate, windows_acceptance]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open validated draft pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ needs.integrate.outputs.candidate_sha }}
+        run: |
+          body=$(cat <<EOF
+          ## Implemented Observe Mode increment
+
+          - optional, default-closed peripheral Habitat Shelf;
+          - explicit \`Ctrl+Alt+E\` toggle and \`--observe-mode\` launch option;
+          - shelf visualization of generated source, virtual plume, refuge, current target, fly position, belief value, uncertainty, visited cells, and total samples;
+          - bounded 32 by 18 observation map;
+          - authored rock, leaf, and substrate scenery has no ecological resource authority;
+          - closing the shelf leaves the hidden deterministic world and learning state intact;
+          - Work Mode remains visually hidden and click-through;
+          - three real Windows GUI cases now include a full Observe Mode shelf capture.
+
+          ## Validated candidate
+
+          Commit: \`$CANDIDATE_SHA\`
+
+          The exact candidate passed formatting, workspace tests, warnings-denied Clippy, PowerShell parsing, Windows release compilation, schema-v7 deterministic safety receipt, two existing Work Mode GUI cases, and a new Observe Mode GUI case before this draft was opened.
+
+          ## Evidence boundary
+
+          Shelf terrain art is presentation only. The fermentation source and plume remain authored virtual stimuli, ecological state is derived, and spatial learning is modeled software learning. No screenshot, OCR, window title, document text, URL, clipboard, or typed-content capture is introduced.
+          EOF
+          )
+          gh pr create \
+            --repo yaelkroy/MechoFly \
+            --draft \
+            --base feat/screen-ecotope-work-mode-v2 \
+            --head feat/screen-ecotope-observe-mode-v1 \
+            --title 'Add Screen Ecotope Observe Mode' \
+            --body "$body"
