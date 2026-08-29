@@ -1,0 +1,144 @@
+name: Repair synchronized evidence hold handshake
+
+on:
+  push:
+    branches:
+      - feat/original-video-parity-rust-v5
+    paths:
+      - .github/workflows/repair-evidence-hold-handshake.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Replace fixed delay with bounded readiness handshake
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('tools/Test-Windows-GuiStartup.ps1')
+          text = path.read_text(encoding='utf-8')
+          start_marker = '        $EvidenceSettleMilliseconds = 500\n'
+          end_marker = (
+              '        $NeuralCaptureFrame = '
+              '[uint64]$UniqueNeuralFrames[0]\n'
+          )
+          if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+              raise SystemExit('Evidence-hold synchronization markers are not unique.')
+          start = text.index(start_marker)
+          end = text.index(end_marker, start) + len(end_marker)
+          replacement = '''        $EvidenceSettleTimeoutMilliseconds = 5000
+          $EvidencePollMilliseconds = 50
+          $EvidencePollCount = 0
+          $EvidenceSettleStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+          $Windows = @()
+          $NeuralWindows = @()
+          $NeuralWindowTitles = @()
+          $ExpectedSkinTitlePassed = $false
+          $NeuralFrames = @()
+          $NeuralFramesSynchronized = $false
+          do {
+              $EvidencePollCount++
+              $Process.Refresh()
+              if ($Process.HasExited) {
+                  throw 'MechoFly exited while entering synchronized evidence hold.'
+              }
+              $Windows = @([MechoFly.RuntimeSmoke.WindowProbe]::ForProcess(
+                  [uint32]$Process.Id))
+              $NeuralWindows = @($Windows | Where-Object {
+                  [string]$_.title -like '*Live Brain*' -or
+                  [string]$_.title -like '*Brain Lab*'
+              })
+              $NeuralWindowTitles = @($NeuralWindows | ForEach-Object {
+                  [string]$_.title
+              })
+              $ExpectedSkinTitlePassed = (
+                  $NeuralWindows.Count -eq 2 -and
+                  @($NeuralWindowTitles | Where-Object {
+                      -not $_.StartsWith(
+                          $ExpectedSkinLabel + ' ',
+                          [System.StringComparison]::Ordinal)
+                  }).Count -eq 0)
+
+              $NeuralFrames = @()
+              $AllNeuralTitlesFrozen = $NeuralWindows.Count -eq 2
+              if ($AllNeuralTitlesFrozen) {
+                  foreach ($NeuralWindowTitle in $NeuralWindowTitles) {
+                      $Match = [regex]::Match(
+                          $NeuralWindowTitle,
+                          'frame (?<frame>[0-9]{8})$')
+                      if (-not $Match.Success) {
+                          $AllNeuralTitlesFrozen = $false
+                          break
+                      }
+                      $NeuralFrames += [uint64]$Match.Groups['frame'].Value
+                  }
+              }
+              $UniqueNeuralFrames = @($NeuralFrames | Sort-Object -Unique)
+              $NeuralFramesSynchronized = (
+                  $AllNeuralTitlesFrozen -and
+                  $UniqueNeuralFrames.Count -eq 1)
+              if ($ExpectedSkinTitlePassed -and $NeuralFramesSynchronized) {
+                  break
+              }
+              Start-Sleep -Milliseconds $EvidencePollMilliseconds
+          } while (
+              $EvidenceSettleStopwatch.ElapsedMilliseconds -lt
+                  $EvidenceSettleTimeoutMilliseconds)
+          $EvidenceSettleStopwatch.Stop()
+          $EvidenceSettleMilliseconds =
+              [int]$EvidenceSettleStopwatch.ElapsedMilliseconds
+
+          if ($NeuralWindows.Count -ne 2) {
+              throw ('Expected exactly two neural evidence windows; found ' +
+                  [string]$NeuralWindows.Count + '.')
+          }
+          if (-not $ExpectedSkinTitlePassed) {
+              throw ('A neural window title does not match skin ' +
+                  $ExpectedSkinLabel + '; actual=' +
+                  ($NeuralWindowTitles -join ' | '))
+          }
+          if (-not $AllNeuralTitlesFrozen) {
+              throw ('Neural evidence titles did not publish a frozen frame ' +
+                  'within ' + [string]$EvidenceSettleTimeoutMilliseconds +
+                  ' ms; actual=' + ($NeuralWindowTitles -join ' | '))
+          }
+          if (-not $NeuralFramesSynchronized) {
+              throw ('Neural evidence windows are not frame-synchronized: ' +
+                  ($NeuralFrames -join ', '))
+          }
+          $NeuralCaptureFrame = [uint64]$UniqueNeuralFrames[0]
+          '''.replace('          ', '')
+          updated = text[:start] + replacement + text[end:]
+          receipt_old = '''            evidence_settle_milliseconds = $EvidenceSettleMilliseconds
+          '''.replace('          ', '')
+          receipt_new = '''            evidence_settle_milliseconds = $EvidenceSettleMilliseconds
+          evidence_settle_timeout_milliseconds = $EvidenceSettleTimeoutMilliseconds
+          evidence_poll_milliseconds = $EvidencePollMilliseconds
+          evidence_poll_count = $EvidencePollCount
+          '''.replace('          ', '')
+          if updated.count(receipt_old) != 1:
+              raise SystemExit('Evidence timing receipt marker is not unique.')
+          updated = updated.replace(receipt_old, receipt_new, 1)
+          non_ascii = sorted({character for character in updated if ord(character) > 127})
+          if non_ascii:
+              rendered = ', '.join(f'U+{ord(character):04X}' for character in non_ascii)
+              raise SystemExit(f'PowerShell verifier contains non-ASCII literals: {rendered}')
+          path.write_text(updated, encoding='utf-8', newline='\n')
+          PY
+          git diff --check
+      - name: Publish handshake repair
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git add tools/Test-Windows-GuiStartup.ps1
+          git commit -m "Wait for synchronized neural evidence readiness"
+          git push origin HEAD:feat/original-video-parity-rust-v5
