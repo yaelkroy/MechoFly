@@ -1,0 +1,1695 @@
+name: Apply N2 transition telemetry
+
+on:
+  push:
+    branches: ["feat/behavior-transition-telemetry-rust-v9"]
+    paths: [".github/workflows/apply-n2-transition-telemetry.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact N0 parent
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "c80d827a0d7eae9636bbf02c2916b5946f42319e"
+          test "$(git rev-parse HEAD^{tree})" = "c4c59970af6dbe0449a02e916580dedf06efad1d"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - name: Apply observational transition telemetry
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          BEHAVIOR_TELEMETRY_CONTENT = r'''
+          use std::collections::VecDeque;
+          
+          use serde::{Deserialize, Serialize};
+          
+          use crate::{MODEL_STEP_MS, model::Behavior, provenance::sha256_hex};
+          
+          pub const BEHAVIOR_TELEMETRY_SCHEMA_VERSION: u32 = 1;
+          pub const BEHAVIOR_TELEMETRY_CONTROLLER: &str = "legacy-threshold-hold-v1-observed";
+          pub const BEHAVIOR_TELEMETRY_CLAIM_BOUNDARY: &str =
+              "observational telemetry for the existing controller; no controller threshold, hold, priority, autonomous schedule, neural state, or visible behavior is changed";
+          pub const MAX_BEHAVIOR_TRANSITION_EVENTS: usize = 512;
+          
+          #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+          #[serde(rename_all = "snake_case")]
+          pub enum BehaviorTransitionReason {
+              PreEscapeCompleted,
+              FlightCompleted,
+              LandingCompleted,
+              LoomPopulationThreshold,
+              GroomPopulationThreshold,
+              AlertPopulationThreshold,
+              ReversePopulationThreshold,
+              WalkPopulationThreshold,
+              SpikeRateThreshold,
+              LegacyAutonomousSchedule,
+          }
+          
+          impl BehaviorTransitionReason {
+              pub const fn as_str(self) -> &'static str {
+                  match self {
+                      Self::PreEscapeCompleted => "pre_escape_completed",
+                      Self::FlightCompleted => "flight_completed",
+                      Self::LandingCompleted => "landing_completed",
+                      Self::LoomPopulationThreshold => "loom_population_threshold",
+                      Self::GroomPopulationThreshold => "groom_population_threshold",
+                      Self::AlertPopulationThreshold => "alert_population_threshold",
+                      Self::ReversePopulationThreshold => "reverse_population_threshold",
+                      Self::WalkPopulationThreshold => "walk_population_threshold",
+                      Self::SpikeRateThreshold => "spike_rate_threshold",
+                      Self::LegacyAutonomousSchedule => "legacy_autonomous_schedule",
+                  }
+              }
+          
+              pub const fn emergency_override(self) -> bool {
+                  matches!(self, Self::LoomPopulationThreshold)
+              }
+          }
+          
+          #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+          pub struct BehaviorIntentSnapshot {
+              pub schema_version: u32,
+              pub frame: u64,
+              pub current_behavior: Behavior,
+              pub current_behavior_age_frames: u32,
+              pub spike_count: u32,
+              pub spike_rate_per_10k: u32,
+              pub spike_alert_threshold_per_10k: u32,
+              pub autonomous_schedule_slot: u8,
+              pub loom_activation_q15: i32,
+              pub groom_activation_q15: i32,
+              pub alert_activation_q15: i32,
+              pub reverse_activation_q15: i32,
+              pub walk_activation_q15: i32,
+              pub loom_entry_threshold_q15: i32,
+              pub authored_behavior_entry_threshold_q15: i32,
+          }
+          
+          #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+          pub struct BehaviorTransitionEvent {
+              pub schema_version: u32,
+              pub sequence: u64,
+              pub frame: u64,
+              pub tick_ms: u64,
+              pub from_behavior: Behavior,
+              pub to_behavior: Behavior,
+              pub elapsed_frames: u32,
+              pub elapsed_ms: u64,
+              pub reason: BehaviorTransitionReason,
+              pub emergency_override: bool,
+              pub intent: BehaviorIntentSnapshot,
+              pub pre_transition_state_digest: String,
+              pub post_transition_state_digest: String,
+          }
+          
+          impl BehaviorTransitionEvent {
+              #[allow(clippy::too_many_arguments)]
+              pub fn new(
+                  frame: u64,
+                  from_behavior: Behavior,
+                  to_behavior: Behavior,
+                  elapsed_frames: u32,
+                  reason: BehaviorTransitionReason,
+                  intent: BehaviorIntentSnapshot,
+                  pre_transition_state_digest: String,
+                  post_transition_state_digest: String,
+              ) -> Self {
+                  Self {
+                      schema_version: BEHAVIOR_TELEMETRY_SCHEMA_VERSION,
+                      sequence: 0,
+                      frame,
+                      tick_ms: frame.saturating_mul(u64::from(MODEL_STEP_MS)),
+                      from_behavior,
+                      to_behavior,
+                      elapsed_frames,
+                      elapsed_ms: u64::from(elapsed_frames).saturating_mul(u64::from(MODEL_STEP_MS)),
+                      reason,
+                      emergency_override: reason.emergency_override(),
+                      intent,
+                      pre_transition_state_digest,
+                      post_transition_state_digest,
+                  }
+              }
+          }
+          
+          #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+          pub struct BehaviorTelemetrySnapshot {
+              pub schema_version: u32,
+              pub controller: String,
+              pub claim_boundary: String,
+              pub observational_only: bool,
+              pub controller_semantics_changed: bool,
+              pub capacity: usize,
+              pub complete_from_frame: u64,
+              pub total_event_count: u64,
+              pub retained_event_count: usize,
+              pub dropped_event_count: u64,
+              pub first_retained_sequence: Option<u64>,
+              pub last_retained_sequence: Option<u64>,
+              pub retained_sequence_contiguous: bool,
+              pub event_stream_sha256: String,
+              pub latest_intent: BehaviorIntentSnapshot,
+              pub events: Vec<BehaviorTransitionEvent>,
+          }
+          
+          #[derive(Clone, Debug)]
+          pub struct BehaviorTelemetryLedger {
+              capacity: usize,
+              complete_from_frame: u64,
+              next_sequence: u64,
+              dropped_event_count: u64,
+              event_stream_sha256: String,
+              events: VecDeque<BehaviorTransitionEvent>,
+          }
+          
+          impl Default for BehaviorTelemetryLedger {
+              fn default() -> Self {
+                  Self::new(0)
+              }
+          }
+          
+          impl BehaviorTelemetryLedger {
+              pub fn new(complete_from_frame: u64) -> Self {
+                  Self::with_capacity(complete_from_frame, MAX_BEHAVIOR_TRANSITION_EVENTS)
+              }
+          
+              pub fn with_capacity(complete_from_frame: u64, capacity: usize) -> Self {
+                  let capacity = capacity.clamp(1, MAX_BEHAVIOR_TRANSITION_EVENTS);
+                  Self {
+                      capacity,
+                      complete_from_frame,
+                      next_sequence: 0,
+                      dropped_event_count: 0,
+                      event_stream_sha256: sha256_hex([b"mechofly-behavior-transition-stream-v1"]),
+                      events: VecDeque::with_capacity(capacity),
+                  }
+              }
+          
+              pub fn record(&mut self, mut event: BehaviorTransitionEvent) {
+                  event.sequence = self.next_sequence;
+                  self.next_sequence = self.next_sequence.saturating_add(1);
+                  let encoded = serde_json::to_vec(&event)
+                      .expect("behavior transition telemetry must remain serializable");
+                  self.event_stream_sha256 = sha256_hex([
+                      self.event_stream_sha256.as_bytes(),
+                      encoded.as_slice(),
+                  ]);
+                  while self.events.len() >= self.capacity {
+                      self.events.pop_front();
+                      self.dropped_event_count = self.dropped_event_count.saturating_add(1);
+                  }
+                  self.events.push_back(event);
+              }
+          
+              pub fn events(&self) -> impl DoubleEndedIterator<Item = &BehaviorTransitionEvent> {
+                  self.events.iter()
+              }
+          
+              pub fn latest(&self) -> Option<&BehaviorTransitionEvent> {
+                  self.events.back()
+              }
+          
+              pub const fn capacity(&self) -> usize {
+                  self.capacity
+              }
+          
+              pub fn retained_event_count(&self) -> usize {
+                  self.events.len()
+              }
+          
+              pub const fn total_event_count(&self) -> u64 {
+                  self.next_sequence
+              }
+          
+              pub const fn dropped_event_count(&self) -> u64 {
+                  self.dropped_event_count
+              }
+          
+              pub fn event_stream_sha256(&self) -> &str {
+                  &self.event_stream_sha256
+              }
+          
+              pub fn retained_sequence_contiguous(&self) -> bool {
+                  self.events
+                      .iter()
+                      .zip(self.events.iter().skip(1))
+                      .all(|(left, right)| right.sequence == left.sequence.saturating_add(1))
+              }
+          
+              pub fn snapshot(&self, latest_intent: BehaviorIntentSnapshot) -> BehaviorTelemetrySnapshot {
+                  BehaviorTelemetrySnapshot {
+                      schema_version: BEHAVIOR_TELEMETRY_SCHEMA_VERSION,
+                      controller: BEHAVIOR_TELEMETRY_CONTROLLER.to_owned(),
+                      claim_boundary: BEHAVIOR_TELEMETRY_CLAIM_BOUNDARY.to_owned(),
+                      observational_only: true,
+                      controller_semantics_changed: false,
+                      capacity: self.capacity,
+                      complete_from_frame: self.complete_from_frame,
+                      total_event_count: self.next_sequence,
+                      retained_event_count: self.events.len(),
+                      dropped_event_count: self.dropped_event_count,
+                      first_retained_sequence: self.events.front().map(|event| event.sequence),
+                      last_retained_sequence: self.events.back().map(|event| event.sequence),
+                      retained_sequence_contiguous: self.retained_sequence_contiguous(),
+                      event_stream_sha256: self.event_stream_sha256.clone(),
+                      latest_intent,
+                      events: self.events.iter().cloned().collect(),
+                  }
+              }
+          }
+          
+          #[cfg(test)]
+          mod tests {
+              use super::*;
+          
+              fn intent(frame: u64) -> BehaviorIntentSnapshot {
+                  BehaviorIntentSnapshot {
+                      schema_version: BEHAVIOR_TELEMETRY_SCHEMA_VERSION,
+                      frame,
+                      current_behavior: Behavior::Rest,
+                      current_behavior_age_frames: frame as u32,
+                      spike_count: 0,
+                      spike_rate_per_10k: 0,
+                      spike_alert_threshold_per_10k: 1_200,
+                      autonomous_schedule_slot: 0,
+                      loom_activation_q15: 0,
+                      groom_activation_q15: 0,
+                      alert_activation_q15: 0,
+                      reverse_activation_q15: 0,
+                      walk_activation_q15: 0,
+                      loom_entry_threshold_q15: 5_200,
+                      authored_behavior_entry_threshold_q15: 4_600,
+                  }
+              }
+          
+              fn event(frame: u64) -> BehaviorTransitionEvent {
+                  BehaviorTransitionEvent::new(
+                      frame,
+                      Behavior::Rest,
+                      Behavior::Walk,
+                      1,
+                      BehaviorTransitionReason::LegacyAutonomousSchedule,
+                      intent(frame),
+                      format!("pre-{frame}"),
+                      format!("post-{frame}"),
+                  )
+              }
+          
+              #[test]
+              fn ledger_is_bounded_and_retains_monotonic_sequences() {
+                  let mut ledger = BehaviorTelemetryLedger::with_capacity(0, 3);
+                  for frame in 1..=5 {
+                      ledger.record(event(frame));
+                  }
+                  let snapshot = ledger.snapshot(intent(5));
+                  assert_eq!(snapshot.total_event_count, 5);
+                  assert_eq!(snapshot.retained_event_count, 3);
+                  assert_eq!(snapshot.dropped_event_count, 2);
+                  assert_eq!(snapshot.first_retained_sequence, Some(2));
+                  assert_eq!(snapshot.last_retained_sequence, Some(4));
+                  assert!(snapshot.retained_sequence_contiguous);
+                  assert_eq!(snapshot.events.len(), 3);
+              }
+          
+              #[test]
+              fn identical_event_streams_have_identical_digests() {
+                  let mut first = BehaviorTelemetryLedger::new(0);
+                  let mut second = BehaviorTelemetryLedger::new(0);
+                  for frame in 1..=12 {
+                      first.record(event(frame));
+                      second.record(event(frame));
+                  }
+                  assert_eq!(
+                      first.snapshot(intent(12)),
+                      second.snapshot(intent(12))
+                  );
+              }
+          }
+          '''
+          
+          BEHAVIOR_BASELINE_CONTENT = r'''
+          use std::{
+              collections::BTreeMap,
+              fs,
+              path::Path,
+              sync::Arc,
+              time::Instant,
+          };
+          
+          use mechofly_core::{
+              Behavior, ModelEngine, ModelGraph, ModelTier, StepInput,
+              behavior_telemetry::{
+                  BEHAVIOR_TELEMETRY_CLAIM_BOUNDARY, BEHAVIOR_TELEMETRY_CONTROLLER,
+                  BEHAVIOR_TELEMETRY_SCHEMA_VERSION, BehaviorTransitionEvent,
+              },
+              model::{
+                  ALERT_POPULATION_OFFSET, FUNCTIONAL_POPULATION_COUNT, GROOM_POPULATION_OFFSET,
+                  LOOM_POPULATION_OFFSET, REVERSE_POPULATION_OFFSET, WALK_POPULATION_OFFSET,
+              },
+              provenance::sha256_hex,
+          };
+          use serde::Serialize;
+          
+          const BASELINE_SCHEMA_VERSION: u32 = 1;
+          const FULL_CAMPAIGN_SEEDS: usize = 20;
+          const FULL_CAMPAIGN_REPEATS: usize = 2;
+          const FULL_CAMPAIGN_SECONDS: u32 = 30 * 60;
+          const SCENARIOS: [Scenario; 5] = [
+              Scenario::QuietRest,
+              Scenario::Walking,
+              Scenario::Grooming,
+              Scenario::RepeatedLoom,
+              Scenario::Mixed,
+          ];
+          
+          #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+          enum Scenario {
+              QuietRest,
+              Walking,
+              Grooming,
+              RepeatedLoom,
+              Mixed,
+          }
+          
+          impl Scenario {
+              const fn label(self) -> &'static str {
+                  match self {
+                      Self::QuietRest => "quiet_rest",
+                      Self::Walking => "walking",
+                      Self::Grooming => "grooming",
+                      Self::RepeatedLoom => "repeated_loom",
+                      Self::Mixed => "mixed",
+                  }
+              }
+          }
+          
+          #[derive(Clone, Copy, Debug)]
+          struct BaselineConfig {
+              seeds: usize,
+              repeats: usize,
+              seconds: u32,
+          }
+          
+          impl BaselineConfig {
+              fn from_args(args: &[String]) -> Result<Self, String> {
+                  Ok(Self {
+                      seeds: parse_bounded_usize(args, "--baseline-seeds", 2, 1, FULL_CAMPAIGN_SEEDS)?,
+                      repeats: parse_bounded_usize(args, "--baseline-repeats", 2, 1, 4)?,
+                      seconds: parse_bounded_u32(
+                          args,
+                          "--baseline-seconds",
+                          30,
+                          1,
+                          FULL_CAMPAIGN_SECONDS,
+                      )?,
+                  })
+              }
+          
+              const fn planned_full_matrix(self) -> bool {
+                  self.seeds == FULL_CAMPAIGN_SEEDS
+                      && self.repeats == FULL_CAMPAIGN_REPEATS
+                      && self.seconds == FULL_CAMPAIGN_SECONDS
+              }
+          
+              fn frame_count(self) -> u64 {
+                  u64::from(self.seconds)
+                      .saturating_mul(1_000)
+                      .div_ceil(u64::from(mechofly_core::MODEL_STEP_MS))
+                      .max(1)
+              }
+          }
+          
+          #[derive(Serialize)]
+          struct BaselineReport {
+              schema_version: u32,
+              status: String,
+              campaign_classification: String,
+              planned_full_matrix_complete: bool,
+              controller: String,
+              telemetry_schema_version: u32,
+              telemetry_claim_boundary: String,
+              telemetry_observational_only: bool,
+              controller_semantics_changed: bool,
+              model_version: String,
+              model_step_ms: u32,
+              scenario_count: usize,
+              seed_count: usize,
+              repeats_per_seed: usize,
+              modeled_seconds_per_run: u32,
+              modeled_frames_per_run: u64,
+              run_count: usize,
+              all_repeat_groups_equal: bool,
+              total_transition_count: u64,
+              total_dropped_transition_count: u64,
+              runs: Vec<RunReport>,
+              repeat_groups: Vec<RepeatGroupReport>,
+              claim_boundary: String,
+          }
+          
+          #[derive(Clone, Serialize)]
+          struct RunReport {
+              scenario: String,
+              seed_index: usize,
+              repeat: usize,
+              graph_sha256: String,
+              model_seed: u64,
+              modeled_frames: u64,
+              modeled_ms: u64,
+              wall_time_ms: u128,
+              mean_step_micros: f64,
+              p99_step_micros: u128,
+              max_step_micros: u128,
+              initial_state_digest: String,
+              final_state_digest: String,
+              transition_count: u64,
+              retained_transition_count: usize,
+              dropped_transition_count: u64,
+              transition_stream_sha256: String,
+              retained_sequence_contiguous: bool,
+              state_occupancy_frames: BTreeMap<String, u64>,
+              transition_reasons: BTreeMap<String, u64>,
+              bout_duration_bins: BoutDurationBins,
+              escape_latency_frames: Vec<u64>,
+              deterministic_signature_sha256: String,
+          }
+          
+          #[derive(Clone, Default, Serialize)]
+          struct BoutDurationBins {
+              under_100_ms: u64,
+              under_250_ms: u64,
+              under_500_ms: u64,
+              under_1_000_ms: u64,
+              under_2_000_ms: u64,
+              at_least_2_000_ms: u64,
+          }
+          
+          impl BoutDurationBins {
+              fn record(&mut self, elapsed_ms: u64) {
+                  match elapsed_ms {
+                      0..=99 => self.under_100_ms += 1,
+                      100..=249 => self.under_250_ms += 1,
+                      250..=499 => self.under_500_ms += 1,
+                      500..=999 => self.under_1_000_ms += 1,
+                      1_000..=1_999 => self.under_2_000_ms += 1,
+                      _ => self.at_least_2_000_ms += 1,
+                  }
+              }
+          }
+          
+          #[derive(Serialize)]
+          struct RepeatGroupReport {
+              scenario: String,
+              seed_index: usize,
+              repeat_count: usize,
+              signatures: Vec<String>,
+              byte_equivalent: bool,
+          }
+          
+          pub fn run(path: &Path, args: &[String]) -> Result<(), String> {
+              let config = BaselineConfig::from_args(args)?;
+              let frames = config.frame_count();
+              let mut runs = Vec::with_capacity(SCENARIOS.len() * config.seeds * config.repeats);
+          
+              for scenario in SCENARIOS {
+                  for seed_index in 0..config.seeds {
+                      let graph_seed = 0xB453_1A00_u64 ^ seed_index as u64;
+                      let graph = Arc::new(ModelGraph::synthetic(ModelTier::Demo4096, graph_seed));
+                      graph.validate()?;
+                      for repeat in 0..config.repeats {
+                          runs.push(run_one(
+                              scenario,
+                              seed_index,
+                              repeat,
+                              frames,
+                              Arc::clone(&graph),
+                          )?);
+                      }
+                  }
+              }
+          
+              let mut repeat_groups = Vec::with_capacity(SCENARIOS.len() * config.seeds);
+              let mut all_repeat_groups_equal = true;
+              for scenario in SCENARIOS {
+                  for seed_index in 0..config.seeds {
+                      let matching: Vec<&RunReport> = runs
+                          .iter()
+                          .filter(|run| run.scenario == scenario.label() && run.seed_index == seed_index)
+                          .collect();
+                      let signatures: Vec<String> = matching
+                          .iter()
+                          .map(|run| run.deterministic_signature_sha256.clone())
+                          .collect();
+                      let byte_equivalent = signatures
+                          .first()
+                          .is_some_and(|first| signatures.iter().all(|value| value == first));
+                      all_repeat_groups_equal &= byte_equivalent && signatures.len() == config.repeats;
+                      repeat_groups.push(RepeatGroupReport {
+                          scenario: scenario.label().to_owned(),
+                          seed_index,
+                          repeat_count: signatures.len(),
+                          signatures,
+                          byte_equivalent,
+                      });
+                  }
+              }
+          
+              let total_transition_count = runs.iter().map(|run| run.transition_count).sum();
+              let total_dropped_transition_count =
+                  runs.iter().map(|run| run.dropped_transition_count).sum();
+              let every_run_has_transition = runs.iter().all(|run| run.transition_count > 0);
+              let status = if all_repeat_groups_equal && every_run_has_transition {
+                  "PASS"
+              } else {
+                  "FAIL"
+              };
+              let report = BaselineReport {
+                  schema_version: BASELINE_SCHEMA_VERSION,
+                  status: status.to_owned(),
+                  campaign_classification: if config.planned_full_matrix() {
+                      "planned_full_matrix"
+                  } else {
+                      "local_smoke"
+                  }
+                  .to_owned(),
+                  planned_full_matrix_complete: config.planned_full_matrix(),
+                  controller: BEHAVIOR_TELEMETRY_CONTROLLER.to_owned(),
+                  telemetry_schema_version: BEHAVIOR_TELEMETRY_SCHEMA_VERSION,
+                  telemetry_claim_boundary: BEHAVIOR_TELEMETRY_CLAIM_BOUNDARY.to_owned(),
+                  telemetry_observational_only: true,
+                  controller_semantics_changed: false,
+                  model_version: mechofly_core::MODEL_VERSION.to_owned(),
+                  model_step_ms: mechofly_core::MODEL_STEP_MS,
+                  scenario_count: SCENARIOS.len(),
+                  seed_count: config.seeds,
+                  repeats_per_seed: config.repeats,
+                  modeled_seconds_per_run: config.seconds,
+                  modeled_frames_per_run: frames,
+                  run_count: runs.len(),
+                  all_repeat_groups_equal,
+                  total_transition_count,
+                  total_dropped_transition_count,
+                  runs,
+                  repeat_groups,
+                  claim_boundary:
+                      "instrumentation baseline for the existing deterministic controller; this report is not an empirically calibrated ethogram or a biological-fit result"
+                          .to_owned(),
+              };
+          
+              if let Some(parent) = path.parent()
+                  && !parent.as_os_str().is_empty()
+              {
+                  fs::create_dir_all(parent)
+                      .map_err(|error| format!("cannot create behavior-baseline directory: {error}"))?;
+              }
+              let json = serde_json::to_string_pretty(&report)
+                  .map_err(|error| format!("cannot serialize behavior baseline: {error}"))?;
+              fs::write(path, format!("{json}\n"))
+                  .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+              if report.status == "PASS" {
+                  Ok(())
+              } else {
+                  Err("behavior transition telemetry baseline invariants failed".to_owned())
+              }
+          }
+          
+          fn run_one(
+              scenario: Scenario,
+              seed_index: usize,
+              repeat: usize,
+              frames: u64,
+              graph: Arc<ModelGraph>,
+          ) -> Result<RunReport, String> {
+              let model_seed = 0x7E1E_0000_u64 ^ seed_index as u64;
+              let mut engine = ModelEngine::new(Arc::clone(&graph), model_seed);
+              let initial_state_digest = engine.state.digest();
+              let mut stimulus = engine.empty_stimulus();
+              let mut occupancy = BTreeMap::new();
+              let mut reasons = BTreeMap::new();
+              let mut bins = BoutDurationBins::default();
+              let mut escape_latency_frames = Vec::new();
+              let mut pending_loom_frame = None;
+              let mut observed_sequence = None;
+              let mut step_micros = Vec::with_capacity(frames as usize);
+              let wall_started = Instant::now();
+          
+              for frame in 0..frames {
+                  let loom_onset = prepare_stimulus(scenario, frame, &mut stimulus);
+                  if loom_onset {
+                      pending_loom_frame = Some(frame);
+                  }
+          
+                  let step_started = Instant::now();
+                  let summary = engine.step_cpu(StepInput {
+                      stimulus_q15: &stimulus,
+                  });
+                  step_micros.push(step_started.elapsed().as_micros());
+          
+                  *occupancy.entry(format!("{:?}", summary.behavior)).or_insert(0) += 1;
+                  if let Some(event) = engine.latest_behavior_transition()
+                      && observed_sequence != Some(event.sequence)
+                  {
+                      observe_event(
+                          event,
+                          &mut reasons,
+                          &mut bins,
+                          &mut pending_loom_frame,
+                          &mut escape_latency_frames,
+                      );
+                      observed_sequence = Some(event.sequence);
+                  }
+              }
+          
+              step_micros.sort_unstable();
+              let p99_index = step_micros
+                  .len()
+                  .saturating_sub(1)
+                  .saturating_mul(99)
+                  / 100;
+              let p99_step_micros = step_micros.get(p99_index).copied().unwrap_or_default();
+              let max_step_micros = step_micros.last().copied().unwrap_or_default();
+              let mean_step_micros = if step_micros.is_empty() {
+                  0.0
+              } else {
+                  step_micros.iter().copied().sum::<u128>() as f64 / step_micros.len() as f64
+              };
+          
+              let telemetry = engine.behavior_telemetry_snapshot();
+              let deterministic_payload = serde_json::to_vec(&(
+                  scenario.label(),
+                  seed_index,
+                  engine.state.digest(),
+                  &telemetry.event_stream_sha256,
+                  telemetry.total_event_count,
+                  &occupancy,
+                  &reasons,
+                  &bins,
+                  &escape_latency_frames,
+              ))
+              .map_err(|error| format!("cannot serialize deterministic baseline signature: {error}"))?;
+              let deterministic_signature_sha256 = sha256_hex([deterministic_payload]);
+          
+              Ok(RunReport {
+                  scenario: scenario.label().to_owned(),
+                  seed_index,
+                  repeat,
+                  graph_sha256: graph.identity.sha256.clone(),
+                  model_seed,
+                  modeled_frames: frames,
+                  modeled_ms: frames.saturating_mul(u64::from(mechofly_core::MODEL_STEP_MS)),
+                  wall_time_ms: wall_started.elapsed().as_millis(),
+                  mean_step_micros,
+                  p99_step_micros,
+                  max_step_micros,
+                  initial_state_digest,
+                  final_state_digest: engine.state.digest(),
+                  transition_count: telemetry.total_event_count,
+                  retained_transition_count: telemetry.retained_event_count,
+                  dropped_transition_count: telemetry.dropped_event_count,
+                  transition_stream_sha256: telemetry.event_stream_sha256,
+                  retained_sequence_contiguous: telemetry.retained_sequence_contiguous,
+                  state_occupancy_frames: occupancy,
+                  transition_reasons: reasons,
+                  bout_duration_bins: bins,
+                  escape_latency_frames,
+                  deterministic_signature_sha256,
+              })
+          }
+          
+          fn observe_event(
+              event: &BehaviorTransitionEvent,
+              reasons: &mut BTreeMap<String, u64>,
+              bins: &mut BoutDurationBins,
+              pending_loom_frame: &mut Option<u64>,
+              escape_latency_frames: &mut Vec<u64>,
+          ) {
+              *reasons.entry(event.reason.as_str().to_owned()).or_insert(0) += 1;
+              bins.record(event.elapsed_ms);
+              if event.to_behavior == Behavior::PreEscape
+                  && let Some(onset) = pending_loom_frame.take()
+              {
+                  escape_latency_frames.push(event.frame.saturating_sub(onset));
+              }
+          }
+          
+          fn prepare_stimulus(scenario: Scenario, frame: u64, stimulus: &mut [i32]) -> bool {
+              stimulus.fill(0);
+              match scenario {
+                  Scenario::QuietRest => false,
+                  Scenario::Walking => {
+                      apply_population_drive(stimulus, WALK_POPULATION_OFFSET, 8_192);
+                      false
+                  }
+                  Scenario::Grooming => {
+                      apply_population_drive(stimulus, GROOM_POPULATION_OFFSET, 8_192);
+                      false
+                  }
+                  Scenario::RepeatedLoom => {
+                      let phase = frame % 300;
+                      if phase < 12 {
+                          apply_population_drive(stimulus, LOOM_POPULATION_OFFSET, 8_192);
+                      }
+                      phase == 0
+                  }
+                  Scenario::Mixed => {
+                      let phase = (frame / 120) % 6;
+                      match phase {
+                          1 => apply_population_drive(stimulus, WALK_POPULATION_OFFSET, 8_192),
+                          2 => apply_population_drive(stimulus, GROOM_POPULATION_OFFSET, 8_192),
+                          3 => apply_population_drive(stimulus, ALERT_POPULATION_OFFSET, 8_192),
+                          4 => apply_population_drive(stimulus, REVERSE_POPULATION_OFFSET, 8_192),
+                          5 if frame % 120 < 12 => {
+                              apply_population_drive(stimulus, LOOM_POPULATION_OFFSET, 8_192)
+                          }
+                          _ => {}
+                      }
+                      phase == 5 && frame % 120 == 0
+                  }
+              }
+          }
+          
+          fn apply_population_drive(stimulus: &mut [i32], offset: usize, drive_q15: i32) {
+              for value in stimulus
+                  .iter_mut()
+                  .skip(offset)
+                  .step_by(FUNCTIONAL_POPULATION_COUNT)
+              {
+                  *value = (*value).max(drive_q15);
+              }
+          }
+          
+          fn parse_bounded_usize(
+              args: &[String],
+              option: &str,
+              default: usize,
+              minimum: usize,
+              maximum: usize,
+          ) -> Result<usize, String> {
+              let Some(value) = option_value(args, option) else {
+                  return Ok(default);
+              };
+              let parsed = value
+                  .parse::<usize>()
+                  .map_err(|_| format!("{option} must be an integer"))?;
+              if !(minimum..=maximum).contains(&parsed) {
+                  return Err(format!("{option} must be between {minimum} and {maximum}"));
+              }
+              Ok(parsed)
+          }
+          
+          fn parse_bounded_u32(
+              args: &[String],
+              option: &str,
+              default: u32,
+              minimum: u32,
+              maximum: u32,
+          ) -> Result<u32, String> {
+              let Some(value) = option_value(args, option) else {
+                  return Ok(default);
+              };
+              let parsed = value
+                  .parse::<u32>()
+                  .map_err(|_| format!("{option} must be an integer"))?;
+              if !(minimum..=maximum).contains(&parsed) {
+                  return Err(format!("{option} must be between {minimum} and {maximum}"));
+              }
+              Ok(parsed)
+          }
+          
+          fn option_value<'a>(args: &'a [String], option: &str) -> Option<&'a str> {
+              args.iter()
+                  .position(|arg| arg == option)
+                  .and_then(|index| args.get(index + 1))
+                  .map(String::as_str)
+          }
+          
+          #[cfg(test)]
+          mod tests {
+              use super::*;
+          
+              #[test]
+              fn smoke_matrix_is_deterministic_and_contains_all_scenarios() {
+                  let path = std::env::temp_dir().join(format!(
+                      "mechofly-behavior-baseline-{}.json",
+                      std::process::id()
+                  ));
+                  let args = vec![
+                      "--baseline-seeds".to_owned(),
+                      "1".to_owned(),
+                      "--baseline-repeats".to_owned(),
+                      "2".to_owned(),
+                      "--baseline-seconds".to_owned(),
+                      "3".to_owned(),
+                  ];
+                  run(&path, &args).expect("baseline smoke must pass");
+                  let value: serde_json::Value = serde_json::from_slice(
+                      &fs::read(&path).expect("baseline report must be readable"),
+                  )
+                  .expect("baseline report must be valid JSON");
+                  assert_eq!(value["status"], "PASS");
+                  assert_eq!(value["scenario_count"], 5);
+                  assert_eq!(value["run_count"], 10);
+                  assert_eq!(value["all_repeat_groups_equal"], true);
+                  fs::remove_file(path).ok();
+              }
+          }
+          '''
+          
+          from pathlib import Path
+          import re
+          
+          def read(path: str) -> str:
+              return Path(path).read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+          
+          def write(path: str, text: str) -> None:
+              Path(path).parent.mkdir(parents=True, exist_ok=True)
+              Path(path).write_text(text, encoding="utf-8", newline="\n")
+          
+          def replace_once(path: str, old: str, new: str) -> None:
+              text = read(path)
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one exact match, found {count}: {old[:160]!r}")
+              write(path, text.replace(old, new, 1))
+          
+          def replace_regex_once(path: str, pattern: str, replacement: str) -> None:
+              text = read(path)
+              updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one regex match, found {count}: {pattern!r}")
+              write(path, updated)
+          
+          # New files are supplied by the staging workflow.
+          write("crates/mechofly-core/src/behavior_telemetry.rs", BEHAVIOR_TELEMETRY_CONTENT)
+          write("crates/mechofly-app/src/behavior_baseline.rs", BEHAVIOR_BASELINE_CONTENT)
+          
+          lib = "crates/mechofly-core/src/lib.rs"
+          replace_once(
+              lib,
+              "pub mod connectome;\n",
+              "pub mod behavior_telemetry;\npub mod connectome;\n",
+          )
+          replace_once(
+              lib,
+              "pub use connectome::{ConnectomeImport, ConnectomeImportError, ImportManifest};\n",
+              """pub use behavior_telemetry::{
+              BEHAVIOR_TELEMETRY_CLAIM_BOUNDARY, BEHAVIOR_TELEMETRY_CONTROLLER,
+              BEHAVIOR_TELEMETRY_SCHEMA_VERSION, MAX_BEHAVIOR_TRANSITION_EVENTS,
+              BehaviorIntentSnapshot, BehaviorTelemetryLedger, BehaviorTelemetrySnapshot,
+              BehaviorTransitionEvent, BehaviorTransitionReason,
+          };
+          pub use connectome::{ConnectomeImport, ConnectomeImportError, ImportManifest};
+          """,
+          )
+          
+          model = "crates/mechofly-core/src/model.rs"
+          replace_once(
+              model,
+              "use crate::{MODEL_VERSION, graph::ModelGraph, graph::mix64, provenance::sha256_hex};\n",
+              """use crate::{
+              MODEL_VERSION,
+              behavior_telemetry::{
+                  BEHAVIOR_TELEMETRY_SCHEMA_VERSION, BehaviorIntentSnapshot, BehaviorTelemetryLedger,
+                  BehaviorTelemetrySnapshot, BehaviorTransitionEvent, BehaviorTransitionReason,
+              },
+              graph::{ModelGraph, mix64},
+              provenance::sha256_hex,
+          };
+          """,
+          )
+          replace_once(
+              model,
+              "const AUTHORED_BEHAVIOR_ACTIVATION_Q15: i32 = 4_600;\n",
+              """const AUTHORED_BEHAVIOR_ACTIVATION_Q15: i32 = 4_600;
+          const SPIKE_ALERT_THRESHOLD_PER_10K: u32 = 1_200;
+          """,
+          )
+          replace_once(
+              model,
+              """#[derive(Clone)]
+          pub struct ModelEngine {
+              pub graph: Arc<ModelGraph>,
+              pub state: ModelState,
+          }
+          """,
+              """#[derive(Clone)]
+          pub struct ModelEngine {
+              pub graph: Arc<ModelGraph>,
+              pub state: ModelState,
+              behavior_telemetry: BehaviorTelemetryLedger,
+              behavior_telemetry_enabled: bool,
+              pub last_behavior_intent: BehaviorIntentSnapshot,
+          }
+          """,
+          )
+          replace_once(
+              model,
+              """    pub fn new(graph: Arc<ModelGraph>, seed: u64) -> Self {
+                  let count = graph.neuron_ids.len();
+                  let activation = (0..count)
+                      .map(|index| initial_activation(seed, index))
+                      .collect();
+                  Self {
+                      graph,
+                      state: ModelState {
+                          frame: 0,
+                          seed,
+                          activation,
+                          spikes: vec![0; count],
+                          behavior: Behavior::Rest,
+                          behavior_age_frames: 0,
+                      },
+                  }
+              }
+          """,
+              """    pub fn new(graph: Arc<ModelGraph>, seed: u64) -> Self {
+                  let count = graph.neuron_ids.len();
+                  let activation = (0..count)
+                      .map(|index| initial_activation(seed, index))
+                      .collect();
+                  let state = ModelState {
+                      frame: 0,
+                      seed,
+                      activation,
+                      spikes: vec![0; count],
+                      behavior: Behavior::Rest,
+                      behavior_age_frames: 0,
+                  };
+                  let last_behavior_intent = behavior_intent_snapshot(&state, 0);
+                  Self {
+                      graph,
+                      state,
+                      behavior_telemetry: BehaviorTelemetryLedger::new(0),
+                      behavior_telemetry_enabled: true,
+                      last_behavior_intent,
+                  }
+              }
+          """,
+          )
+          replace_once(
+              model,
+              """    pub fn from_state(graph: Arc<ModelGraph>, state: ModelState) -> Result<Self, String> {
+                  if state.activation.len() != graph.neuron_ids.len()
+                      || state.spikes.len() != graph.neuron_ids.len()
+                  {
+                      return Err("checkpoint dimensions do not match graph".to_owned());
+                  }
+                  Ok(Self { graph, state })
+              }
+          """,
+              """    pub fn from_state(graph: Arc<ModelGraph>, state: ModelState) -> Result<Self, String> {
+                  if state.activation.len() != graph.neuron_ids.len()
+                      || state.spikes.len() != graph.neuron_ids.len()
+                  {
+                      return Err("checkpoint dimensions do not match graph".to_owned());
+                  }
+                  let complete_from_frame = state.frame;
+                  let spike_count = state.spikes.iter().map(|value| *value as usize).sum();
+                  let last_behavior_intent = behavior_intent_snapshot(&state, spike_count);
+                  Ok(Self {
+                      graph,
+                      state,
+                      behavior_telemetry: BehaviorTelemetryLedger::new(complete_from_frame),
+                      behavior_telemetry_enabled: true,
+                      last_behavior_intent,
+                  })
+              }
+          """,
+          )
+          replace_once(
+              model,
+              """        let next_behavior = modeled_behavior(&self.state, spike_count);
+                  if next_behavior == self.state.behavior {
+                      self.state.behavior_age_frames += 1;
+                  } else {
+                      self.state.behavior = next_behavior;
+                      self.state.behavior_age_frames = 0;
+                  }
+                  self.summary(spike_count, mean_activation_q15)
+          """,
+              """        let intent = behavior_intent_snapshot(&self.state, spike_count);
+                  let next_behavior = modeled_behavior(&self.state, spike_count);
+                  self.last_behavior_intent = intent;
+                  if next_behavior == self.state.behavior {
+                      self.state.behavior_age_frames += 1;
+                  } else {
+                      let from_behavior = self.state.behavior;
+                      let elapsed_frames = self.state.behavior_age_frames.saturating_add(1);
+                      let pre_transition_state_digest = self.state.digest();
+                      let reason = classify_transition_reason(from_behavior, next_behavior, &intent);
+                      self.state.behavior = next_behavior;
+                      self.state.behavior_age_frames = 0;
+                      if self.behavior_telemetry_enabled {
+                          let post_transition_state_digest = self.state.digest();
+                          self.behavior_telemetry.record(BehaviorTransitionEvent::new(
+                              self.state.frame,
+                              from_behavior,
+                              next_behavior,
+                              elapsed_frames,
+                              reason,
+                              intent,
+                              pre_transition_state_digest,
+                              post_transition_state_digest,
+                          ));
+                      }
+                  }
+                  self.summary(spike_count, mean_activation_q15)
+          """,
+          )
+          replace_once(
+              model,
+              """    pub fn model_identity(&self) -> String {
+          """,
+              """    pub fn set_behavior_telemetry_enabled(&mut self, enabled: bool) {
+                  self.behavior_telemetry_enabled = enabled;
+              }
+          
+              pub const fn behavior_telemetry_enabled(&self) -> bool {
+                  self.behavior_telemetry_enabled
+              }
+          
+              pub fn behavior_transition_events(
+                  &self,
+              ) -> impl DoubleEndedIterator<Item = &BehaviorTransitionEvent> {
+                  self.behavior_telemetry.events()
+              }
+          
+              pub fn latest_behavior_transition(&self) -> Option<&BehaviorTransitionEvent> {
+                  self.behavior_telemetry.latest()
+              }
+          
+              pub fn behavior_telemetry_snapshot(&self) -> BehaviorTelemetrySnapshot {
+                  self.behavior_telemetry.snapshot(self.last_behavior_intent)
+              }
+          
+              pub const fn behavior_telemetry_total_event_count(&self) -> u64 {
+                  self.behavior_telemetry.total_event_count()
+              }
+          
+              pub fn behavior_telemetry_stream_sha256(&self) -> &str {
+                  self.behavior_telemetry.event_stream_sha256()
+              }
+          
+              pub fn model_identity(&self) -> String {
+          """,
+          )
+          replace_once(
+              model,
+              """fn modeled_behavior(state: &ModelState, spike_count: usize) -> Behavior {
+          """,
+              """fn behavior_intent_snapshot(state: &ModelState, spike_count: usize) -> BehaviorIntentSnapshot {
+              BehaviorIntentSnapshot {
+                  schema_version: BEHAVIOR_TELEMETRY_SCHEMA_VERSION,
+                  frame: state.frame,
+                  current_behavior: state.behavior,
+                  current_behavior_age_frames: state.behavior_age_frames,
+                  spike_count: spike_count.min(u32::MAX as usize) as u32,
+                  spike_rate_per_10k: (spike_count.saturating_mul(10_000)
+                      / state.activation.len().max(1))
+                  .min(u32::MAX as usize) as u32,
+                  spike_alert_threshold_per_10k: SPIKE_ALERT_THRESHOLD_PER_10K,
+                  autonomous_schedule_slot: ((state.frame / 90) % 9) as u8,
+                  loom_activation_q15: functional_population_activation(state, LOOM_POPULATION_OFFSET),
+                  groom_activation_q15: functional_population_activation(state, GROOM_POPULATION_OFFSET),
+                  alert_activation_q15: functional_population_activation(state, ALERT_POPULATION_OFFSET),
+                  reverse_activation_q15: functional_population_activation(state, REVERSE_POPULATION_OFFSET),
+                  walk_activation_q15: functional_population_activation(state, WALK_POPULATION_OFFSET),
+                  loom_entry_threshold_q15: LOOM_ESCAPE_ACTIVATION_Q15,
+                  authored_behavior_entry_threshold_q15: AUTHORED_BEHAVIOR_ACTIVATION_Q15,
+              }
+          }
+          
+          fn classify_transition_reason(
+              from_behavior: Behavior,
+              to_behavior: Behavior,
+              intent: &BehaviorIntentSnapshot,
+          ) -> BehaviorTransitionReason {
+              if from_behavior == Behavior::PreEscape && to_behavior == Behavior::Flight {
+                  BehaviorTransitionReason::PreEscapeCompleted
+              } else if from_behavior == Behavior::Flight && to_behavior == Behavior::Landing {
+                  BehaviorTransitionReason::FlightCompleted
+              } else if from_behavior == Behavior::Landing && to_behavior == Behavior::Rest {
+                  BehaviorTransitionReason::LandingCompleted
+              } else if to_behavior == Behavior::PreEscape
+                  && intent.loom_activation_q15 >= LOOM_ESCAPE_ACTIVATION_Q15
+              {
+                  BehaviorTransitionReason::LoomPopulationThreshold
+              } else if to_behavior == Behavior::Groom
+                  && intent.groom_activation_q15 >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
+              {
+                  BehaviorTransitionReason::GroomPopulationThreshold
+              } else if to_behavior == Behavior::Alert
+                  && intent.alert_activation_q15 >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
+              {
+                  BehaviorTransitionReason::AlertPopulationThreshold
+              } else if to_behavior == Behavior::Reverse
+                  && intent.reverse_activation_q15 >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
+              {
+                  BehaviorTransitionReason::ReversePopulationThreshold
+              } else if to_behavior == Behavior::Walk
+                  && intent.walk_activation_q15 >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
+              {
+                  BehaviorTransitionReason::WalkPopulationThreshold
+              } else if to_behavior == Behavior::Alert
+                  && intent.spike_rate_per_10k > SPIKE_ALERT_THRESHOLD_PER_10K
+              {
+                  BehaviorTransitionReason::SpikeRateThreshold
+              } else {
+                  BehaviorTransitionReason::LegacyAutonomousSchedule
+              }
+          }
+          
+          fn modeled_behavior(state: &ModelState, spike_count: usize) -> Behavior {
+          """,
+          )
+          replace_once(
+              model,
+              """    #[test]
+              fn grooming_has_a_minimum_dwell_but_loom_still_preempts_it() {
+          """,
+              """    #[test]
+              fn transition_telemetry_is_observational_and_deterministic() {
+                  let graph = Arc::new(ModelGraph::synthetic(ModelTier::Demo4096, 14));
+                  let mut first = ModelEngine::new(Arc::clone(&graph), 91);
+                  let mut second = ModelEngine::new(Arc::clone(&graph), 91);
+                  let mut disabled = ModelEngine::new(graph, 91);
+                  disabled.set_behavior_telemetry_enabled(false);
+          
+                  for frame in 0..720_u64 {
+                      let mut stimulus = first.empty_stimulus();
+                      let phase = (frame / 90) % 8;
+                      let offset = match phase {
+                          1 => Some(WALK_POPULATION_OFFSET),
+                          2 => Some(GROOM_POPULATION_OFFSET),
+                          3 => Some(ALERT_POPULATION_OFFSET),
+                          4 => Some(REVERSE_POPULATION_OFFSET),
+                          5 if frame % 90 < 12 => Some(LOOM_POPULATION_OFFSET),
+                          _ => None,
+                      };
+                      if let Some(offset) = offset {
+                          for value in stimulus
+                              .iter_mut()
+                              .skip(offset)
+                              .step_by(FUNCTIONAL_POPULATION_COUNT)
+                          {
+                              *value = 8_192;
+                          }
+                      }
+          
+                      let first_summary = first.step_cpu(StepInput {
+                          stimulus_q15: &stimulus,
+                      });
+                      let second_summary = second.step_cpu(StepInput {
+                          stimulus_q15: &stimulus,
+                      });
+                      let disabled_summary = disabled.step_cpu(StepInput {
+                          stimulus_q15: &stimulus,
+                      });
+                      assert_eq!(first_summary, second_summary);
+                      assert_eq!(first_summary, disabled_summary);
+                      assert_eq!(first.state, second.state);
+                      assert_eq!(first.state, disabled.state);
+                  }
+          
+                  let first_snapshot = first.behavior_telemetry_snapshot();
+                  let second_snapshot = second.behavior_telemetry_snapshot();
+                  let disabled_snapshot = disabled.behavior_telemetry_snapshot();
+                  assert_eq!(first_snapshot, second_snapshot);
+                  assert!(first_snapshot.observational_only);
+                  assert!(!first_snapshot.controller_semantics_changed);
+                  assert!(first_snapshot.total_event_count > 0);
+                  assert!(first_snapshot.retained_sequence_contiguous);
+                  assert_eq!(disabled_snapshot.total_event_count, 0);
+                  assert!(!disabled.behavior_telemetry_enabled());
+              }
+          
+              #[test]
+              fn grooming_has_a_minimum_dwell_but_loom_still_preempts_it() {
+          """,
+          )
+          
+          main = "crates/mechofly-app/src/main.rs"
+          replace_once(main, "mod app;\n", "mod app;\nmod behavior_baseline;\n")
+          replace_once(
+              main,
+              """    if let Some(path) = option_value(&args, "--self-test") {
+                  diagnostics::mark("starting isolated deterministic self-test");
+                  self_test::run(PathBuf::from(path).as_path())?;
+                  diagnostics::mark("isolated deterministic self-test completed");
+                  return Ok(());
+              }
+          """,
+              """    if let Some(path) = option_value(&args, "--self-test") {
+                  diagnostics::mark("starting isolated deterministic self-test");
+                  self_test::run(PathBuf::from(path).as_path())?;
+                  diagnostics::mark("isolated deterministic self-test completed");
+                  return Ok(());
+              }
+              if let Some(path) = option_value(&args, "--behavior-baseline") {
+                  diagnostics::mark("starting deterministic behavior telemetry baseline");
+                  behavior_baseline::run(PathBuf::from(path).as_path(), &args)?;
+                  diagnostics::mark("deterministic behavior telemetry baseline completed");
+                  return Ok(());
+              }
+          """,
+          )
+          
+          brain = "crates/mechofly-app/src/brain_lab.rs"
+          replace_once(
+              brain,
+              """fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
+              let grooming_phase = (session.engine.state.behavior == mechofly_core::Behavior::Groom)
+                  .then(|| grooming_substate_at(session.engine.state.behavior_age_frames));
+              ui.horizontal(|ui| {
+          """,
+              """fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
+              let grooming_phase = (session.engine.state.behavior == mechofly_core::Behavior::Groom)
+                  .then(|| grooming_substate_at(session.engine.state.behavior_age_frames));
+              ui.horizontal(|ui| {
+                  ui.label(
+                      egui::RichText::new("TRANSITION TELEMETRY")
+                          .strong()
+                          .color(VIOLET),
+                  );
+                  ui.monospace(format!(
+                      "v1 · {} events · stream {}",
+                      session.engine.behavior_telemetry_total_event_count(),
+                      &session.engine.behavior_telemetry_stream_sha256()[..12]
+                  ));
+              });
+              if let Some(event) = session.engine.latest_behavior_transition() {
+                  ui.label(
+                      egui::RichText::new(format!(
+                          "LAST {:06}  {:?} → {:?}  ·  {}  ·  {} ms  ·  {}",
+                          event.frame,
+                          event.from_behavior,
+                          event.to_behavior,
+                          event.reason.as_str(),
+                          event.elapsed_ms,
+                          if event.emergency_override {
+                              "EMERGENCY OVERRIDE"
+                          } else {
+                              "OBSERVATIONAL"
+                          }
+                      ))
+                      .small()
+                      .color(MUTED),
+                  );
+              } else {
+                  ui.label(
+                      egui::RichText::new(
+                          "No transition recorded yet · telemetry is observational and bounded",
+                      )
+                      .small()
+                      .color(MUTED),
+                  );
+              }
+              ui.horizontal(|ui| {
+          """,
+          )
+          replace_once(
+              brain,
+              """fn recent_behavior_transitions(session: &SimulationSession, maximum: usize) -> Vec<String> {
+              let mut last = None;
+              let mut transitions = Vec::new();
+              for summary in session.replay.summaries() {
+                  if last != Some(summary.behavior) {
+                      transitions.push(format!("{:06} {:?}", summary.frame, summary.behavior));
+                      last = Some(summary.behavior);
+                  }
+              }
+              let keep_from = transitions.len().saturating_sub(maximum);
+              transitions.into_iter().skip(keep_from).collect()
+          }
+          """,
+              """fn recent_behavior_transitions(session: &SimulationSession, maximum: usize) -> Vec<String> {
+              let transitions: Vec<String> = session
+                  .engine
+                  .behavior_transition_events()
+                  .map(|event| {
+                      format!(
+                          "{:06} {:?}→{:?} [{} · {} ms]",
+                          event.frame,
+                          event.from_behavior,
+                          event.to_behavior,
+                          event.reason.as_str(),
+                          event.elapsed_ms
+                      )
+                  })
+                  .collect();
+              let keep_from = transitions.len().saturating_sub(maximum);
+              transitions.into_iter().skip(keep_from).collect()
+          }
+          """,
+          )
+          
+          self_test = "crates/mechofly-app/src/self_test.rs"
+          replace_once(
+              self_test,
+              """    Action, Behavior, Feedback, ModelCheckpoint, ModelEngine, ModelGraph, ModelTier, PetPolicy,
+              PolicyContext, StepInput, StimulationPolicy, StimulationRequest,
+          """,
+              """    Action, Behavior, Feedback, ModelCheckpoint, ModelEngine, ModelGraph, ModelTier, PetPolicy,
+              PolicyContext, StepInput, StimulationPolicy, StimulationRequest,
+              BEHAVIOR_TELEMETRY_CLAIM_BOUNDARY, BEHAVIOR_TELEMETRY_CONTROLLER,
+              BEHAVIOR_TELEMETRY_SCHEMA_VERSION, MAX_BEHAVIOR_TRANSITION_EVENTS,
+          """,
+          )
+          replace_once(
+              self_test,
+              """    behavior_controller_authoritative: bool,
+              escape_envelope_ms: u32,
+          """,
+              """    behavior_controller_authoritative: bool,
+              behavior_telemetry_schema_version: u32,
+              behavior_telemetry_controller: String,
+              behavior_telemetry_claim_boundary: String,
+              behavior_transition_event_count: u64,
+              behavior_transition_stream_sha256: String,
+              behavior_transition_sequence_contiguous: bool,
+              behavior_transition_telemetry_bounded: bool,
+              behavior_transition_telemetry_deterministic: bool,
+              behavior_transition_telemetry_observational_only: bool,
+              behavior_transition_reasons_complete: bool,
+              behavior_intent_snapshot_available: bool,
+              escape_envelope_ms: u32,
+          """,
+          )
+          replace_once(
+              self_test,
+              """}
+          
+          pub fn run(path: &Path) -> Result<(), String> {
+          """,
+              """}
+          
+          #[derive(Clone, Debug)]
+          struct BehaviorTelemetrySelfTest {
+              passed: bool,
+              event_count: u64,
+              event_stream_sha256: String,
+              sequence_contiguous: bool,
+              bounded: bool,
+              deterministic: bool,
+              observational_only: bool,
+              reasons_complete: bool,
+              intent_snapshot_available: bool,
+          }
+          
+          fn run_behavior_telemetry_self_test(
+              graph: Arc<ModelGraph>,
+          ) -> BehaviorTelemetrySelfTest {
+              let mut first = ModelEngine::new(Arc::clone(&graph), 0x7E1E_0011);
+              let mut second = ModelEngine::new(Arc::clone(&graph), 0x7E1E_0011);
+              let mut disabled = ModelEngine::new(graph, 0x7E1E_0011);
+              disabled.set_behavior_telemetry_enabled(false);
+              let mut observational_only = true;
+          
+              for frame in 0..720_u64 {
+                  let mut stimulus = first.empty_stimulus();
+                  let phase = (frame / 90) % 8;
+                  let offset = match phase {
+                      1 => Some(WALK_POPULATION_OFFSET),
+                      2 => Some(GROOM_POPULATION_OFFSET),
+                      3 => Some(ALERT_POPULATION_OFFSET),
+                      4 => Some(REVERSE_POPULATION_OFFSET),
+                      5 if frame % 90 < 12 => Some(LOOM_POPULATION_OFFSET),
+                      _ => None,
+                  };
+                  if let Some(offset) = offset {
+                      for value in stimulus
+                          .iter_mut()
+                          .skip(offset)
+                          .step_by(FUNCTIONAL_POPULATION_COUNT)
+                      {
+                          *value = 8_192;
+                      }
+                  }
+          
+                  let first_summary = first.step_cpu(StepInput {
+                      stimulus_q15: &stimulus,
+                  });
+                  let second_summary = second.step_cpu(StepInput {
+                      stimulus_q15: &stimulus,
+                  });
+                  let disabled_summary = disabled.step_cpu(StepInput {
+                      stimulus_q15: &stimulus,
+                  });
+                  observational_only &= first_summary == second_summary
+                      && first_summary == disabled_summary
+                      && first.state == second.state
+                      && first.state == disabled.state;
+              }
+          
+              let first_snapshot = first.behavior_telemetry_snapshot();
+              let second_snapshot = second.behavior_telemetry_snapshot();
+              let disabled_snapshot = disabled.behavior_telemetry_snapshot();
+              let deterministic = first_snapshot == second_snapshot;
+              let bounded = first_snapshot.retained_event_count <= first_snapshot.capacity
+                  && first_snapshot.dropped_event_count
+                      + first_snapshot.retained_event_count as u64
+                      == first_snapshot.total_event_count
+                  && first_snapshot.capacity == MAX_BEHAVIOR_TRANSITION_EVENTS;
+              observational_only &= disabled_snapshot.total_event_count == 0
+                  && !disabled.behavior_telemetry_enabled()
+                  && first_snapshot.observational_only
+                  && !first_snapshot.controller_semantics_changed;
+              let reasons_complete = first_snapshot
+                  .events
+                  .iter()
+                  .all(|event| !event.reason.as_str().is_empty());
+              let intent_snapshot_available =
+                  first_snapshot.latest_intent.schema_version == BEHAVIOR_TELEMETRY_SCHEMA_VERSION;
+              let passed = first_snapshot.total_event_count > 0
+                  && first_snapshot.retained_sequence_contiguous
+                  && bounded
+                  && deterministic
+                  && observational_only
+                  && reasons_complete
+                  && intent_snapshot_available;
+          
+              BehaviorTelemetrySelfTest {
+                  passed,
+                  event_count: first_snapshot.total_event_count,
+                  event_stream_sha256: first_snapshot.event_stream_sha256,
+                  sequence_contiguous: first_snapshot.retained_sequence_contiguous,
+                  bounded,
+                  deterministic,
+                  observational_only,
+                  reasons_complete,
+                  intent_snapshot_available,
+              }
+          }
+          
+          pub fn run(path: &Path) -> Result<(), String> {
+          """,
+          )
+          replace_once(
+              self_test,
+              """    let grooming_substate_timeline = grooming_program_substates.iter().map(String::as_str).eq([
+              "PREPARE",
+              "CLEANING STROKE",
+              "LIMB RUB",
+              "RESET",
+          ]);
+          
+              #[cfg(windows)]
+          """,
+              """    let grooming_substate_timeline = grooming_program_substates.iter().map(String::as_str).eq([
+              "PREPARE",
+              "CLEANING STROKE",
+              "LIMB RUB",
+              "RESET",
+          ]);
+              let behavior_telemetry = run_behavior_telemetry_self_test(Arc::clone(&graph));
+          
+              #[cfg(windows)]
+          """,
+          )
+          replace_once(
+              self_test,
+              """    let receipt = SelfTestReceipt {
+              schema_version: 6,
+          """,
+              """    let receipt = SelfTestReceipt {
+              schema_version: 7,
+          """,
+          )
+          replace_once(
+              self_test,
+              """            && two_way_neuron_selection_sync
+                  && grooming_substate_timeline
+                  && anatomical_context_points == 23_210
+          """,
+              """            && two_way_neuron_selection_sync
+                  && grooming_substate_timeline
+                  && behavior_telemetry.passed
+                  && anatomical_context_points == 23_210
+          """,
+          )
+          replace_once(
+              self_test,
+              """        behavior_controller_authoritative: rendered_behavior_matches_neural_state
+                  && policy_action_neural_dispatch,
+              escape_envelope_ms: (ESCAPE_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
+          """,
+              """        behavior_controller_authoritative: rendered_behavior_matches_neural_state
+                  && policy_action_neural_dispatch,
+              behavior_telemetry_schema_version: BEHAVIOR_TELEMETRY_SCHEMA_VERSION,
+              behavior_telemetry_controller: BEHAVIOR_TELEMETRY_CONTROLLER.to_owned(),
+              behavior_telemetry_claim_boundary: BEHAVIOR_TELEMETRY_CLAIM_BOUNDARY.to_owned(),
+              behavior_transition_event_count: behavior_telemetry.event_count,
+              behavior_transition_stream_sha256: behavior_telemetry.event_stream_sha256,
+              behavior_transition_sequence_contiguous: behavior_telemetry.sequence_contiguous,
+              behavior_transition_telemetry_bounded: behavior_telemetry.bounded,
+              behavior_transition_telemetry_deterministic: behavior_telemetry.deterministic,
+              behavior_transition_telemetry_observational_only: behavior_telemetry.observational_only,
+              behavior_transition_reasons_complete: behavior_telemetry.reasons_complete,
+              behavior_intent_snapshot_available: behavior_telemetry.intent_snapshot_available,
+              escape_envelope_ms: (ESCAPE_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
+          """,
+          )
+          
+          workflow = ".github/workflows/windows.yml"
+          replace_once(
+              workflow,
+              "          if ($receipt.schema_version -ne 6) { throw 'Self-test receipt schema is stale.' }\n",
+              "          if ($receipt.schema_version -ne 7) { throw 'Self-test receipt schema is stale.' }\n",
+          )
+          replace_once(
+              workflow,
+              """          if (-not $receipt.behavior_controller_authoritative) { throw 'Behavior controller is not authoritative.' }
+              if ($receipt.escape_envelope_ms -ne 198) { throw 'Escape timing differs from the recorded controller.' }
+          """,
+              """          if (-not $receipt.behavior_controller_authoritative) { throw 'Behavior controller is not authoritative.' }
+              if ($receipt.behavior_telemetry_schema_version -ne 1) { throw 'Behavior telemetry schema is stale.' }
+              if ($receipt.behavior_telemetry_controller -ne 'legacy-threshold-hold-v1-observed') { throw 'Behavior telemetry controller identity changed.' }
+              if (-not $receipt.behavior_transition_telemetry_observational_only) { throw 'Behavior telemetry changed controller semantics.' }
+              if (-not $receipt.behavior_transition_telemetry_deterministic) { throw 'Behavior telemetry is not deterministic.' }
+              if (-not $receipt.behavior_transition_telemetry_bounded) { throw 'Behavior telemetry is not bounded.' }
+              if (-not $receipt.behavior_transition_sequence_contiguous) { throw 'Behavior transition sequence is discontinuous.' }
+              if (-not $receipt.behavior_transition_reasons_complete) { throw 'Behavior transition reasons are incomplete.' }
+              if (-not $receipt.behavior_intent_snapshot_available) { throw 'Behavior intent snapshot is absent.' }
+              if ($receipt.behavior_transition_event_count -le 0) { throw 'Behavior transition telemetry recorded no events.' }
+              if ([string]$receipt.behavior_transition_stream_sha256 -notmatch '^[0-9a-f]{64}$') { throw 'Behavior transition stream digest is invalid.' }
+              if ($receipt.escape_envelope_ms -ne 198) { throw 'Escape timing differs from the recorded controller.' }
+          """,
+          )
+          replace_once(
+              workflow,
+              """      - name: Exercise real Windows GUI startup boundary
+          """,
+              """      - name: Run deterministic behavior-transition telemetry baseline smoke
+              shell: powershell
+              run: |
+                $executable = (Resolve-Path .\\host-windows\\bin\\MechoFly.exe).Path
+                $receiptPath = (Join-Path $PWD 'artifacts\\behavior-telemetry-smoke.json')
+                $arguments = '--behavior-baseline "{0}" --baseline-seeds 2 --baseline-repeats 2 --baseline-seconds 10' -f $receiptPath
+                $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru
+                if ($process.ExitCode -ne 0) { throw "Behavior baseline exited $($process.ExitCode)" }
+                $baseline = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+                if ($baseline.schema_version -ne 1) { throw 'Behavior baseline schema is stale.' }
+                if ($baseline.status -ne 'PASS') { throw 'Behavior baseline failed.' }
+                if ($baseline.campaign_classification -ne 'local_smoke') { throw 'CI baseline must remain a smoke campaign.' }
+                if ($baseline.scenario_count -ne 5 -or $baseline.run_count -ne 20) { throw 'Behavior baseline matrix is incomplete.' }
+                if (-not $baseline.all_repeat_groups_equal) { throw 'Behavior baseline repeats are not deterministic.' }
+                if (-not $baseline.telemetry_observational_only -or $baseline.controller_semantics_changed) { throw 'Behavior telemetry changed controller semantics.' }
+                if ($baseline.total_transition_count -le 0) { throw 'Behavior baseline recorded no transitions.' }
+            - name: Exercise real Windows GUI startup boundary
+          """,
+          )
+          
+          setup = "tools/Setup-AI100-MechoFly.ps1"
+          replace_once(
+              setup,
+              """$Receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json
+          if ($Receipt.status -ne 'PASS' -or -not $Receipt.live_state_unchanged -or
+          """,
+              """$Receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json
+          if ($Receipt.schema_version -ne 7 -or
+              $Receipt.behavior_telemetry_schema_version -ne 1 -or
+              -not $Receipt.behavior_transition_telemetry_observational_only -or
+              -not $Receipt.behavior_transition_telemetry_deterministic -or
+              -not $Receipt.behavior_transition_telemetry_bounded -or
+              -not $Receipt.behavior_transition_sequence_contiguous -or
+              -not $Receipt.behavior_transition_reasons_complete -or
+              -not $Receipt.behavior_intent_snapshot_available -or
+              $Receipt.behavior_transition_event_count -le 0 -or
+              $Receipt.status -ne 'PASS' -or -not $Receipt.live_state_unchanged -or
+          """,
+          )
+          
+          for path in [
+              "crates/mechofly-core/src/behavior_telemetry.rs",
+              "crates/mechofly-core/src/lib.rs",
+              "crates/mechofly-core/src/model.rs",
+              "crates/mechofly-app/src/behavior_baseline.rs",
+              "crates/mechofly-app/src/main.rs",
+              "crates/mechofly-app/src/brain_lab.rs",
+              "crates/mechofly-app/src/self_test.rs",
+              ".github/workflows/windows.yml",
+              "tools/Setup-AI100-MechoFly.ps1",
+          ]:
+              contents = read(path)
+              for forbidden in ["ChatGPT", "OpenAI", "Codex"]:
+                  if forbidden in contents:
+                      raise SystemExit(f"{path}: prohibited attribution marker {forbidden}")
+          PY
+      - name: Format and inspect
+        shell: bash
+        run: |
+          cargo fmt --all
+          git diff --check
+          git status --short
+      - name: Test Rust workspace
+        shell: bash
+        run: |
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Run headless telemetry baseline smoke
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cargo run --locked -p mechofly-app -- \
+            --behavior-baseline artifacts/behavior-telemetry-smoke.json \
+            --baseline-seeds 1 \
+            --baseline-repeats 2 \
+            --baseline-seconds 3
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path("artifacts/behavior-telemetry-smoke.json").read_text())
+          assert value["schema_version"] == 1
+          assert value["status"] == "PASS"
+          assert value["scenario_count"] == 5
+          assert value["run_count"] == 10
+          assert value["all_repeat_groups_equal"] is True
+          assert value["telemetry_observational_only"] is True
+          assert value["controller_semantics_changed"] is False
+          assert value["total_transition_count"] > 0
+          PY
+      - name: Publish N2 candidate
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm .github/workflows/apply-n2-transition-telemetry.yml
+          git add \
+            .github/workflows/windows.yml \
+            crates/mechofly-core/src/behavior_telemetry.rs \
+            crates/mechofly-core/src/lib.rs \
+            crates/mechofly-core/src/model.rs \
+            crates/mechofly-app/src/behavior_baseline.rs \
+            crates/mechofly-app/src/main.rs \
+            crates/mechofly-app/src/brain_lab.rs \
+            crates/mechofly-app/src/self_test.rs \
+            tools/Setup-AI100-MechoFly.ps1
+          git commit -m "N2: add observational behavior transition telemetry"
+          git push origin HEAD:feat/behavior-transition-telemetry-rust-v9
