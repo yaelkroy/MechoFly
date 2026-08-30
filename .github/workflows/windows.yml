@@ -128,7 +128,7 @@ jobs:
           }
           if ($process.ExitCode -ne 0) { throw "Self-test exited $($process.ExitCode)" }
           $receipt = Get-Content .\artifacts\self-test.json -Raw | ConvertFrom-Json
-          if ($receipt.schema_version -ne 6) { throw 'Self-test receipt schema is stale.' }
+          if ($receipt.schema_version -ne 7) { throw 'Self-test receipt schema is stale.' }
           if ($receipt.status -ne 'PASS') { throw 'Self-test receipt failed.' }
           if (-not $receipt.live_state_unchanged) { throw 'Preview mutated live state.' }
           if (-not $receipt.alternative_differs) { throw 'Alternative trajectory did not differ.' }
@@ -154,6 +154,16 @@ jobs:
           if (-not $receipt.policy_action_neural_dispatch) { throw 'An autonomous action failed to enter through modeled neural drive.' }
           if (-not $receipt.rendered_behavior_matches_neural_state) { throw 'Rendered behavior differs from modeled neural state.' }
           if (-not $receipt.behavior_controller_authoritative) { throw 'Behavior controller is not authoritative.' }
+          if ($receipt.behavior_telemetry_schema_version -ne 1) { throw 'Behavior telemetry schema is stale.' }
+          if ($receipt.behavior_telemetry_controller -ne 'legacy-threshold-hold-v1-observed') { throw 'Behavior telemetry controller identity changed.' }
+          if (-not $receipt.behavior_transition_telemetry_observational_only) { throw 'Behavior telemetry changed controller semantics.' }
+          if (-not $receipt.behavior_transition_telemetry_deterministic) { throw 'Behavior telemetry is not deterministic.' }
+          if (-not $receipt.behavior_transition_telemetry_bounded) { throw 'Behavior telemetry is not bounded.' }
+          if (-not $receipt.behavior_transition_sequence_contiguous) { throw 'Behavior transition sequence is discontinuous.' }
+          if (-not $receipt.behavior_transition_reasons_complete) { throw 'Behavior transition reasons are incomplete.' }
+          if (-not $receipt.behavior_intent_snapshot_available) { throw 'Behavior intent snapshot is absent.' }
+          if ($receipt.behavior_transition_event_count -le 0) { throw 'Behavior transition telemetry recorded no events.' }
+          if ([string]$receipt.behavior_transition_stream_sha256 -notmatch '^[0-9a-f]{64}$') { throw 'Behavior transition stream digest is invalid.' }
           if ($receipt.escape_envelope_ms -ne 198) { throw 'Escape timing differs from the recorded controller.' }
           if ($receipt.flight_envelope_ms -ne 3993) { throw 'Flight timing differs from the recorded controller.' }
           if ($receipt.landing_envelope_ms -ne 495) { throw 'Landing timing differs from the recorded controller.' }
@@ -183,6 +193,22 @@ jobs:
           if ($receipt.anatomical_context_measured) { throw 'Anatomical context was mislabeled as measured.' }
           if ($receipt.connectome_mutated_by_learning) { throw 'Learning mutated the connectome.' }
           if ($receipt.measured_activity) { throw 'Modeled activity was mislabeled as measured.' }
+      - name: Run deterministic behavior-transition telemetry baseline smoke
+        shell: powershell
+        run: |
+          $executable = (Resolve-Path .\host-windows\bin\MechoFly.exe).Path
+          $receiptPath = (Join-Path $PWD 'artifacts\behavior-telemetry-smoke.json')
+          $arguments = '--behavior-baseline "{0}" --baseline-seeds 2 --baseline-repeats 2 --baseline-seconds 10' -f $receiptPath
+          $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Behavior baseline exited $($process.ExitCode)" }
+          $baseline = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+          if ($baseline.schema_version -ne 1) { throw 'Behavior baseline schema is stale.' }
+          if ($baseline.status -ne 'PASS') { throw 'Behavior baseline failed.' }
+          if ($baseline.campaign_classification -ne 'local_smoke') { throw 'CI baseline must remain a smoke campaign.' }
+          if ($baseline.scenario_count -ne 5 -or $baseline.run_count -ne 20) { throw 'Behavior baseline matrix is incomplete.' }
+          if (-not $baseline.all_repeat_groups_equal) { throw 'Behavior baseline repeats are not deterministic.' }
+          if (-not $baseline.telemetry_observational_only -or $baseline.controller_semantics_changed) { throw 'Behavior telemetry changed controller semantics.' }
+          if ($baseline.total_transition_count -le 0) { throw 'Behavior baseline recorded no transitions.' }
       - name: Exercise real Windows GUI startup boundary
         shell: powershell
         run: |
