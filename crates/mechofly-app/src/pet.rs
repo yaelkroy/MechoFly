@@ -19,6 +19,15 @@ const FLIGHT_SPEED_PIXELS_PER_SECOND: f32 = 8.4 / REFERENCE_TICK_SECONDS;
 
 const NERVOUS_SPEED_PIXELS_PER_SECOND: f32 = 3.0 / REFERENCE_TICK_SECONDS;
 const LANDING_COMPLETION_SECONDS: f32 = 0.495;
+const TAKEOFF_COMPLETION_SECONDS: f32 = 0.198;
+const TAKEOFF_ALTITUDE_PIXELS: f32 = 24.0;
+const CRUISE_ALTITUDE_PIXELS: f32 = 72.0;
+const FLIGHT_ALTITUDE_RISE_SECONDS: f32 = 0.45;
+const LANDING_APPROACH_PIXELS: f32 = 36.0;
+const LANDING_SAFE_TOP_MARGIN_PIXELS: f32 = 32.0;
+const LANDING_SAFE_BOTTOM_FRACTION: f32 = 0.12;
+const LANDING_SAFE_BOTTOM_MIN_PIXELS: f32 = 56.0;
+const LANDING_SAFE_BOTTOM_MAX_PIXELS: f32 = 112.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -65,10 +74,15 @@ pub struct PetMotion {
     speed_pixels_per_second: f32,
     pub animation_seconds: f32,
     pub behavior_age_seconds: f32,
+    /// Height above the local virtual surface. This is depth (Z), not screen Y.
+    pub altitude_pixels: f32,
     last_behavior: Behavior,
+    behavior_start_altitude_pixels: f32,
     landing_start_position: Pos2,
     landing_target_position: Pos2,
     landing_start_heading: f32,
+    landing_target_heading: f32,
+    landing_start_altitude_pixels: f32,
     landing_active: bool,
     pub paused: bool,
     pub reduced_motion: bool,
@@ -82,10 +96,14 @@ impl Default for PetMotion {
             speed_pixels_per_second: 0.0,
             animation_seconds: 0.0,
             behavior_age_seconds: 0.0,
+            altitude_pixels: 0.0,
             last_behavior: Behavior::Rest,
+            behavior_start_altitude_pixels: 0.0,
             landing_start_position: Pos2::new(96.0, 640.0),
             landing_target_position: Pos2::new(96.0, 640.0),
             landing_start_heading: 0.0,
+            landing_target_heading: 0.0,
+            landing_start_altitude_pixels: 0.0,
             landing_active: false,
             paused: false,
             reduced_motion: false,
@@ -114,11 +132,20 @@ impl PetMotion {
         if behavior != self.last_behavior {
             self.last_behavior = behavior;
             self.behavior_age_seconds = 0.0;
+            self.behavior_start_altitude_pixels = self.altitude_pixels;
             if behavior == Behavior::Landing {
                 self.landing_start_position = self.screen_position;
-                self.landing_target_position =
-                    Pos2::new(self.screen_position.x.clamp(left, right), bottom);
+                self.landing_target_position = local_landing_target(
+                    self.screen_position,
+                    self.heading_radians,
+                    left,
+                    top,
+                    right,
+                    bottom,
+                );
                 self.landing_start_heading = self.heading_radians;
+                self.landing_target_heading = landing_surface_heading(self.heading_radians);
+                self.landing_start_altitude_pixels = self.altitude_pixels;
                 self.landing_active = true;
             } else {
                 self.landing_active = false;
@@ -142,6 +169,7 @@ impl PetMotion {
 
         self.speed_pixels_per_second = match behavior {
             Behavior::Walk => {
+                self.altitude_pixels = 0.0;
                 self.heading_radians = wrapped_angle(
                     self.heading_radians
                         + (self.animation_seconds * 0.53).sin()
@@ -150,9 +178,28 @@ impl PetMotion {
                 );
                 WALK_SPEED_PIXELS_PER_SECOND
             }
-            Behavior::Reverse => REVERSE_SPEED_PIXELS_PER_SECOND,
-            Behavior::PreEscape => ESCAPE_SPEED_PIXELS_PER_SECOND,
+            Behavior::Reverse => {
+                self.altitude_pixels = 0.0;
+                REVERSE_SPEED_PIXELS_PER_SECOND
+            }
+            Behavior::PreEscape => {
+                let progress =
+                    (self.behavior_age_seconds / TAKEOFF_COMPLETION_SECONDS).clamp(0.0, 1.0);
+                self.altitude_pixels = lerp_scalar(
+                    self.behavior_start_altitude_pixels,
+                    TAKEOFF_ALTITUDE_PIXELS,
+                    smootherstep(progress),
+                );
+                ESCAPE_SPEED_PIXELS_PER_SECOND
+            }
             Behavior::Flight => {
+                let progress =
+                    (self.behavior_age_seconds / FLIGHT_ALTITUDE_RISE_SECONDS).clamp(0.0, 1.0);
+                self.altitude_pixels = lerp_scalar(
+                    self.behavior_start_altitude_pixels,
+                    CRUISE_ALTITUDE_PIXELS,
+                    smootherstep(progress),
+                );
                 self.heading_radians = wrapped_angle(
                     self.heading_radians
                         + (self.animation_seconds * 1.7).sin()
@@ -164,9 +211,17 @@ impl PetMotion {
             Behavior::Landing => {
                 if !self.landing_active {
                     self.landing_start_position = self.screen_position;
-                    self.landing_target_position =
-                        Pos2::new(self.screen_position.x.clamp(left, right), bottom);
+                    self.landing_target_position = local_landing_target(
+                        self.screen_position,
+                        self.heading_radians,
+                        left,
+                        top,
+                        right,
+                        bottom,
+                    );
                     self.landing_start_heading = self.heading_radians;
+                    self.landing_target_heading = landing_surface_heading(self.heading_radians);
+                    self.landing_start_altitude_pixels = self.altitude_pixels;
                     self.landing_active = true;
                 }
                 let progress =
@@ -177,12 +232,15 @@ impl PetMotion {
                     self.landing_target_position,
                     eased,
                 );
-                let heading_delta = wrapped_angle(PI * 0.5 - self.landing_start_heading);
+                self.altitude_pixels = lerp_scalar(self.landing_start_altitude_pixels, 0.0, eased);
+                let heading_delta =
+                    wrapped_angle(self.landing_target_heading - self.landing_start_heading);
                 self.heading_radians =
                     wrapped_angle(self.landing_start_heading + heading_delta * eased);
                 0.0
             }
             Behavior::Alert => {
+                self.altitude_pixels = 0.0;
                 self.heading_radians = wrapped_angle(
                     self.heading_radians
                         + (self.animation_seconds * 19.0).sin()
@@ -191,7 +249,10 @@ impl PetMotion {
                 );
                 NERVOUS_SPEED_PIXELS_PER_SECOND
             }
-            Behavior::Rest | Behavior::Quiet | Behavior::Groom => 0.0,
+            Behavior::Rest | Behavior::Quiet | Behavior::Groom => {
+                self.altitude_pixels = 0.0;
+                0.0
+            }
         };
 
         if behavior != Behavior::Landing {
@@ -201,7 +262,8 @@ impl PetMotion {
         if behavior == Behavior::Landing && self.behavior_age_seconds >= LANDING_COMPLETION_SECONDS
         {
             self.screen_position = self.landing_target_position;
-            self.heading_radians = PI * 0.5;
+            self.heading_radians = self.landing_target_heading;
+            self.altitude_pixels = 0.0;
             self.speed_pixels_per_second = 0.0;
         }
 
@@ -224,13 +286,8 @@ impl PetMotion {
         if bounced_x {
             self.heading_radians = wrapped_angle(PI - self.heading_radians);
         }
-        if bounced_y {
-            if behavior == Behavior::Landing && self.screen_position.y >= bottom {
-                self.heading_radians = PI * 0.5;
-                self.speed_pixels_per_second = 0.0;
-            } else {
-                self.heading_radians = wrapped_angle(-self.heading_radians);
-            }
+        if bounced_y && behavior != Behavior::Landing {
+            self.heading_radians = wrapped_angle(-self.heading_radians);
         }
     }
 }
@@ -251,6 +308,55 @@ fn lerp_position(start: Pos2, end: Pos2, progress: f32) -> Pos2 {
     )
 }
 
+fn lerp_scalar(start: f32, end: f32, progress: f32) -> f32 {
+    start + (end - start) * progress
+}
+
+fn landing_surface_heading(heading: f32) -> f32 {
+    if heading.cos() >= 0.0 { 0.0 } else { PI }
+}
+
+fn local_landing_target(
+    position: Pos2,
+    heading: f32,
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+) -> Pos2 {
+    let vertical_span = (bottom - top).max(1.0);
+    let bottom_margin = (vertical_span * LANDING_SAFE_BOTTOM_FRACTION).clamp(
+        LANDING_SAFE_BOTTOM_MIN_PIXELS,
+        LANDING_SAFE_BOTTOM_MAX_PIXELS,
+    );
+    let safe_top = (top + LANDING_SAFE_TOP_MARGIN_PIXELS).min(bottom);
+    let safe_bottom = (bottom - bottom_margin).max(safe_top);
+    let candidate = position + Vec2::angled(heading) * LANDING_APPROACH_PIXELS;
+    Pos2::new(
+        candidate.x.clamp(left, right),
+        candidate.y.clamp(safe_top, safe_bottom),
+    )
+}
+
+fn visual_altitude_for_behavior(behavior: Behavior, age_seconds: f32) -> f32 {
+    match behavior {
+        Behavior::PreEscape => {
+            TAKEOFF_ALTITUDE_PIXELS
+                * smootherstep((age_seconds / TAKEOFF_COMPLETION_SECONDS).clamp(0.0, 1.0))
+        }
+        Behavior::Flight => lerp_scalar(
+            TAKEOFF_ALTITUDE_PIXELS,
+            CRUISE_ALTITUDE_PIXELS,
+            smootherstep((age_seconds / FLIGHT_ALTITUDE_RISE_SECONDS).clamp(0.0, 1.0)),
+        ),
+        Behavior::Landing => {
+            CRUISE_ALTITUDE_PIXELS
+                * (1.0 - smootherstep((age_seconds / LANDING_COMPLETION_SECONDS).clamp(0.0, 1.0)))
+        }
+        _ => 0.0,
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MotionSelfTest {
     pub passed: bool,
@@ -259,16 +365,27 @@ pub struct MotionSelfTest {
     pub flight_path_pixels: f32,
     pub flight_horizontal_pixels: f32,
     pub flight_vertical_pixels: f32,
+    pub flight_altitude_pixels: f32,
     pub landing_descent_pixels: f32,
+    pub landing_screen_vertical_displacement_pixels: f32,
+    pub landing_bottom_clearance_pixels: f32,
     pub landing_reached_surface: bool,
+    pub landing_target_local: bool,
+    pub landing_avoids_bottom_edge: bool,
+    pub touchdown_altitude_pixels: f32,
     pub landing_first_step_pixels: f32,
     pub landing_max_step_pixels: f32,
     pub landing_completion_step_pixels: f32,
     pub landing_to_rest_step_pixels: f32,
     pub landing_refresh_rate_position_error_pixels: f32,
     pub landing_refresh_rate_heading_error_radians: f32,
+    pub landing_refresh_rate_altitude_error_pixels: f32,
     pub landing_refresh_rate_invariant: bool,
     pub landing_position_continuous: bool,
+    pub screen_space_shadow_below_body: bool,
+    pub shadow_altitude_monotonic: bool,
+    pub shadow_heading_invariant: bool,
+    pub spatial_depth_contract_passed: bool,
     pub teleport_detected: bool,
 }
 
@@ -278,7 +395,7 @@ pub fn run_motion_self_test() -> MotionSelfTest {
     let bottom = screen.y - PET_HEIGHT as f32 - 8.0;
 
     let mut walking = PetMotion {
-        screen_position: Pos2::new(220.0, bottom),
+        screen_position: Pos2::new(220.0, bottom - 96.0),
         ..PetMotion::default()
     };
     let walking_start = walking.screen_position;
@@ -314,10 +431,12 @@ pub fn run_motion_self_test() -> MotionSelfTest {
     }
     let flight_horizontal_pixels = (airborne.screen_position.x - flight_start.x).abs();
     let flight_vertical_pixels = (airborne.screen_position.y - flight_start.y).abs();
+    let flight_altitude_pixels = airborne.altitude_pixels;
 
-    airborne.screen_position.y = bottom - 360.0;
-    airborne.heading_radians = -0.7;
+    airborne.screen_position.y = bottom - 4.0;
+    airborne.altitude_pixels = CRUISE_ALTITUDE_PIXELS;
     let landing_start = airborne.screen_position;
+    let landing_start_altitude = airborne.altitude_pixels;
     let mut landing_previous = landing_start;
     let mut landing_first_step_pixels = 0.0_f32;
     let mut landing_max_step_pixels = 0.0_f32;
@@ -334,15 +453,21 @@ pub fn run_motion_self_test() -> MotionSelfTest {
         landing_max_step_pixels = landing_max_step_pixels.max(step);
         landing_previous = airborne.screen_position;
     }
-    let landing_descent_pixels = airborne.screen_position.y - landing_start.y;
-    let landing_reached_surface = (airborne.screen_position.y - bottom).abs() < 0.01;
+    let landing_descent_pixels = landing_start_altitude - airborne.altitude_pixels;
+    let landing_screen_vertical_displacement_pixels =
+        (airborne.screen_position.y - landing_start.y).abs();
+    let landing_bottom_clearance_pixels = bottom - airborne.screen_position.y;
+    let landing_reached_surface = airborne.altitude_pixels.abs() <= 0.01;
+    let landing_target_local = airborne.screen_position.distance(landing_start) <= 140.0;
+    let landing_avoids_bottom_edge = landing_bottom_clearance_pixels >= 48.0;
+    let touchdown_altitude_pixels = airborne.altitude_pixels;
     let touchdown = airborne.screen_position;
     airborne.advance(1.0 / 60.0, Behavior::Rest, origin, screen, false, None);
     let landing_to_rest_step_pixels = airborne.screen_position.distance(touchdown);
 
     let mut landing_60_hz = PetMotion {
-        screen_position: Pos2::new(760.0, bottom - 360.0),
-        heading_radians: -0.7,
+        screen_position: Pos2::new(760.0, bottom - 4.0),
+        altitude_pixels: CRUISE_ALTITUDE_PIXELS,
         ..PetMotion::default()
     };
     let mut landing_120_hz = landing_60_hz.clone();
@@ -357,13 +482,48 @@ pub fn run_motion_self_test() -> MotionSelfTest {
         .distance(landing_120_hz.screen_position);
     let landing_refresh_rate_heading_error_radians =
         wrapped_angle(landing_60_hz.heading_radians - landing_120_hz.heading_radians).abs();
+    let landing_refresh_rate_altitude_error_pixels =
+        (landing_60_hz.altitude_pixels - landing_120_hz.altitude_pixels).abs();
     let landing_refresh_rate_invariant = landing_refresh_rate_position_error_pixels <= 0.01
-        && landing_refresh_rate_heading_error_radians <= 0.001;
+        && landing_refresh_rate_heading_error_radians <= 0.001
+        && landing_refresh_rate_altitude_error_pixels <= 0.01;
 
     let landing_position_continuous = landing_first_step_pixels <= 2.5
         && landing_max_step_pixels <= 25.0
         && landing_completion_step_pixels <= 1.0
         && landing_to_rest_step_pixels <= 0.01;
+
+    let ground_shadow = shadow_projection(0.0);
+    let flight_shadow = shadow_projection(CRUISE_ALTITUDE_PIXELS);
+    let screen_space_shadow_below_body = ground_shadow.center[1] > CENTER[1] + 40.0
+        && flight_shadow.center[1] > ground_shadow.center[1];
+    let shadow_altitude_monotonic = flight_shadow.core_alpha < ground_shadow.core_alpha
+        && flight_shadow.core_radii[0] < ground_shadow.core_radii[0]
+        && flight_shadow.center[1] > ground_shadow.center[1];
+    let shadow_signature = |heading: f32| {
+        let mut scene = SceneBuilder::new(heading, 0.0);
+        draw_contact_shadow(&mut scene, CRUISE_ALTITUDE_PIXELS);
+        match &scene.primitives[0] {
+            Primitive::Ellipse {
+                center,
+                radii,
+                angle,
+                fill,
+                ..
+            } => (*center, *radii, *angle, fill.3),
+            _ => panic!("contact shadow must begin with an ellipse"),
+        }
+    };
+    let shadow_heading_invariant = shadow_signature(0.0) == shadow_signature(1.37);
+    let spatial_depth_contract_passed = flight_altitude_pixels >= 60.0
+        && landing_descent_pixels >= 60.0
+        && landing_reached_surface
+        && landing_target_local
+        && landing_avoids_bottom_edge
+        && touchdown_altitude_pixels.abs() <= 0.01
+        && screen_space_shadow_below_body
+        && shadow_altitude_monotonic
+        && shadow_heading_invariant;
     let teleport_detected = !landing_position_continuous;
 
     MotionSelfTest {
@@ -372,8 +532,7 @@ pub fn run_motion_self_test() -> MotionSelfTest {
             && flight_path_pixels > 900.0
             && flight_horizontal_pixels > 150.0
             && flight_vertical_pixels > 100.0
-            && landing_descent_pixels > 350.0
-            && landing_reached_surface
+            && spatial_depth_contract_passed
             && landing_position_continuous
             && landing_refresh_rate_invariant
             && !teleport_detected,
@@ -382,16 +541,27 @@ pub fn run_motion_self_test() -> MotionSelfTest {
         flight_path_pixels,
         flight_horizontal_pixels,
         flight_vertical_pixels,
+        flight_altitude_pixels,
         landing_descent_pixels,
+        landing_screen_vertical_displacement_pixels,
+        landing_bottom_clearance_pixels,
         landing_reached_surface,
+        landing_target_local,
+        landing_avoids_bottom_edge,
+        touchdown_altitude_pixels,
         landing_first_step_pixels,
         landing_max_step_pixels,
         landing_completion_step_pixels,
         landing_to_rest_step_pixels,
         landing_refresh_rate_position_error_pixels,
         landing_refresh_rate_heading_error_radians,
+        landing_refresh_rate_altitude_error_pixels,
         landing_refresh_rate_invariant,
         landing_position_continuous,
+        screen_space_shadow_below_body,
+        shadow_altitude_monotonic,
+        shadow_heading_invariant,
+        spatial_depth_contract_passed,
         teleport_detected,
     }
 }
@@ -474,6 +644,23 @@ impl SceneBuilder {
         });
     }
 
+    fn screen_ellipse(
+        &mut self,
+        center: [f32; 2],
+        radii: [f32; 2],
+        angle: f32,
+        fill: Rgba,
+        stroke: Option<(Rgba, f32)>,
+    ) {
+        self.primitives.push(Primitive::Ellipse {
+            center,
+            radii,
+            angle,
+            fill,
+            stroke,
+        });
+    }
+
     fn line(&mut self, from: [f32; 2], to: [f32; 2], width: f32, color: Rgba) {
         self.primitives.push(Primitive::Line {
             from: self.point(from[0], from[1]),
@@ -540,7 +727,7 @@ fn palette(skin: Skin) -> Palette {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn draw_pet_at_age(
+pub fn draw_pet_at_age_with_altitude(
     painter: &Painter,
     rect: Rect,
     skin: Skin,
@@ -548,14 +735,16 @@ pub fn draw_pet_at_age(
     phase: f32,
     behavior_age_seconds: f32,
     heading: f32,
+    altitude_pixels: f32,
     reduced_motion: bool,
 ) {
-    let scene = pet_scene(
+    let scene = pet_scene_at_altitude(
         skin,
         behavior,
         phase,
         behavior_age_seconds,
         heading,
+        altitude_pixels,
         reduced_motion,
     );
     let scale = (rect.width() / PET_WIDTH as f32).min(rect.height() / PET_HEIGHT as f32);
@@ -641,13 +830,37 @@ pub fn render_pet_bgra_at_age(
     heading: f32,
     reduced_motion: bool,
 ) {
-    assert_eq!(output.len(), PET_WIDTH * PET_HEIGHT * 4);
-    let scene = pet_scene(
+    render_pet_bgra_at_age_with_altitude(
+        output,
         skin,
         behavior,
         phase,
         behavior_age_seconds,
         heading,
+        visual_altitude_for_behavior(behavior, behavior_age_seconds),
+        reduced_motion,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn render_pet_bgra_at_age_with_altitude(
+    output: &mut [u8],
+    skin: Skin,
+    behavior: Behavior,
+    phase: f32,
+    behavior_age_seconds: f32,
+    heading: f32,
+    altitude_pixels: f32,
+    reduced_motion: bool,
+) {
+    assert_eq!(output.len(), PET_WIDTH * PET_HEIGHT * 4);
+    let scene = pet_scene_at_altitude(
+        skin,
+        behavior,
+        phase,
+        behavior_age_seconds,
+        heading,
+        altitude_pixels,
         reduced_motion,
     );
     let mut canvas = RasterCanvas::new(PET_WIDTH * RASTER_SCALE, PET_HEIGHT * RASTER_SCALE);
@@ -665,8 +878,27 @@ fn pet_scene(
     heading: f32,
     reduced_motion: bool,
 ) -> Vec<Primitive> {
-    // Rest and quiet wake are deliberately frozen: no bob, wing phase, aura,
-    // shimmer, or antenna drift.
+    pet_scene_at_altitude(
+        skin,
+        behavior,
+        phase,
+        behavior_age_seconds,
+        heading,
+        visual_altitude_for_behavior(behavior, behavior_age_seconds),
+        reduced_motion,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pet_scene_at_altitude(
+    skin: Skin,
+    behavior: Behavior,
+    phase: f32,
+    behavior_age_seconds: f32,
+    heading: f32,
+    altitude_pixels: f32,
+    reduced_motion: bool,
+) -> Vec<Primitive> {
     let time = if matches!(behavior, Behavior::Rest | Behavior::Quiet) || reduced_motion {
         0.0
     } else {
@@ -688,7 +920,7 @@ fn pet_scene(
     let mut scene = SceneBuilder::new(heading, screen_offset);
     draw_behavior_field(&mut scene, behavior, time, skin);
     draw_motion_trails(&mut scene, behavior, time);
-    draw_contact_shadow(&mut scene, behavior);
+    draw_contact_shadow(&mut scene, altitude_pixels);
     draw_wings(&mut scene, behavior, time, colors);
     draw_legs(
         &mut scene,
@@ -782,17 +1014,43 @@ fn draw_motion_trails(scene: &mut SceneBuilder, behavior: Behavior, time: f32) {
     }
 }
 
-fn draw_contact_shadow(scene: &mut SceneBuilder, behavior: Behavior) {
-    let airborne = matches!(behavior, Behavior::PreEscape | Behavior::Flight);
-    let scale = if airborne { 0.58 } else { 1.0 };
-    scene.ellipse(
-        [
-            8.0 * scale,
-            if airborne { 55.0 + 9.0 * scale } else { 51.0 },
-        ],
-        [79.0 * scale, 9.0 * scale],
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ShadowProjection {
+    center: [f32; 2],
+    core_radii: [f32; 2],
+    halo_radii: [f32; 2],
+    core_alpha: u8,
+    halo_alpha: u8,
+}
+
+fn shadow_projection(altitude_pixels: f32) -> ShadowProjection {
+    let normalized = (altitude_pixels.max(0.0) / CRUISE_ALTITUDE_PIXELS).clamp(0.0, 1.4);
+    let unit = normalized.min(1.0);
+    let core_scale = 1.0 - 0.36 * unit;
+    let halo_scale = 1.0 - 0.24 * unit;
+    ShadowProjection {
+        center: [CENTER[0], CENTER[1] + 52.0 + normalized * 22.0],
+        core_radii: [78.0 * core_scale, 9.0 * (1.0 - 0.22 * unit)],
+        halo_radii: [86.0 * halo_scale, 14.0 * (1.0 - 0.12 * unit)],
+        core_alpha: (72.0 - 50.0 * unit).round().clamp(18.0, 72.0) as u8,
+        halo_alpha: (22.0 - 14.0 * unit).round().clamp(6.0, 22.0) as u8,
+    }
+}
+
+fn draw_contact_shadow(scene: &mut SceneBuilder, altitude_pixels: f32) {
+    let projection = shadow_projection(altitude_pixels);
+    scene.screen_ellipse(
+        projection.center,
+        projection.halo_radii,
         0.0,
-        Rgba(3, 10, 9, if airborne { 28 } else { 72 }),
+        Rgba(3, 10, 9, projection.halo_alpha),
+        None,
+    );
+    scene.screen_ellipse(
+        projection.center,
+        projection.core_radii,
+        0.0,
+        Rgba(3, 10, 9, projection.core_alpha),
         None,
     );
 }
@@ -1933,6 +2191,7 @@ mod tests {
         heading_radians: f32,
         phase: f32,
         behavior_age_seconds: f32,
+        altitude_pixels: f32,
     }
 
     #[test]
@@ -2042,6 +2301,34 @@ mod tests {
             result.landing_refresh_rate_heading_error_radians <= 0.001,
             "{result:#?}"
         );
+        assert!(
+            result.landing_refresh_rate_altitude_error_pixels <= 0.01,
+            "{result:#?}"
+        );
+    }
+
+    #[test]
+    fn shadow_is_screen_vertical_and_monotonic_in_z() {
+        let result = run_motion_self_test();
+        assert!(result.screen_space_shadow_below_body, "{result:#?}");
+        assert!(result.shadow_altitude_monotonic, "{result:#?}");
+        assert!(result.shadow_heading_invariant, "{result:#?}");
+    }
+
+    #[test]
+    fn landing_uses_a_local_surface_instead_of_screen_bottom() {
+        let result = run_motion_self_test();
+        assert!(result.flight_altitude_pixels >= 60.0, "{result:#?}");
+        assert!(result.landing_target_local, "{result:#?}");
+        assert!(result.landing_avoids_bottom_edge, "{result:#?}");
+        assert!(
+            result.landing_bottom_clearance_pixels >= 48.0,
+            "{result:#?}"
+        );
+        assert!(
+            result.touchdown_altitude_pixels.abs() <= 0.01,
+            "{result:#?}"
+        );
     }
 
     #[test]
@@ -2065,7 +2352,7 @@ mod tests {
         let visible_width = maximum_x.saturating_sub(minimum_x);
         let visible_height = maximum_y.saturating_sub(minimum_y);
         assert!((150..=230).contains(&visible_width));
-        assert!((70..=140).contains(&visible_height));
+        assert!((70..=175).contains(&visible_height));
     }
 
     #[test]
@@ -2145,6 +2432,7 @@ mod tests {
                 heading_radians: motion.heading_radians,
                 phase: motion.animation_seconds,
                 behavior_age_seconds: motion.behavior_age_seconds,
+                altitude_pixels: motion.altitude_pixels,
             });
         };
 
@@ -2241,13 +2529,14 @@ mod tests {
                     _ => Behavior::Rest,
                 };
                 let mut pet = vec![0; PET_WIDTH * PET_HEIGHT * 4];
-                render_pet_bgra_at_age(
+                render_pet_bgra_at_age_with_altitude(
                     &mut pet,
                     skin,
                     behavior,
                     sample.phase,
                     sample.behavior_age_seconds,
                     sample.heading_radians,
+                    sample.altitude_pixels,
                     false,
                 );
                 stamp_bgra(

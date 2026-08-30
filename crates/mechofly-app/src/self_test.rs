@@ -84,16 +84,27 @@ struct SelfTestReceipt {
     flight_path_pixels: f32,
     flight_horizontal_pixels: f32,
     flight_vertical_pixels: f32,
+    flight_altitude_pixels: f32,
     landing_descent_pixels: f32,
+    landing_screen_vertical_displacement_pixels: f32,
+    landing_bottom_clearance_pixels: f32,
     landing_reached_surface: bool,
+    landing_target_local: bool,
+    landing_avoids_bottom_edge: bool,
+    touchdown_altitude_pixels: f32,
     landing_first_step_pixels: f32,
     landing_max_step_pixels: f32,
     landing_completion_step_pixels: f32,
     landing_to_rest_step_pixels: f32,
     landing_refresh_rate_position_error_pixels: f32,
     landing_refresh_rate_heading_error_radians: f32,
+    landing_refresh_rate_altitude_error_pixels: f32,
     landing_refresh_rate_invariant: bool,
     landing_position_continuous: bool,
+    screen_space_shadow_below_body: bool,
+    shadow_altitude_monotonic: bool,
+    shadow_heading_invariant: bool,
+    spatial_depth_contract_passed: bool,
     teleport_detected: bool,
     two_dimensional_flight_motion: bool,
     separate_live_brain_and_brain_lab: bool,
@@ -376,7 +387,7 @@ pub fn run(path: &Path) -> Result<(), String> {
     };
 
     let receipt = SelfTestReceipt {
-        schema_version: 7,
+        schema_version: 8,
         status: if comparison.receipt.live_state_unchanged
             && comparison.receipt.alternative_differs
             && live_before == live_after
@@ -463,8 +474,15 @@ pub fn run(path: &Path) -> Result<(), String> {
         flight_path_pixels: motion.flight_path_pixels,
         flight_horizontal_pixels: motion.flight_horizontal_pixels,
         flight_vertical_pixels: motion.flight_vertical_pixels,
+        flight_altitude_pixels: motion.flight_altitude_pixels,
         landing_descent_pixels: motion.landing_descent_pixels,
+        landing_screen_vertical_displacement_pixels: motion
+            .landing_screen_vertical_displacement_pixels,
+        landing_bottom_clearance_pixels: motion.landing_bottom_clearance_pixels,
         landing_reached_surface: motion.landing_reached_surface,
+        landing_target_local: motion.landing_target_local,
+        landing_avoids_bottom_edge: motion.landing_avoids_bottom_edge,
+        touchdown_altitude_pixels: motion.touchdown_altitude_pixels,
         landing_first_step_pixels: motion.landing_first_step_pixels,
         landing_max_step_pixels: motion.landing_max_step_pixels,
         landing_completion_step_pixels: motion.landing_completion_step_pixels,
@@ -473,8 +491,14 @@ pub fn run(path: &Path) -> Result<(), String> {
             .landing_refresh_rate_position_error_pixels,
         landing_refresh_rate_heading_error_radians: motion
             .landing_refresh_rate_heading_error_radians,
+        landing_refresh_rate_altitude_error_pixels: motion
+            .landing_refresh_rate_altitude_error_pixels,
         landing_refresh_rate_invariant: motion.landing_refresh_rate_invariant,
         landing_position_continuous: motion.landing_position_continuous,
+        screen_space_shadow_below_body: motion.screen_space_shadow_below_body,
+        shadow_altitude_monotonic: motion.shadow_altitude_monotonic,
+        shadow_heading_invariant: motion.shadow_heading_invariant,
+        spatial_depth_contract_passed: motion.spatial_depth_contract_passed,
         teleport_detected: motion.teleport_detected,
         two_dimensional_flight_motion,
         separate_live_brain_and_brain_lab: true,

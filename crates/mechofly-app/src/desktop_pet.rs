@@ -323,6 +323,7 @@ impl PetOverlay {
                 0.0,
                 0.0,
                 0.0,
+                0.0,
                 false,
             )?;
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
@@ -339,15 +340,17 @@ impl PetOverlay {
         phase: f32,
         behavior_age_seconds: f32,
         heading_radians: f32,
+        altitude_pixels: f32,
         reduced_motion: bool,
     ) -> Result<(), String> {
-        crate::pet::render_pet_bgra_at_age(
+        crate::pet::render_pet_bgra_at_age_with_altitude(
             &mut self.pixels,
             skin,
             behavior,
             phase,
             behavior_age_seconds,
             heading_radians,
+            altitude_pixels,
             reduced_motion,
         );
         self.shared.update_hit_alpha(&self.pixels);

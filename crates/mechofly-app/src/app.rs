@@ -15,7 +15,9 @@ use crate::{
     compute::ComputePreference,
     diagnostics,
     live_brain::{LiveBrainCommand, LiveBrainState},
-    pet::{PET_HEIGHT, PET_WIDTH, PetMotion, Skin, draw_pet_at_age, transparent_frame},
+    pet::{
+        PET_HEIGHT, PET_WIDTH, PetMotion, Skin, draw_pet_at_age_with_altitude, transparent_frame,
+    },
     runtime::SimulationSession,
     tray::{TrayAction, TrayController},
 };
@@ -481,6 +483,7 @@ impl eframe::App for MechoFlyApp {
                         self.pet.animation_seconds,
                         self.pet.behavior_age_seconds,
                         self.pet.heading_radians,
+                        self.pet.altitude_pixels,
                         self.pet.reduced_motion,
                     )
                     .err()
@@ -621,7 +624,7 @@ impl MechoFlyApp {
                     Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32),
                     Sense::click_and_drag(),
                 );
-                draw_pet_at_age(
+                draw_pet_at_age_with_altitude(
                     ui.painter(),
                     rect,
                     self.skin,
@@ -629,6 +632,7 @@ impl MechoFlyApp {
                     self.pet.animation_seconds,
                     self.pet.behavior_age_seconds,
                     self.pet.heading_radians,
+                    self.pet.altitude_pixels,
                     self.pet.reduced_motion,
                 );
                 let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
