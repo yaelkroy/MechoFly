@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod behavior_telemetry;
 pub mod connectome;
 pub mod graph;
 pub mod learning;
@@ -8,6 +9,12 @@ pub mod provenance;
 pub mod replay;
 pub mod stimulation;
 
+pub use behavior_telemetry::{
+    BEHAVIOR_TELEMETRY_CLAIM_BOUNDARY, BEHAVIOR_TELEMETRY_CONTROLLER,
+    BEHAVIOR_TELEMETRY_SCHEMA_VERSION, BehaviorIntentSnapshot, BehaviorTelemetryLedger,
+    BehaviorTelemetrySnapshot, BehaviorTransitionEvent, BehaviorTransitionReason,
+    MAX_BEHAVIOR_TRANSITION_EVENTS,
+};
 pub use connectome::{ConnectomeImport, ConnectomeImportError, ImportManifest};
 pub use graph::{GraphIdentity, ModelGraph, ModelTier};
 pub use learning::{Action, Feedback, LearningLedgerEntry, PetPolicy, PolicyContext};

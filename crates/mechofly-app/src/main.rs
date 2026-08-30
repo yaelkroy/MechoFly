@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod behavior_baseline;
 mod brain_lab;
 mod compute;
 #[cfg(windows)]
@@ -36,6 +37,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         diagnostics::mark("starting isolated deterministic self-test");
         self_test::run(PathBuf::from(path).as_path())?;
         diagnostics::mark("isolated deterministic self-test completed");
+        return Ok(());
+    }
+    if let Some(path) = option_value(&args, "--behavior-baseline") {
+        diagnostics::mark("starting deterministic behavior telemetry baseline");
+        behavior_baseline::run(PathBuf::from(path).as_path(), &args)?;
+        diagnostics::mark("deterministic behavior telemetry baseline completed");
         return Ok(());
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))

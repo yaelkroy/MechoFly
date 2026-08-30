@@ -1084,6 +1084,45 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
     let grooming_phase = (session.engine.state.behavior == mechofly_core::Behavior::Groom)
         .then(|| grooming_substate_at(session.engine.state.behavior_age_frames));
     ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("TRANSITION TELEMETRY")
+                .strong()
+                .color(VIOLET),
+        );
+        ui.monospace(format!(
+            "v1 · {} events · stream {}",
+            session.engine.behavior_telemetry_total_event_count(),
+            &session.engine.behavior_telemetry_stream_sha256()[..12]
+        ));
+    });
+    if let Some(event) = session.engine.latest_behavior_transition() {
+        ui.label(
+            egui::RichText::new(format!(
+                "LAST {:06}  {:?} → {:?}  ·  {}  ·  {} ms  ·  {}",
+                event.frame,
+                event.from_behavior,
+                event.to_behavior,
+                event.reason.as_str(),
+                event.elapsed_ms,
+                if event.emergency_override {
+                    "EMERGENCY OVERRIDE"
+                } else {
+                    "OBSERVATIONAL"
+                }
+            ))
+            .small()
+            .color(MUTED),
+        );
+    } else {
+        ui.label(
+            egui::RichText::new(
+                "No transition recorded yet · telemetry is observational and bounded",
+            )
+            .small()
+            .color(MUTED),
+        );
+    }
+    ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.label(
                 egui::RichText::new("MACRO / GENERIC GROOMING PROGRAM")
@@ -1206,14 +1245,20 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
 }
 
 fn recent_behavior_transitions(session: &SimulationSession, maximum: usize) -> Vec<String> {
-    let mut last = None;
-    let mut transitions = Vec::new();
-    for summary in session.replay.summaries() {
-        if last != Some(summary.behavior) {
-            transitions.push(format!("{:06} {:?}", summary.frame, summary.behavior));
-            last = Some(summary.behavior);
-        }
-    }
+    let transitions: Vec<String> = session
+        .engine
+        .behavior_transition_events()
+        .map(|event| {
+            format!(
+                "{:06} {:?}→{:?} [{} · {} ms]",
+                event.frame,
+                event.from_behavior,
+                event.to_behavior,
+                event.reason.as_str(),
+                event.elapsed_ms
+            )
+        })
+        .collect();
     let keep_from = transitions.len().saturating_sub(maximum);
     transitions.into_iter().skip(keep_from).collect()
 }

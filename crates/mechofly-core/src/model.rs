@@ -3,7 +3,15 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{MODEL_VERSION, graph::ModelGraph, graph::mix64, provenance::sha256_hex};
+use crate::{
+    MODEL_VERSION,
+    behavior_telemetry::{
+        BEHAVIOR_TELEMETRY_SCHEMA_VERSION, BehaviorIntentSnapshot, BehaviorTelemetryLedger,
+        BehaviorTelemetrySnapshot, BehaviorTransitionEvent, BehaviorTransitionReason,
+    },
+    graph::{ModelGraph, mix64},
+    provenance::sha256_hex,
+};
 
 pub const ACTIVATION_MIN: i32 = -32_768;
 pub const ACTIVATION_MAX: i32 = 32_767;
@@ -21,6 +29,7 @@ pub const LANDING_HOLD_FRAMES: u32 = 14;
 pub const GROOM_HOLD_FRAMES: u32 = 45;
 const LOOM_ESCAPE_ACTIVATION_Q15: i32 = 5_200;
 const AUTHORED_BEHAVIOR_ACTIVATION_Q15: i32 = 4_600;
+const SPIKE_ALERT_THRESHOLD_PER_10K: u32 = 1_200;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -87,6 +96,9 @@ pub struct FrameSummary {
 pub struct ModelEngine {
     pub graph: Arc<ModelGraph>,
     pub state: ModelState,
+    behavior_telemetry: BehaviorTelemetryLedger,
+    behavior_telemetry_enabled: bool,
+    pub last_behavior_intent: BehaviorIntentSnapshot,
 }
 
 impl ModelEngine {
@@ -95,16 +107,21 @@ impl ModelEngine {
         let activation = (0..count)
             .map(|index| initial_activation(seed, index))
             .collect();
+        let state = ModelState {
+            frame: 0,
+            seed,
+            activation,
+            spikes: vec![0; count],
+            behavior: Behavior::Rest,
+            behavior_age_frames: 0,
+        };
+        let last_behavior_intent = behavior_intent_snapshot(&state, 0);
         Self {
             graph,
-            state: ModelState {
-                frame: 0,
-                seed,
-                activation,
-                spikes: vec![0; count],
-                behavior: Behavior::Rest,
-                behavior_age_frames: 0,
-            },
+            state,
+            behavior_telemetry: BehaviorTelemetryLedger::new(0),
+            behavior_telemetry_enabled: true,
+            last_behavior_intent,
         }
     }
 
@@ -114,7 +131,16 @@ impl ModelEngine {
         {
             return Err("checkpoint dimensions do not match graph".to_owned());
         }
-        Ok(Self { graph, state })
+        let complete_from_frame = state.frame;
+        let spike_count = state.spikes.iter().map(|value| *value as usize).sum();
+        let last_behavior_intent = behavior_intent_snapshot(&state, spike_count);
+        Ok(Self {
+            graph,
+            state,
+            behavior_telemetry: BehaviorTelemetryLedger::new(complete_from_frame),
+            behavior_telemetry_enabled: true,
+            last_behavior_intent,
+        })
     }
 
     pub fn empty_stimulus(&self) -> Vec<i32> {
@@ -163,12 +189,31 @@ impl ModelEngine {
             (self.state.activation.iter().map(|v| *v as i64).sum::<i64>()
                 / self.state.activation.len() as i64) as i32
         };
+        let intent = behavior_intent_snapshot(&self.state, spike_count);
         let next_behavior = modeled_behavior(&self.state, spike_count);
+        self.last_behavior_intent = intent;
         if next_behavior == self.state.behavior {
             self.state.behavior_age_frames += 1;
         } else {
+            let from_behavior = self.state.behavior;
+            let elapsed_frames = self.state.behavior_age_frames.saturating_add(1);
+            let pre_transition_state_digest = self.state.digest();
+            let reason = classify_transition_reason(from_behavior, next_behavior, &intent);
             self.state.behavior = next_behavior;
             self.state.behavior_age_frames = 0;
+            if self.behavior_telemetry_enabled {
+                let post_transition_state_digest = self.state.digest();
+                self.behavior_telemetry.record(BehaviorTransitionEvent::new(
+                    self.state.frame,
+                    from_behavior,
+                    next_behavior,
+                    elapsed_frames,
+                    reason,
+                    intent,
+                    pre_transition_state_digest,
+                    post_transition_state_digest,
+                ));
+            }
         }
         self.summary(spike_count, mean_activation_q15)
     }
@@ -181,6 +226,36 @@ impl ModelEngine {
             behavior: self.state.behavior,
             state_digest: self.state.digest(),
         }
+    }
+
+    pub fn set_behavior_telemetry_enabled(&mut self, enabled: bool) {
+        self.behavior_telemetry_enabled = enabled;
+    }
+
+    pub const fn behavior_telemetry_enabled(&self) -> bool {
+        self.behavior_telemetry_enabled
+    }
+
+    pub fn behavior_transition_events(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = &BehaviorTransitionEvent> {
+        self.behavior_telemetry.events()
+    }
+
+    pub fn latest_behavior_transition(&self) -> Option<&BehaviorTransitionEvent> {
+        self.behavior_telemetry.latest()
+    }
+
+    pub fn behavior_telemetry_snapshot(&self) -> BehaviorTelemetrySnapshot {
+        self.behavior_telemetry.snapshot(self.last_behavior_intent)
+    }
+
+    pub const fn behavior_telemetry_total_event_count(&self) -> u64 {
+        self.behavior_telemetry.total_event_count()
+    }
+
+    pub fn behavior_telemetry_stream_sha256(&self) -> &str {
+        self.behavior_telemetry.event_stream_sha256()
     }
 
     pub fn model_identity(&self) -> String {
@@ -242,6 +317,67 @@ pub fn model_noise(seed: u64, frame: u64, target: u32) -> u32 {
 fn initial_activation(seed: u64, index: usize) -> i32 {
     let h = mix64(seed ^ (index as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93));
     ((h & 0x0fff) as i32) - 2_048
+}
+
+fn behavior_intent_snapshot(state: &ModelState, spike_count: usize) -> BehaviorIntentSnapshot {
+    BehaviorIntentSnapshot {
+        schema_version: BEHAVIOR_TELEMETRY_SCHEMA_VERSION,
+        frame: state.frame,
+        current_behavior: state.behavior,
+        current_behavior_age_frames: state.behavior_age_frames,
+        spike_count: spike_count.min(u32::MAX as usize) as u32,
+        spike_rate_per_10k: (spike_count.saturating_mul(10_000) / state.activation.len().max(1))
+            .min(u32::MAX as usize) as u32,
+        spike_alert_threshold_per_10k: SPIKE_ALERT_THRESHOLD_PER_10K,
+        autonomous_schedule_slot: ((state.frame / 90) % 9) as u8,
+        loom_activation_q15: functional_population_activation(state, LOOM_POPULATION_OFFSET),
+        groom_activation_q15: functional_population_activation(state, GROOM_POPULATION_OFFSET),
+        alert_activation_q15: functional_population_activation(state, ALERT_POPULATION_OFFSET),
+        reverse_activation_q15: functional_population_activation(state, REVERSE_POPULATION_OFFSET),
+        walk_activation_q15: functional_population_activation(state, WALK_POPULATION_OFFSET),
+        loom_entry_threshold_q15: LOOM_ESCAPE_ACTIVATION_Q15,
+        authored_behavior_entry_threshold_q15: AUTHORED_BEHAVIOR_ACTIVATION_Q15,
+    }
+}
+
+fn classify_transition_reason(
+    from_behavior: Behavior,
+    to_behavior: Behavior,
+    intent: &BehaviorIntentSnapshot,
+) -> BehaviorTransitionReason {
+    if from_behavior == Behavior::PreEscape && to_behavior == Behavior::Flight {
+        BehaviorTransitionReason::PreEscapeCompleted
+    } else if from_behavior == Behavior::Flight && to_behavior == Behavior::Landing {
+        BehaviorTransitionReason::FlightCompleted
+    } else if from_behavior == Behavior::Landing && to_behavior == Behavior::Rest {
+        BehaviorTransitionReason::LandingCompleted
+    } else if to_behavior == Behavior::PreEscape
+        && intent.loom_activation_q15 >= LOOM_ESCAPE_ACTIVATION_Q15
+    {
+        BehaviorTransitionReason::LoomPopulationThreshold
+    } else if to_behavior == Behavior::Groom
+        && intent.groom_activation_q15 >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
+    {
+        BehaviorTransitionReason::GroomPopulationThreshold
+    } else if to_behavior == Behavior::Alert
+        && intent.alert_activation_q15 >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
+    {
+        BehaviorTransitionReason::AlertPopulationThreshold
+    } else if to_behavior == Behavior::Reverse
+        && intent.reverse_activation_q15 >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
+    {
+        BehaviorTransitionReason::ReversePopulationThreshold
+    } else if to_behavior == Behavior::Walk
+        && intent.walk_activation_q15 >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
+    {
+        BehaviorTransitionReason::WalkPopulationThreshold
+    } else if to_behavior == Behavior::Alert
+        && intent.spike_rate_per_10k > SPIKE_ALERT_THRESHOLD_PER_10K
+    {
+        BehaviorTransitionReason::SpikeRateThreshold
+    } else {
+        BehaviorTransitionReason::LegacyAutonomousSchedule
+    }
 }
 
 fn modeled_behavior(state: &ModelState, spike_count: usize) -> Behavior {
@@ -450,6 +586,62 @@ mod tests {
                 "{expected:?} population never reached its motor program"
             );
         }
+    }
+
+    #[test]
+    fn transition_telemetry_is_observational_and_deterministic() {
+        let graph = Arc::new(ModelGraph::synthetic(ModelTier::Demo4096, 14));
+        let mut first = ModelEngine::new(Arc::clone(&graph), 91);
+        let mut second = ModelEngine::new(Arc::clone(&graph), 91);
+        let mut disabled = ModelEngine::new(graph, 91);
+        disabled.set_behavior_telemetry_enabled(false);
+
+        for frame in 0..720_u64 {
+            let mut stimulus = first.empty_stimulus();
+            let phase = (frame / 90) % 8;
+            let offset = match phase {
+                1 => Some(WALK_POPULATION_OFFSET),
+                2 => Some(GROOM_POPULATION_OFFSET),
+                3 => Some(ALERT_POPULATION_OFFSET),
+                4 => Some(REVERSE_POPULATION_OFFSET),
+                5 if frame % 90 < 12 => Some(LOOM_POPULATION_OFFSET),
+                _ => None,
+            };
+            if let Some(offset) = offset {
+                for value in stimulus
+                    .iter_mut()
+                    .skip(offset)
+                    .step_by(FUNCTIONAL_POPULATION_COUNT)
+                {
+                    *value = 8_192;
+                }
+            }
+
+            let first_summary = first.step_cpu(StepInput {
+                stimulus_q15: &stimulus,
+            });
+            let second_summary = second.step_cpu(StepInput {
+                stimulus_q15: &stimulus,
+            });
+            let disabled_summary = disabled.step_cpu(StepInput {
+                stimulus_q15: &stimulus,
+            });
+            assert_eq!(first_summary, second_summary);
+            assert_eq!(first_summary, disabled_summary);
+            assert_eq!(first.state, second.state);
+            assert_eq!(first.state, disabled.state);
+        }
+
+        let first_snapshot = first.behavior_telemetry_snapshot();
+        let second_snapshot = second.behavior_telemetry_snapshot();
+        let disabled_snapshot = disabled.behavior_telemetry_snapshot();
+        assert_eq!(first_snapshot, second_snapshot);
+        assert!(first_snapshot.observational_only);
+        assert!(!first_snapshot.controller_semantics_changed);
+        assert!(first_snapshot.total_event_count > 0);
+        assert!(first_snapshot.retained_sequence_contiguous);
+        assert_eq!(disabled_snapshot.total_event_count, 0);
+        assert!(!disabled.behavior_telemetry_enabled());
     }
 
     #[test]

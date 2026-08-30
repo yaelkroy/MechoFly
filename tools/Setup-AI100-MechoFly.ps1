@@ -399,7 +399,16 @@ if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
     throw 'MechoFly self-test did not create its receipt.'
 }
 $Receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json
-if ($Receipt.status -ne 'PASS' -or -not $Receipt.live_state_unchanged -or
+if ($Receipt.schema_version -ne 7 -or
+    $Receipt.behavior_telemetry_schema_version -ne 1 -or
+    -not $Receipt.behavior_transition_telemetry_observational_only -or
+    -not $Receipt.behavior_transition_telemetry_deterministic -or
+    -not $Receipt.behavior_transition_telemetry_bounded -or
+    -not $Receipt.behavior_transition_sequence_contiguous -or
+    -not $Receipt.behavior_transition_reasons_complete -or
+    -not $Receipt.behavior_intent_snapshot_available -or
+    $Receipt.behavior_transition_event_count -le 0 -or
+    $Receipt.status -ne 'PASS' -or -not $Receipt.live_state_unchanged -or
     $Receipt.default_skin -ne 'firefly' -or -not $Receipt.firefly_skin_available -or
     -not $Receipt.cpu_without_gpu_supported -or -not $Receipt.reevaluation_control -or
     -not $Receipt.global_hotkey_contract_passed -or
