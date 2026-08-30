@@ -40,9 +40,9 @@ jobs:
           text = workflow.read_text(encoding='utf-8')
           start = "          python3 - <<'PY'\n"
           end = "\n          PY\n      - name: Format and inspect"
-          if text.count(start) != 1 or text.count(end) != 1:
-              raise SystemExit('cannot locate the staged N2 Python payload')
-          payload = text.split(start, 1)[1].split(end, 1)[0]
+          start_index = text.index(start) + len(start)
+          end_index = text.index(end, start_index)
+          payload = text[start_index:end_index]
           lines = []
           for line in payload.splitlines():
               if line.startswith('          '):
@@ -93,10 +93,11 @@ jobs:
       - name: Publish source-only N2 candidate
         shell: bash
         run: |
+          cp .github/workflows/windows.yml tools/N2-Windows-Workflow-Candidate.txt
+          git checkout -- .github/workflows/windows.yml
           git config user.name "Yael Demedetskaya"
           git config user.email "31790191+yaelkroy@users.noreply.github.com"
           git add \
-            .github/workflows/windows.yml \
             crates/mechofly-core/src/behavior_telemetry.rs \
             crates/mechofly-core/src/lib.rs \
             crates/mechofly-core/src/model.rs \
@@ -104,6 +105,7 @@ jobs:
             crates/mechofly-app/src/main.rs \
             crates/mechofly-app/src/brain_lab.rs \
             crates/mechofly-app/src/self_test.rs \
+            tools/N2-Windows-Workflow-Candidate.txt \
             tools/Setup-AI100-MechoFly.ps1
           git commit -m "N2: add observational behavior transition telemetry"
           git push origin HEAD:feat/behavior-transition-telemetry-rust-v9
