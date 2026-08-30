@@ -9,7 +9,7 @@ source = path.read_text(encoding="utf-8")
 old = '''    updated = text[: match.start()] + expanded + text[match.end() :]
     write(path, updated)
 '''
-new = r'''    expanded = expanded.replace("\\n", "\n")
+new = r'''    expanded = expanded.replace("\\\\n", "\\n")
     updated = text[: match.start()] + expanded + text[match.end() :]
     write(path, updated)
 '''
