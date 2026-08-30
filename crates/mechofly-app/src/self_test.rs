@@ -73,6 +73,15 @@ struct SelfTestReceipt {
     flight_vertical_pixels: f32,
     landing_descent_pixels: f32,
     landing_reached_surface: bool,
+    landing_first_step_pixels: f32,
+    landing_max_step_pixels: f32,
+    landing_completion_step_pixels: f32,
+    landing_to_rest_step_pixels: f32,
+    landing_refresh_rate_position_error_pixels: f32,
+    landing_refresh_rate_heading_error_radians: f32,
+    landing_refresh_rate_invariant: bool,
+    landing_position_continuous: bool,
+    teleport_detected: bool,
     two_dimensional_flight_motion: bool,
     separate_live_brain_and_brain_lab: bool,
     two_way_neuron_selection_sync: bool,
@@ -258,7 +267,7 @@ pub fn run(path: &Path) -> Result<(), String> {
     };
 
     let receipt = SelfTestReceipt {
-        schema_version: 5,
+        schema_version: 6,
         status: if comparison.receipt.live_state_unchanged
             && comparison.receipt.alternative_differs
             && live_before == live_after
@@ -335,6 +344,17 @@ pub fn run(path: &Path) -> Result<(), String> {
         flight_vertical_pixels: motion.flight_vertical_pixels,
         landing_descent_pixels: motion.landing_descent_pixels,
         landing_reached_surface: motion.landing_reached_surface,
+        landing_first_step_pixels: motion.landing_first_step_pixels,
+        landing_max_step_pixels: motion.landing_max_step_pixels,
+        landing_completion_step_pixels: motion.landing_completion_step_pixels,
+        landing_to_rest_step_pixels: motion.landing_to_rest_step_pixels,
+        landing_refresh_rate_position_error_pixels: motion
+            .landing_refresh_rate_position_error_pixels,
+        landing_refresh_rate_heading_error_radians: motion
+            .landing_refresh_rate_heading_error_radians,
+        landing_refresh_rate_invariant: motion.landing_refresh_rate_invariant,
+        landing_position_continuous: motion.landing_position_continuous,
+        teleport_detected: motion.teleport_detected,
         two_dimensional_flight_motion,
         separate_live_brain_and_brain_lab: true,
         two_way_neuron_selection_sync,

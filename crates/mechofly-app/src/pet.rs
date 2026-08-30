@@ -16,8 +16,7 @@ const WALK_SPEED_PIXELS_PER_SECOND: f32 = 1.85 / REFERENCE_TICK_SECONDS;
 const REVERSE_SPEED_PIXELS_PER_SECOND: f32 = -2.2 / REFERENCE_TICK_SECONDS;
 const ESCAPE_SPEED_PIXELS_PER_SECOND: f32 = 18.0 / REFERENCE_TICK_SECONDS;
 const FLIGHT_SPEED_PIXELS_PER_SECOND: f32 = 8.4 / REFERENCE_TICK_SECONDS;
-const LANDING_SPEED_PIXELS_PER_SECOND: f32 = 3.8 / REFERENCE_TICK_SECONDS;
-const LANDING_CONTACT_SPEED_PIXELS_PER_SECOND: f32 = 0.8 / REFERENCE_TICK_SECONDS;
+
 const NERVOUS_SPEED_PIXELS_PER_SECOND: f32 = 3.0 / REFERENCE_TICK_SECONDS;
 const LANDING_COMPLETION_SECONDS: f32 = 0.495;
 
@@ -67,6 +66,10 @@ pub struct PetMotion {
     pub animation_seconds: f32,
     pub behavior_age_seconds: f32,
     last_behavior: Behavior,
+    landing_start_position: Pos2,
+    landing_target_position: Pos2,
+    landing_start_heading: f32,
+    landing_active: bool,
     pub paused: bool,
     pub reduced_motion: bool,
 }
@@ -80,6 +83,10 @@ impl Default for PetMotion {
             animation_seconds: 0.0,
             behavior_age_seconds: 0.0,
             last_behavior: Behavior::Rest,
+            landing_start_position: Pos2::new(96.0, 640.0),
+            landing_target_position: Pos2::new(96.0, 640.0),
+            landing_start_heading: 0.0,
+            landing_active: false,
             paused: false,
             reduced_motion: false,
         }
@@ -97,9 +104,25 @@ impl PetMotion {
         cursor_position: Option<Pos2>,
     ) {
         let dt = dt.clamp(0.0, 0.1);
+        let width = screen_size.x.max(480.0);
+        let height = screen_size.y.max(320.0);
+        let left = screen_origin.x + 8.0;
+        let top = screen_origin.y + 8.0;
+        let right = (screen_origin.x + width - PET_WIDTH as f32 - 8.0).max(left);
+        let bottom = (screen_origin.y + height - PET_HEIGHT as f32 - 8.0).max(top);
+
         if behavior != self.last_behavior {
             self.last_behavior = behavior;
             self.behavior_age_seconds = 0.0;
+            if behavior == Behavior::Landing {
+                self.landing_start_position = self.screen_position;
+                self.landing_target_position =
+                    Pos2::new(self.screen_position.x.clamp(left, right), bottom);
+                self.landing_start_heading = self.heading_radians;
+                self.landing_active = true;
+            } else {
+                self.landing_active = false;
+            }
         }
         if self.paused || held {
             return;
@@ -107,12 +130,6 @@ impl PetMotion {
         self.animation_seconds += dt;
         self.behavior_age_seconds += dt;
 
-        let width = screen_size.x.max(480.0);
-        let height = screen_size.y.max(320.0);
-        let left = screen_origin.x + 8.0;
-        let top = screen_origin.y + 8.0;
-        let right = (screen_origin.x + width - PET_WIDTH as f32 - 8.0).max(left);
-        let bottom = (screen_origin.y + height - PET_HEIGHT as f32 - 8.0).max(top);
         let center = self.screen_position + Vec2::new(PET_WIDTH as f32, PET_HEIGHT as f32) * 0.5;
         if behavior == Behavior::PreEscape
             && let Some(cursor) = cursor_position
@@ -145,13 +162,25 @@ impl PetMotion {
                 FLIGHT_SPEED_PIXELS_PER_SECOND
             }
             Behavior::Landing => {
-                let descent = (bottom - self.screen_position.y).max(0.0);
-                if descent > 12.0 {
-                    self.heading_radians = PI * 0.5;
-                    LANDING_SPEED_PIXELS_PER_SECOND
-                } else {
-                    LANDING_CONTACT_SPEED_PIXELS_PER_SECOND
+                if !self.landing_active {
+                    self.landing_start_position = self.screen_position;
+                    self.landing_target_position =
+                        Pos2::new(self.screen_position.x.clamp(left, right), bottom);
+                    self.landing_start_heading = self.heading_radians;
+                    self.landing_active = true;
                 }
+                let progress =
+                    (self.behavior_age_seconds / LANDING_COMPLETION_SECONDS).clamp(0.0, 1.0);
+                let eased = smootherstep(progress);
+                self.screen_position = lerp_position(
+                    self.landing_start_position,
+                    self.landing_target_position,
+                    eased,
+                );
+                let heading_delta = wrapped_angle(PI * 0.5 - self.landing_start_heading);
+                self.heading_radians =
+                    wrapped_angle(self.landing_start_heading + heading_delta * eased);
+                0.0
             }
             Behavior::Alert => {
                 self.heading_radians = wrapped_angle(
@@ -165,11 +194,13 @@ impl PetMotion {
             Behavior::Rest | Behavior::Quiet | Behavior::Groom => 0.0,
         };
 
-        self.screen_position +=
-            Vec2::angled(self.heading_radians) * self.speed_pixels_per_second * dt;
+        if behavior != Behavior::Landing {
+            self.screen_position +=
+                Vec2::angled(self.heading_radians) * self.speed_pixels_per_second * dt;
+        }
         if behavior == Behavior::Landing && self.behavior_age_seconds >= LANDING_COMPLETION_SECONDS
         {
-            self.screen_position.y = bottom;
+            self.screen_position = self.landing_target_position;
             self.heading_radians = PI * 0.5;
             self.speed_pixels_per_second = 0.0;
         }
@@ -208,6 +239,18 @@ fn wrapped_angle(angle: f32) -> f32 {
     (angle + PI).rem_euclid(PI * 2.0) - PI
 }
 
+fn smootherstep(progress: f32) -> f32 {
+    let progress = progress.clamp(0.0, 1.0);
+    progress * progress * progress * (progress * (progress * 6.0 - 15.0) + 10.0)
+}
+
+fn lerp_position(start: Pos2, end: Pos2, progress: f32) -> Pos2 {
+    Pos2::new(
+        start.x + (end.x - start.x) * progress,
+        start.y + (end.y - start.y) * progress,
+    )
+}
+
 #[derive(Clone, Debug)]
 pub struct MotionSelfTest {
     pub passed: bool,
@@ -218,6 +261,15 @@ pub struct MotionSelfTest {
     pub flight_vertical_pixels: f32,
     pub landing_descent_pixels: f32,
     pub landing_reached_surface: bool,
+    pub landing_first_step_pixels: f32,
+    pub landing_max_step_pixels: f32,
+    pub landing_completion_step_pixels: f32,
+    pub landing_to_rest_step_pixels: f32,
+    pub landing_refresh_rate_position_error_pixels: f32,
+    pub landing_refresh_rate_heading_error_radians: f32,
+    pub landing_refresh_rate_invariant: bool,
+    pub landing_position_continuous: bool,
+    pub teleport_detected: bool,
 }
 
 pub fn run_motion_self_test() -> MotionSelfTest {
@@ -263,13 +315,56 @@ pub fn run_motion_self_test() -> MotionSelfTest {
     let flight_horizontal_pixels = (airborne.screen_position.x - flight_start.x).abs();
     let flight_vertical_pixels = (airborne.screen_position.y - flight_start.y).abs();
 
-    airborne.screen_position.y = bottom - 48.0;
-    let landing_start_y = airborne.screen_position.y;
-    for _ in 0..30 {
+    airborne.screen_position.y = bottom - 360.0;
+    airborne.heading_radians = -0.7;
+    let landing_start = airborne.screen_position;
+    let mut landing_previous = landing_start;
+    let mut landing_first_step_pixels = 0.0_f32;
+    let mut landing_max_step_pixels = 0.0_f32;
+    let mut landing_completion_step_pixels = 0.0_f32;
+    for frame in 1..=30 {
         airborne.advance(1.0 / 60.0, Behavior::Landing, origin, screen, false, None);
+        let step = airborne.screen_position.distance(landing_previous);
+        if frame == 1 {
+            landing_first_step_pixels = step;
+        }
+        if frame == 30 {
+            landing_completion_step_pixels = step;
+        }
+        landing_max_step_pixels = landing_max_step_pixels.max(step);
+        landing_previous = airborne.screen_position;
     }
-    let landing_descent_pixels = airborne.screen_position.y - landing_start_y;
+    let landing_descent_pixels = airborne.screen_position.y - landing_start.y;
     let landing_reached_surface = (airborne.screen_position.y - bottom).abs() < 0.01;
+    let touchdown = airborne.screen_position;
+    airborne.advance(1.0 / 60.0, Behavior::Rest, origin, screen, false, None);
+    let landing_to_rest_step_pixels = airborne.screen_position.distance(touchdown);
+
+    let mut landing_60_hz = PetMotion {
+        screen_position: Pos2::new(760.0, bottom - 360.0),
+        heading_radians: -0.7,
+        ..PetMotion::default()
+    };
+    let mut landing_120_hz = landing_60_hz.clone();
+    for _ in 0..30 {
+        landing_60_hz.advance(1.0 / 60.0, Behavior::Landing, origin, screen, false, None);
+    }
+    for _ in 0..60 {
+        landing_120_hz.advance(1.0 / 120.0, Behavior::Landing, origin, screen, false, None);
+    }
+    let landing_refresh_rate_position_error_pixels = landing_60_hz
+        .screen_position
+        .distance(landing_120_hz.screen_position);
+    let landing_refresh_rate_heading_error_radians =
+        wrapped_angle(landing_60_hz.heading_radians - landing_120_hz.heading_radians).abs();
+    let landing_refresh_rate_invariant = landing_refresh_rate_position_error_pixels <= 0.01
+        && landing_refresh_rate_heading_error_radians <= 0.001;
+
+    let landing_position_continuous = landing_first_step_pixels <= 2.5
+        && landing_max_step_pixels <= 25.0
+        && landing_completion_step_pixels <= 1.0
+        && landing_to_rest_step_pixels <= 0.01;
+    let teleport_detected = !landing_position_continuous;
 
     MotionSelfTest {
         passed: walking_translation_pixels > 100.0
@@ -277,8 +372,11 @@ pub fn run_motion_self_test() -> MotionSelfTest {
             && flight_path_pixels > 900.0
             && flight_horizontal_pixels > 150.0
             && flight_vertical_pixels > 100.0
-            && landing_descent_pixels > 45.0
-            && landing_reached_surface,
+            && landing_descent_pixels > 350.0
+            && landing_reached_surface
+            && landing_position_continuous
+            && landing_refresh_rate_invariant
+            && !teleport_detected,
         walking_translation_pixels,
         escape_translation_pixels,
         flight_path_pixels,
@@ -286,6 +384,15 @@ pub fn run_motion_self_test() -> MotionSelfTest {
         flight_vertical_pixels,
         landing_descent_pixels,
         landing_reached_surface,
+        landing_first_step_pixels,
+        landing_max_step_pixels,
+        landing_completion_step_pixels,
+        landing_to_rest_step_pixels,
+        landing_refresh_rate_position_error_pixels,
+        landing_refresh_rate_heading_error_radians,
+        landing_refresh_rate_invariant,
+        landing_position_continuous,
+        teleport_detected,
     }
 }
 
@@ -1913,6 +2020,31 @@ mod tests {
     }
 
     #[test]
+    fn landing_is_continuous_from_flight_through_touchdown_and_rest() {
+        let result = run_motion_self_test();
+        assert!(result.landing_position_continuous, "{result:#?}");
+        assert!(!result.teleport_detected, "{result:#?}");
+        assert!(result.landing_first_step_pixels <= 2.5, "{result:#?}");
+        assert!(result.landing_max_step_pixels <= 25.0, "{result:#?}");
+        assert!(result.landing_completion_step_pixels <= 1.0, "{result:#?}");
+        assert!(result.landing_to_rest_step_pixels <= 0.01, "{result:#?}");
+    }
+
+    #[test]
+    fn landing_interpolation_is_refresh_rate_invariant() {
+        let result = run_motion_self_test();
+        assert!(result.landing_refresh_rate_invariant, "{result:#?}");
+        assert!(
+            result.landing_refresh_rate_position_error_pixels <= 0.01,
+            "{result:#?}"
+        );
+        assert!(
+            result.landing_refresh_rate_heading_error_radians <= 0.001,
+            "{result:#?}"
+        );
+    }
+
+    #[test]
     fn prism_uses_the_reference_desktop_scale() {
         let mut pixels = vec![0; PET_WIDTH * PET_HEIGHT * 4];
         render_pet_bgra(&mut pixels, Skin::Firefly, Behavior::Rest, 0.0, 0.0, false);
@@ -2044,11 +2176,13 @@ mod tests {
                 record(&motion, Behavior::Flight, elapsed);
             }
         }
-        for _ in 0..30 {
+        for frame in 1_u32..=30 {
             motion.advance(1.0 / 60.0, Behavior::Landing, origin, screen, false, None);
             elapsed += 1.0 / 60.0;
+            if frame.is_multiple_of(5) {
+                record(&motion, Behavior::Landing, elapsed);
+            }
         }
-        record(&motion, Behavior::Landing, elapsed);
         for _ in 0..90 {
             motion.advance(1.0 / 60.0, Behavior::Groom, origin, screen, false, None);
             elapsed += 1.0 / 60.0;
@@ -2082,11 +2216,13 @@ mod tests {
                 record(&motion, Behavior::Flight, elapsed);
             }
         }
-        for _ in 0..30 {
+        for frame in 1_u32..=30 {
             motion.advance(1.0 / 60.0, Behavior::Landing, origin, screen, false, None);
             elapsed += 1.0 / 60.0;
+            if frame.is_multiple_of(5) {
+                record(&motion, Behavior::Landing, elapsed);
+            }
         }
-        record(&motion, Behavior::Landing, elapsed);
         for _ in 0..90 {
             motion.advance(1.0 / 60.0, Behavior::Groom, origin, screen, false, None);
             elapsed += 1.0 / 60.0;

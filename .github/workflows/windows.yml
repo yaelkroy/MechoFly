@@ -128,7 +128,7 @@ jobs:
           }
           if ($process.ExitCode -ne 0) { throw "Self-test exited $($process.ExitCode)" }
           $receipt = Get-Content .\artifacts\self-test.json -Raw | ConvertFrom-Json
-          if ($receipt.schema_version -ne 5) { throw 'Self-test receipt schema is stale.' }
+          if ($receipt.schema_version -ne 6) { throw 'Self-test receipt schema is stale.' }
           if ($receipt.status -ne 'PASS') { throw 'Self-test receipt failed.' }
           if (-not $receipt.live_state_unchanged) { throw 'Preview mutated live state.' }
           if (-not $receipt.alternative_differs) { throw 'Alternative trajectory did not differ.' }
@@ -163,7 +163,16 @@ jobs:
           if ($receipt.escape_translation_pixels -le 90) { throw 'Escape burst is not visible.' }
           if ($receipt.flight_path_pixels -le 900) { throw 'Full-duration flight path is too short.' }
           if ($receipt.flight_horizontal_pixels -le 150 -or $receipt.flight_vertical_pixels -le 100) { throw 'Full-duration flight did not roam in both dimensions.' }
-          if ($receipt.landing_descent_pixels -le 45 -or -not $receipt.landing_reached_surface) { throw 'Landing did not end in a bounded touchdown.' }
+          if ($receipt.landing_descent_pixels -le 350 -or -not $receipt.landing_reached_surface) { throw 'Long-descent landing did not reach its bounded touchdown.' }
+          if (-not $receipt.landing_position_continuous) { throw 'Flight, landing, and post-touchdown positions are discontinuous.' }
+          if ($receipt.teleport_detected) { throw 'A teleport-like landing step was detected.' }
+          if ($receipt.landing_first_step_pixels -gt 2.5) { throw 'Landing entry contains a visible position discontinuity.' }
+          if ($receipt.landing_max_step_pixels -gt 25.0) { throw 'Landing interpolation contains an excessive frame step.' }
+          if ($receipt.landing_completion_step_pixels -gt 1.0) { throw 'Landing completion still snaps to the surface.' }
+          if ($receipt.landing_to_rest_step_pixels -gt 0.01) { throw 'Post-touchdown rest did not inherit the touchdown position.' }
+          if (-not $receipt.landing_refresh_rate_invariant) { throw 'Landing changed across rendering refresh rates.' }
+          if ($receipt.landing_refresh_rate_position_error_pixels -gt 0.01) { throw 'Landing position differs across refresh rates.' }
+          if ($receipt.landing_refresh_rate_heading_error_radians -gt 0.001) { throw 'Landing heading differs across refresh rates.' }
           if (-not $receipt.two_dimensional_flight_motion) { throw 'Flight remained one-dimensional.' }
           if (-not $receipt.separate_live_brain_and_brain_lab) { throw 'Live Brain and Brain Lab were not separated.' }
           if (-not $receipt.two_way_neuron_selection_sync) { throw 'Live Brain and Brain Lab neuron selection did not synchronize both ways.' }
