@@ -1,0 +1,27 @@
+name: Repair N2 staging verifier with valid workflow
+
+on:
+  push:
+    branches: ["feat/behavior-transition-telemetry-rust-v9"]
+    paths: [".github/workflows/fix-n2-staging-verifier-v2.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Repair verifier and publish
+        shell: bash
+        run: |
+          python3 -c 'from pathlib import Path; import base64; p=Path(".github/workflows/apply-n2-transition-telemetry.yml"); s=p.read_text(encoding="utf-8"); old=base64.b64decode("ICAgICAgLSBuYW1lOiBWZXJpZnkgZXhhY3QgTjAgcGFyZW50CiAgICAgICAgc2hlbGw6IGJhc2gKICAgICAgICBydW46IHwKICAgICAgICAgIHRlc3QgIiQoZ2l0IHJldi1wYXJzZSBIRUFEXikiID0gImM4MGQ4MjdhMGQ3ZWFlOTYzNmJiZjAyYzI5MTZiNTk0NmY0MjMxOWUiCiAgICAgICAgICB0ZXN0ICIkKGdpdCBzaG93IC1zIC0tZm9ybWF0PSVUIEhFQUReKSIgPSAiYzRjNTk5NzBhZjZkYmUwNDQ5YTAyZTkxNjU4MGRlZGYwNmVmYWQxZCIKICAgICAgICAgIHRlc3QgLXogIiQoZ2l0IHN0YXR1cyAtLXBvcmNlbGFpbj12MSAtLXVudHJhY2tlZC1maWxlcz1hbGwpIgo=").decode(); new=base64.b64decode("ICAgICAgLSBuYW1lOiBWZXJpZnkgZXhhY3QgTjAgcGFyZW50CiAgICAgICAgc2hlbGw6IGJhc2gKICAgICAgICBydW46IHwKICAgICAgICAgIGJhc2U9ImM4MGQ4MjdhMGQ3ZWFlOTYzNmJiZjAyYzI5MTZiNTk0NmY0MjMxOWUiCiAgICAgICAgICB0ZXN0ICIkKGdpdCBzaG93IC1zIC0tZm9ybWF0PSVUICIkYmFzZSIpIiA9ICJjNGM1OTk3MGFmNmRiZTA0NDlhMDJlOTE2NTgwZGVkZjA2ZWZhZDFkIgogICAgICAgICAgZ2l0IG1lcmdlLWJhc2UgLS1pcy1hbmNlc3RvciAiJGJhc2UiIEhFQUQKICAgICAgICAgIG1hcGZpbGUgLXQgY2hhbmdlZCA8IDwoZ2l0IGRpZmYgLS1uYW1lLW9ubHkgIiRiYXNlIi4uSEVBRCkKICAgICAgICAgIHRlc3QgIiR7I2NoYW5nZWRbQF19IiAtZXEgMQogICAgICAgICAgdGVzdCAiJHtjaGFuZ2VkWzBdfSIgPSAiLmdpdGh1Yi93b3JrZmxvd3MvYXBwbHktbjItdHJhbnNpdGlvbi10ZWxlbWV0cnkueW1sIgogICAgICAgICAgdGVzdCAteiAiJChnaXQgc3RhdHVzIC0tcG9yY2VsYWluPXYxIC0tdW50cmFja2VkLWZpbGVzPWFsbCkiCg==").decode(); assert s.count(old)==1, "expected one stale verifier block"; p.write_text(s.replace(old,new,1), encoding="utf-8", newline="\n")'
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm .github/workflows/fix-n2-staging-verifier.yml .github/workflows/fix-n2-staging-verifier-v2.yml
+          git add .github/workflows/apply-n2-transition-telemetry.yml
+          git commit -m "Repair N2 staging verifier with valid workflow"
+          git push origin HEAD:feat/behavior-transition-telemetry-rust-v9
