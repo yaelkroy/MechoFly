@@ -5,11 +5,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     MODEL_VERSION,
+    behavior_intent::{BehaviorContext, BehaviorIntentBuilder, BehaviorIntentSnapshot},
+    behavior_selection::LegacyBehaviorSelector,
     behavior_telemetry::{
-        BEHAVIOR_TELEMETRY_SCHEMA_VERSION, BehaviorIntentSnapshot, BehaviorTelemetryLedger,
-        BehaviorTelemetrySnapshot, BehaviorTransitionEvent, BehaviorTransitionReason,
+        BehaviorTelemetryLedger, BehaviorTelemetrySnapshot, BehaviorTransitionEvent,
     },
     graph::{ModelGraph, mix64},
+    neural_evidence::NeuralEvidence,
     provenance::sha256_hex,
 };
 
@@ -27,9 +29,6 @@ pub const ESCAPE_HOLD_FRAMES: u32 = 5;
 pub const FLIGHT_HOLD_FRAMES: u32 = 120;
 pub const LANDING_HOLD_FRAMES: u32 = 14;
 pub const GROOM_HOLD_FRAMES: u32 = 45;
-const LOOM_ESCAPE_ACTIVATION_Q15: i32 = 5_200;
-const AUTHORED_BEHAVIOR_ACTIVATION_Q15: i32 = 4_600;
-const SPIKE_ALERT_THRESHOLD_PER_10K: u32 = 1_200;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -115,7 +114,14 @@ impl ModelEngine {
             behavior: Behavior::Rest,
             behavior_age_frames: 0,
         };
-        let last_behavior_intent = behavior_intent_snapshot(&state, 0);
+        let evidence = NeuralEvidence::collect(state.frame, &state.activation, 0);
+        let last_behavior_intent = BehaviorIntentBuilder::build(
+            &evidence,
+            BehaviorContext {
+                current_behavior: state.behavior,
+                current_behavior_age_frames: state.behavior_age_frames,
+            },
+        );
         Self {
             graph,
             state,
@@ -133,7 +139,14 @@ impl ModelEngine {
         }
         let complete_from_frame = state.frame;
         let spike_count = state.spikes.iter().map(|value| *value as usize).sum();
-        let last_behavior_intent = behavior_intent_snapshot(&state, spike_count);
+        let evidence = NeuralEvidence::collect(state.frame, &state.activation, spike_count);
+        let last_behavior_intent = BehaviorIntentBuilder::build(
+            &evidence,
+            BehaviorContext {
+                current_behavior: state.behavior,
+                current_behavior_age_frames: state.behavior_age_frames,
+            },
+        );
         Ok(Self {
             graph,
             state,
@@ -183,14 +196,18 @@ impl ModelEngine {
         self.state.spikes = spikes;
         self.state.frame += 1;
         let spike_count = self.state.spikes.iter().map(|value| *value as usize).sum();
-        let mean_activation_q15 = if self.state.activation.is_empty() {
-            0
-        } else {
-            (self.state.activation.iter().map(|v| *v as i64).sum::<i64>()
-                / self.state.activation.len() as i64) as i32
-        };
-        let intent = behavior_intent_snapshot(&self.state, spike_count);
-        let next_behavior = modeled_behavior(&self.state, spike_count);
+        let evidence =
+            NeuralEvidence::collect(self.state.frame, &self.state.activation, spike_count);
+        let mean_activation_q15 = evidence.mean_activation_q15;
+        let intent = BehaviorIntentBuilder::build(
+            &evidence,
+            BehaviorContext {
+                current_behavior: self.state.behavior,
+                current_behavior_age_frames: self.state.behavior_age_frames,
+            },
+        );
+        let decision = LegacyBehaviorSelector::select(&intent);
+        let next_behavior = decision.behavior;
         self.last_behavior_intent = intent;
         if next_behavior == self.state.behavior {
             self.state.behavior_age_frames += 1;
@@ -198,7 +215,9 @@ impl ModelEngine {
             let from_behavior = self.state.behavior;
             let elapsed_frames = self.state.behavior_age_frames.saturating_add(1);
             let pre_transition_state_digest = self.state.digest();
-            let reason = classify_transition_reason(from_behavior, next_behavior, &intent);
+            let reason = decision
+                .transition_reason
+                .expect("a changed behavior must carry its transition reason");
             self.state.behavior = next_behavior;
             self.state.behavior_age_frames = 0;
             if self.behavior_telemetry_enabled {
@@ -319,147 +338,22 @@ fn initial_activation(seed: u64, index: usize) -> i32 {
     ((h & 0x0fff) as i32) - 2_048
 }
 
-fn behavior_intent_snapshot(state: &ModelState, spike_count: usize) -> BehaviorIntentSnapshot {
-    BehaviorIntentSnapshot {
-        schema_version: BEHAVIOR_TELEMETRY_SCHEMA_VERSION,
-        frame: state.frame,
-        current_behavior: state.behavior,
-        current_behavior_age_frames: state.behavior_age_frames,
-        spike_count: spike_count.min(u32::MAX as usize) as u32,
-        spike_rate_per_10k: (spike_count.saturating_mul(10_000) / state.activation.len().max(1))
-            .min(u32::MAX as usize) as u32,
-        spike_alert_threshold_per_10k: SPIKE_ALERT_THRESHOLD_PER_10K,
-        autonomous_schedule_slot: ((state.frame / 90) % 9) as u8,
-        loom_activation_q15: functional_population_activation(state, LOOM_POPULATION_OFFSET),
-        groom_activation_q15: functional_population_activation(state, GROOM_POPULATION_OFFSET),
-        alert_activation_q15: functional_population_activation(state, ALERT_POPULATION_OFFSET),
-        reverse_activation_q15: functional_population_activation(state, REVERSE_POPULATION_OFFSET),
-        walk_activation_q15: functional_population_activation(state, WALK_POPULATION_OFFSET),
-        loom_entry_threshold_q15: LOOM_ESCAPE_ACTIVATION_Q15,
-        authored_behavior_entry_threshold_q15: AUTHORED_BEHAVIOR_ACTIVATION_Q15,
-    }
-}
-
-fn classify_transition_reason(
-    from_behavior: Behavior,
-    to_behavior: Behavior,
-    intent: &BehaviorIntentSnapshot,
-) -> BehaviorTransitionReason {
-    if from_behavior == Behavior::PreEscape && to_behavior == Behavior::Flight {
-        BehaviorTransitionReason::PreEscapeCompleted
-    } else if from_behavior == Behavior::Flight && to_behavior == Behavior::Landing {
-        BehaviorTransitionReason::FlightCompleted
-    } else if from_behavior == Behavior::Landing && to_behavior == Behavior::Rest {
-        BehaviorTransitionReason::LandingCompleted
-    } else if to_behavior == Behavior::PreEscape
-        && intent.loom_activation_q15 >= LOOM_ESCAPE_ACTIVATION_Q15
-    {
-        BehaviorTransitionReason::LoomPopulationThreshold
-    } else if to_behavior == Behavior::Groom
-        && intent.groom_activation_q15 >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
-    {
-        BehaviorTransitionReason::GroomPopulationThreshold
-    } else if to_behavior == Behavior::Alert
-        && intent.alert_activation_q15 >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
-    {
-        BehaviorTransitionReason::AlertPopulationThreshold
-    } else if to_behavior == Behavior::Reverse
-        && intent.reverse_activation_q15 >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
-    {
-        BehaviorTransitionReason::ReversePopulationThreshold
-    } else if to_behavior == Behavior::Walk
-        && intent.walk_activation_q15 >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
-    {
-        BehaviorTransitionReason::WalkPopulationThreshold
-    } else if to_behavior == Behavior::Alert
-        && intent.spike_rate_per_10k > SPIKE_ALERT_THRESHOLD_PER_10K
-    {
-        BehaviorTransitionReason::SpikeRateThreshold
-    } else {
-        BehaviorTransitionReason::LegacyAutonomousSchedule
-    }
-}
-
-fn modeled_behavior(state: &ModelState, spike_count: usize) -> Behavior {
-    match state.behavior {
-        Behavior::PreEscape if state.behavior_age_frames < ESCAPE_HOLD_FRAMES => {
-            return Behavior::PreEscape;
-        }
-        Behavior::PreEscape => return Behavior::Flight,
-        Behavior::Flight if state.behavior_age_frames < FLIGHT_HOLD_FRAMES => {
-            return Behavior::Flight;
-        }
-        Behavior::Flight => return Behavior::Landing,
-        Behavior::Landing if state.behavior_age_frames < LANDING_HOLD_FRAMES => {
-            return Behavior::Landing;
-        }
-        Behavior::Landing => return Behavior::Rest,
-        _ => {}
-    }
-
-    let loom_activation = functional_population_activation(state, LOOM_POPULATION_OFFSET);
-    if loom_activation >= LOOM_ESCAPE_ACTIVATION_Q15 {
-        return Behavior::PreEscape;
-    }
-
-    if state.behavior == Behavior::Groom && state.behavior_age_frames < GROOM_HOLD_FRAMES {
-        return Behavior::Groom;
-    }
-
-    // These are bounded authored inputs to modeled functional populations,
-    // not presentation-only pose switches. The model must cross the same
-    // activation boundary before the corresponding motor program is exposed.
-    if functional_population_activation(state, GROOM_POPULATION_OFFSET)
-        >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
-    {
-        return Behavior::Groom;
-    }
-    if functional_population_activation(state, ALERT_POPULATION_OFFSET)
-        >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
-    {
-        return Behavior::Alert;
-    }
-    if functional_population_activation(state, REVERSE_POPULATION_OFFSET)
-        >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
-    {
-        return Behavior::Reverse;
-    }
-    if functional_population_activation(state, WALK_POPULATION_OFFSET)
-        >= AUTHORED_BEHAVIOR_ACTIVATION_Q15
-    {
-        return Behavior::Walk;
-    }
-
-    let rate_per_10k = spike_count.saturating_mul(10_000) / state.activation.len().max(1);
-    if rate_per_10k > 1_200 {
-        Behavior::Alert
-    } else {
-        match (state.frame / 90) % 9 {
-            0 => Behavior::Rest,
-            1..=3 => Behavior::Walk,
-            4 => Behavior::Groom,
-            5 | 6 => Behavior::Walk,
-            7 => Behavior::Quiet,
-            _ => Behavior::Reverse,
-        }
-    }
-}
-
-fn functional_population_activation(state: &ModelState, offset: usize) -> i32 {
-    state
-        .activation
-        .iter()
-        .skip(offset)
-        .step_by(FUNCTIONAL_POPULATION_COUNT)
-        .copied()
-        .max()
-        .unwrap_or(ACTIVATION_MIN)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::ModelTier;
+    use crate::{behavior_intent::LOOM_ESCAPE_ACTIVATION_Q15, graph::ModelTier};
+
+    fn select_state(state: &ModelState, spike_count: usize) -> Behavior {
+        let evidence = NeuralEvidence::collect(state.frame, &state.activation, spike_count);
+        let intent = BehaviorIntentBuilder::build(
+            &evidence,
+            BehaviorContext {
+                current_behavior: state.behavior,
+                current_behavior_age_frames: state.behavior_age_frames,
+            },
+        );
+        LegacyBehaviorSelector::select(&intent).behavior
+    }
 
     #[test]
     fn identical_engines_remain_identical() {
@@ -534,21 +428,21 @@ mod tests {
 
         state.behavior = Behavior::PreEscape;
         state.behavior_age_frames = ESCAPE_HOLD_FRAMES - 1;
-        assert_eq!(modeled_behavior(&state, 0), Behavior::PreEscape);
+        assert_eq!(select_state(&state, 0), Behavior::PreEscape);
         state.behavior_age_frames = ESCAPE_HOLD_FRAMES;
-        assert_eq!(modeled_behavior(&state, 0), Behavior::Flight);
+        assert_eq!(select_state(&state, 0), Behavior::Flight);
 
         state.behavior = Behavior::Flight;
         state.behavior_age_frames = FLIGHT_HOLD_FRAMES - 1;
-        assert_eq!(modeled_behavior(&state, 0), Behavior::Flight);
+        assert_eq!(select_state(&state, 0), Behavior::Flight);
         state.behavior_age_frames = FLIGHT_HOLD_FRAMES;
-        assert_eq!(modeled_behavior(&state, 0), Behavior::Landing);
+        assert_eq!(select_state(&state, 0), Behavior::Landing);
 
         state.behavior = Behavior::Landing;
         state.behavior_age_frames = LANDING_HOLD_FRAMES - 1;
-        assert_eq!(modeled_behavior(&state, 0), Behavior::Landing);
+        assert_eq!(select_state(&state, 0), Behavior::Landing);
         state.behavior_age_frames = LANDING_HOLD_FRAMES;
-        assert_eq!(modeled_behavior(&state, 0), Behavior::Rest);
+        assert_eq!(select_state(&state, 0), Behavior::Rest);
 
         assert_eq!((ESCAPE_HOLD_FRAMES + 1) * crate::MODEL_STEP_MS, 198);
         assert_eq!((FLIGHT_HOLD_FRAMES + 1) * crate::MODEL_STEP_MS, 3_993);
@@ -650,7 +544,7 @@ mod tests {
         let mut state = ModelEngine::new(graph, 11).state;
         state.behavior = Behavior::Groom;
         state.behavior_age_frames = GROOM_HOLD_FRAMES - 1;
-        assert_eq!(modeled_behavior(&state, 0), Behavior::Groom);
+        assert_eq!(select_state(&state, 0), Behavior::Groom);
 
         for value in state
             .activation
@@ -660,7 +554,7 @@ mod tests {
         {
             *value = LOOM_ESCAPE_ACTIVATION_Q15;
         }
-        assert_eq!(modeled_behavior(&state, 0), Behavior::PreEscape);
+        assert_eq!(select_state(&state, 0), Behavior::PreEscape);
         let recorded_dwell_frames = std::hint::black_box(GROOM_HOLD_FRAMES);
         assert!((recorded_dwell_frames + 1) * crate::MODEL_STEP_MS >= 1_500);
     }
