@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - name: Verify only staging workflows differ from N0
+      - name: Verify N0 ancestry and staging-only prestate
         shell: bash
         run: |
           base="c80d827a0d7eae9636bbf02c2916b5946f42319e"
@@ -26,53 +26,14 @@ jobs:
           for path in "${changed[@]}"; do
             case "$path" in
               .github/workflows/*) ;;
+              tools/Stage-N2-Transition-Telemetry.py) ;;
               *) echo "unexpected pre-N2 source change: $path" >&2; exit 1 ;;
             esac
           done
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
-      - name: Extract and execute the staged N2 patch
+      - name: Apply observational transition telemetry
         shell: bash
-        run: |
-          python3 - <<'PY'
-          import base64
-          from pathlib import Path
-
-          workflow = Path('.github/workflows/apply-n2-transition-telemetry.yml')
-          text = workflow.read_text(encoding='utf-8')
-          start = "          python3 - <<'PY'\n"
-          end = "\n          PY\n      - name: Format and inspect"
-          start_index = text.index(start) + len(start)
-          end_index = text.index(end, start_index)
-          payload = text[start_index:end_index]
-          lines = []
-          for line in payload.splitlines():
-              lines.append(line[10:] if line.startswith('          ') else line)
-          script = '\n'.join(lines) + '\n'
-
-          def decoded(value):
-              return base64.b64decode(value).decode('utf-8')
-
-          def replace_patcher_block(source, start_marker, end_marker, replacement):
-              left = source.index(start_marker)
-              right = source.index(end_marker, left)
-              return source[:left] + replacement + source[right:]
-
-          triple = '"' * 3
-          groom_start = 'replace_once(\n    self_test,\n    ' + triple + '    let grooming_substate_timeline'
-          receipt_start = 'replace_once(\n    self_test,\n    ' + triple + '    let receipt = SelfTestReceipt'
-          pass_start = 'replace_once(\n    self_test,\n    ' + triple + '            && two_way_neuron_selection_sync'
-          fields_start = 'replace_once(\n    self_test,\n    ' + triple + '        behavior_controller_authoritative:'
-
-          script = replace_patcher_block(script, groom_start, receipt_start, decoded('cmVwbGFjZV9yZWdleF9vbmNlKAogICAgc2VsZl90ZXN0LAogICAgcicoICAgIGxldCBncm9vbWluZ19zdWJzdGF0ZV90aW1lbGluZSA9IGdyb29taW5nX3Byb2dyYW1fc3Vic3RhdGVzXC5pdGVyXChcKVwubWFwXChTdHJpbmc6OmFzX3N0clwpXC5lcVwoXFsuKj8gICAgXF1cKTtcbikoXG4gICAgI1xbY2ZnXCh3aW5kb3dzXClcXSknLAogICAgcidcMSAgICBsZXQgYmVoYXZpb3JfdGVsZW1ldHJ5ID0gcnVuX2JlaGF2aW9yX3RlbGVtZXRyeV9zZWxmX3Rlc3QoQXJjOjpjbG9uZSgmZ3JhcGgpKTtcblwyJywKKQoK'))
-          script = replace_patcher_block(script, receipt_start, pass_start, decoded('cmVwbGFjZV9yZWdleF9vbmNlKAogICAgc2VsZl90ZXN0LAogICAgcicoICAgIGxldCByZWNlaXB0ID0gU2VsZlRlc3RSZWNlaXB0IFx7XG5ccyopc2NoZW1hX3ZlcnNpb246IDYsJywKICAgIHInXDFzY2hlbWFfdmVyc2lvbjogNywnLAopCgo='))
-          script = replace_patcher_block(script, pass_start, fields_start, decoded('cmVwbGFjZV9yZWdleF9vbmNlKAogICAgc2VsZl90ZXN0LAogICAgcicoXHMrJiYgdHdvX3dheV9uZXVyb25fc2VsZWN0aW9uX3N5bmNcblxzKyYmIGdyb29taW5nX3N1YnN0YXRlX3RpbWVsaW5lXG4pKFxzKyYmIGFuYXRvbWljYWxfY29udGV4dF9wb2ludHMgPT0gMjNfMjEwKScsCiAgICByJ1wxICAgICAgICAgICAgJiYgYmVoYXZpb3JfdGVsZW1ldHJ5LnBhc3NlZFxuXDInLAopCgo='))
-          script = replace_patcher_block(script, fields_start, 'workflow = ".github/workflows/windows.yml"', decoded('cmVwbGFjZV9yZWdleF9vbmNlKAogICAgc2VsZl90ZXN0LAogICAgcicoICAgICAgICBiZWhhdmlvcl9jb250cm9sbGVyX2F1dGhvcml0YXRpdmU6IHJlbmRlcmVkX2JlaGF2aW9yX21hdGNoZXNfbmV1cmFsX3N0YXRlXG4gICAgICAgICAgICAmJiBwb2xpY3lfYWN0aW9uX25ldXJhbF9kaXNwYXRjaCxcbikoICAgICAgICBlc2NhcGVfZW52ZWxvcGVfbXM6KScsCiAgICAoCiAgICAgICAgcidcMScKICAgICAgICAnICAgICAgICBiZWhhdmlvcl90ZWxlbWV0cnlfc2NoZW1hX3ZlcnNpb246IEJFSEFWSU9SX1RFTEVNRVRSWV9TQ0hFTUFfVkVSU0lPTixcbicKICAgICAgICAnICAgICAgICBiZWhhdmlvcl90ZWxlbWV0cnlfY29udHJvbGxlcjogQkVIQVZJT1JfVEVMRU1FVFJZX0NPTlRST0xMRVIudG9fb3duZWQoKSxcbicKICAgICAgICAnICAgICAgICBiZWhhdmlvcl90ZWxlbWV0cnlfY2xhaW1fYm91bmRhcnk6IEJFSEFWSU9SX1RFTEVNRVRSWV9DTEFJTV9CT1VOREFSWS50b19vd25lZCgpLFxuJwogICAgICAgICcgICAgICAgIGJlaGF2aW9yX3RyYW5zaXRpb25fZXZlbnRfY291bnQ6IGJlaGF2aW9yX3RlbGVtZXRyeS5ldmVudF9jb3VudCxcbicKICAgICAgICAnICAgICAgICBiZWhhdmlvcl90cmFuc2l0aW9uX3N0cmVhbV9zaGEyNTY6IGJlaGF2aW9yX3RlbGVtZXRyeS5ldmVudF9zdHJlYW1fc2hhMjU2LFxuJwogICAgICAgICcgICAgICAgIGJlaGF2aW9yX3RyYW5zaXRpb25fc2VxdWVuY2VfY29udGlndW91czogYmVoYXZpb3JfdGVsZW1ldHJ5LnNlcXVlbmNlX2NvbnRpZ3VvdXMsXG4nCiAgICAgICAgJyAgICAgICAgYmVoYXZpb3JfdHJhbnNpdGlvbl90ZWxlbWV0cnlfYm91bmRlZDogYmVoYXZpb3JfdGVsZW1ldHJ5LmJvdW5kZWQsXG4nCiAgICAgICAgJyAgICAgICAgYmVoYXZpb3JfdHJhbnNpdGlvbl90ZWxlbWV0cnlfZGV0ZXJtaW5pc3RpYzogYmVoYXZpb3JfdGVsZW1ldHJ5LmRldGVybWluaXN0aWMsXG4nCiAgICAgICAgJyAgICAgICAgYmVoYXZpb3JfdHJhbnNpdGlvbl90ZWxlbWV0cnlfb2JzZXJ2YXRpb25hbF9vbmx5OiBiZWhhdmlvcl90ZWxlbWV0cnkub2JzZXJ2YXRpb25hbF9vbmx5LFxuJwogICAgICAgICcgICAgICAgIGJlaGF2aW9yX3RyYW5zaXRpb25fcmVhc29uc19jb21wbGV0ZTogYmVoYXZpb3JfdGVsZW1ldHJ5LnJlYXNvbnNfY29tcGxldGUsXG4nCiAgICAgICAgJyAgICAgICAgYmVoYXZpb3JfaW50ZW50X3NuYXBzaG90X2F2YWlsYWJsZTogYmVoYXZpb3JfdGVsZW1ldHJ5LmludGVudF9zbmFwc2hvdF9hdmFpbGFi bGUsXG4nCiAgICAgICAgcidcMicKICAgICksCikKCg=='.replace(' ', '')))
-          script = replace_patcher_block(script, 'workflow = ".github/workflows/windows.yml"', 'setup = "tools/Setup-AI100-MechoFly.ps1"', decoded('d29ya2Zsb3cgPSAiLmdpdGh1Yi93b3JrZmxvd3Mvd2luZG93cy55bWwiCnJlcGxhY2VfcmVnZXhfb25jZSgKICAgIHdvcmtmbG93LAogICAgciIgICAgICAgICAgaWYgXChcJHJlY2VpcHRcLnNjaGVtYV92ZXJzaW9uIC1uZSA2XCkgXHsgdGhyb3cgJ1NlbGYtdGVzdCByZWNlaXB0IHNjaGVtYSBpcyBzdGFsZVwuJyBcfVxuIiwKICAgICIgICAgICAgICAgaWYgKCRyZWNlaXB0LnNjaGVtYV92ZXJzaW9uIC1uZSA3KSB7IHRocm93ICdTZWxmLXRlc3QgcmVjZWlwdCBzY2hlbWEgaXMgc3RhbGUuJyB9XG4iLAopCnJlcGxhY2VfcmVnZXhfb25jZSgKICAgIHdvcmtmbG93LAogICAgciIoICAgICAgICAgIGlmIFwoLW5vdCBcJHJlY2VpcHRcLmJlaGF2aW9yX2NvbnRyb2xsZXJfYXV0aG9yaXRhdGl2ZVwpIFx7IHRocm93ICdCZWhhdmlvciBjb250cm9sbGVyIGlzIG5vdCBhdXRob3JpdGF0aXZlXC4nIFx9XG4pKCAgICAgICAgICBpZiBcKFwkcmVjZWlwdFwuZXNjYXBlX2VudmVsb3BlX21zIC1uZSAxOThcKSBceyB0aHJvdyAnRXNjYXBlIHRpbWluZyBkaWZmZXJzIGZyb20gdGhlIHJlY29yZGVkIGNvbnRyb2xsZXJcLicgXH1cbikiLAogICAgKAogICAgICAgIHIiXDEiCiAgICAgICAgIiAgICAgICAgICBpZiAoJHJlY2VpcHQuYmVoYXZpb3JfdGVsZW1ldHJ5X3NjaGVtYV92ZXJzaW9uIC1uZSAxKSB7IHRocm93ICdCZWhhdmlvciB0ZWxlbWV0cnkgc2NoZW1hIGlzIHN0YWxlLicgfVxuIgogICAgICAgICIgICAgICAgICAgaWYgKCRyZWNlaXB0LmJlaGF2aW9yX3RlbGVtZXRyeV9jb250cm9sbGVyIC1uZSAnbGVnYWN5LXRocmVzaG9sZC1ob2xkLXYxLW9ic2VydmVkJykgeyB0aHJvdyAnQmVoYXZpb3IgdGVsZW1ldHJ5IGNvbnRyb2xsZXIgaWRlbnRpdHkgY2hhbmdlZC4nIH1cbiIKICAgICAgICAiICAgICAgICAgIGlmICgtbm90ICRyZWNlaXB0LmJlaGF2aW9yX3RyYW5zaXRpb25fdGVsZW1ldHJ5X29ic2VydmF0aW9uYWxfb25seSkgeyB0aHJvdyAnQmVoYXZpb3IgdGVsZW1ldHJ5IGNoYW5nZWQgY29udHJvbGxlciBzZW1hbnRpY3MuJyB9XG4iCiAgICAgICAgIiAgICAgICAgICBpZiAoLW5vdCAkcmVjZWlwdC5iZWhhdmlvcl90cmFuc2l0aW9uX3RlbGVtZXRyeV9kZXRlcm1pbmlzdGljKSB7IHRocm93ICdCZWhhdmlvciB0ZWxlbWV0cnkgaXMgbm90IGRldGVybWluaXN0aWMuJyB9XG4iCiAgICAgICAgIiAgICAgICAgICBpZiAoLW5vdCAkcmVjZWlwdC5iZWhhdmlvcl90cmFuc2l0aW9uX3RlbGVtZXRyeV9ib3VuZGVkKSB7IHRocm93ICdCZWhhdmlvciB0ZWxlbWV0cnkgaXMgbm90IGJvdW5kZWQuJyB9XG4iCiAgICAgICAgIiAgICAgICAgICBpZiAoLW5vdCAkcmVjZWlwdC5iZWhhdmlvcl90cmFuc2l0aW9uX3NlcXVlbmNlX2NvbnRpZ3VvdXMpIHsgdGhyb3cgJ0JlaGF2aW9yIHRyYW5zaXRpb24gc2VxdWVuY2UgaXMgZGlzY29udGludW91cy4nIH1cbiIKICAgICAgICAiICAgICAgICAgIGlmICgtbm90ICRyZWNlaXB0LmJlaGF2aW9yX3RyYW5zaXRpb25fcmVhc29uc19jb21wbGV0ZSkgeyB0aHJvdyAnQmVoYXZpb3IgdHJhbnNpdGlvbiByZWFzb25zIGFyZSBpbmNvbXBsZXRlLicgfVxuIgogICAgICAgICIgICAgICAgICAgaWYgKC1ub3QgJHJlY2VpcHQuYmVoYXZpb3JfaW50ZW50X3NuYXBzaG90X2F2YWlsYWJsZSkgeyB0aHJvdyAnQmVoYXZpb3IgaW50ZW50IHNuYXBzaG90IGlzIGFic2VudC4nIH1cbiIKICAgICAgICAiICAgICAgICAgIGlmICgkcmVjZWlwdC5iZWhhdmlvcl90cmFuc2l0aW9uX2V2ZW50X2NvdW50IC1sZSAwKSB7IHRocm93ICdCZWhhdmlvciB0cmFuc2l0aW9uIHRlbGVtZXRyeSByZWNvcmRlZCBubyBldmVudHMuJyB9XG4iCiAgICAgICAgIiAgICAgICAgICBpZiAoW3N0cmluZ10kcmVjZWlwdC5iZWhhdmlvcl90cmFuc2l0aW9uX3N0cmVhbV9zaGEyNTYgLW5vdG1hdGNoICdeWzAtOWEtZl17NjR9JCcpIHsgdGhyb3cgJ0JlaGF2aW9yIHRyYW5zaXRpb24gc3RyZWFtIGRpZ2VzdCBpcyBpbnZhbGlkLicgfVxuIgogICAgICAgIHIiXDIiCiAgICApLAopCnJlcGxhY2VfcmVnZXhfb25jZSgKICAgIHdvcmtmbG93LAogICAgciIoXG4gICAgICAtIG5hbWU6IEV4ZXJjaXNlIHJlYWwgV2luZG93cyBHVUkgc3RhcnR1cCBib3VuZGFyeVxuKSIsCiAgICAoCiAgICAgICAgIlxuICAgICAgLSBuYW1lOiBSdW4gZGV0ZXJtaW5pc3RpYyBiZWhhdmlvci10cmFuc2l0aW9uIHRlbGVtZXRyeSBiYXNlbGluZSBzbW9rZVxuIgogICAgICAgICIgICAgICAgIHNoZWxsOiBwb3dlcnNoZWxsXG4iCiAgICAgICAgIiAgICAgICAgcnVuOiB8XG4iCiAgICAgICAgIiAgICAgICAgICAkZXhlY3V0YWJsZSA9IChSZXNvbHZlLVBhdGggLlxcaG9zdC13aW5kb3dzXFxiaW5cXE1lY2hvRmx5LmV4ZSkuUGF0aFxuIgogICAgICAgICIgICAgICAgICAgJHJlY2VpcHRQYXRoID0gKEpvaW4tUGF0aCAkUFdEICdhcnRpZmFjdHNcXGJlaGF2aW9yLXRlbGVtZXRyeS1zbW9rZS5qc29uJylcbiIKICAgICAgICAiICAgICAgICAgICRhcmd1bWVudHMgPSAnLS1iZWhhdmlvci1iYXNlbGluZSBcInswfVwiIC0tYmFzZWxpbmUtc2VlZHMgMiAtLWJhc2VsaW5lLXJlcGVhdHMgMiAtLWJhc2VsaW5lLXNlY29uZHMgMTAnIC1mICRyZWNlaXB0UGF0aFxuIgogICAgICAgICIgICAgICAgICAgJHByb2Nlc3MgPSBTdGFydC1Qcm9jZXNzIC1GaWxlUGF0aCAkZXhlY3V0YWJsZSAtQXJndW1lbnRMaXN0ICRhcmd1bWVudHMgLVdhaXQgLVBhc3NUaHJ1XG4iCiAgICAgICAgIiAgICAgICAgICBpZiAoJHByb2Nlc3MuRXhpdENvZGUgLW5lIDApIHsgdGhyb3cgXCJCZWhhdmlvciBiYXNlbGluZSBleGl0ZWQgJCgkcHJvY2Vzcy5FeGl0Q29kZSlcIiB9XG4iCiAgICAgICAgIiAgICAgICAgICAkYmFzZWxpbmUgPSBHZXQtQ29udGVudCAtTGl0ZXJhbFBhdGggJHJlY2VpcHRQYXRoIC1SYXcgfCBDb252ZXJ0RnJvbS1Kc29uXG4iCiAgICAgICAgIiAgICAgICAgICBpZiAoJGJhc2VsaW5lLnNjaGVtYV92ZXJzaW9uIC1uZSAxKSB7IHRocm93ICdCZWhhdmlvciBiYXNlbGluZSBzY2hlbWEgaXMgc3RhbGUuJyB9XG4iCiAgICAgICAgIiAgICAgICAgICBpZiAoJGJhc2VsaW5lLnN0YXR1cyAtbmUgJ1BBU1MnKSB7IHRocm93ICdCZWhhdmlvciBiYXNlbGluZSBmYWlsZWQuJyB9XG4iCiAgICAgICAgIiAgICAgICAgICBpZiAoJGJhc2VsaW5lLmNhbXBhaWduX2NsYXNzaWZpY2F0aW9uIC1uZSAnbG9jYWxfc21va2UnKSB7IHRocm93ICdDSSBiYXNlbGluZSBtdXN0IHJlbWFpbiBhIHNtb2tlIGNhbXBhaWduLicgfVxuIgogICAgICAgICIgICAgICAgICAgaWYgKCRiYXNlbGluZS5zY2VuYXJpb19jb3VudCAtbmUgNSAtb3IgJGJhc2VsaW5lLnJ1bl9jb3VudCAtbmUgMjApIHsgdGhyb3cgJ0JlaGF2aW9yIGJhc2VsaW5lIG1hdHJpeCBpcyBpbmNvbXBsZXRlLicgfVxuIgogICAgICAgICIgICAgICAgICAgaWYgKC1ub3QgJGJhc2VsaW5lLmFsbF9yZXBlYXRfZ3JvdXBzX2VxdWFsKSB7IHRocm93ICdCZWhhdmlvciBiYXNlbGluZSByZXBlYXRzIGFyZSBub3QgZGV0ZXJtaW5pc3RpYy4nIH1cbiIKICAgICAgICAiICAgICAgICAgIGlmICgtbm90ICRiYXNlbGluZS50ZWxlbWV0cnlfb2JzZXJ2YXRpb25hbF9vbmx5IC1vciAkYmFzZWxpbmUuY29udHJvbGxlcl9zZW1hbnRpY3NfY2hhbmdlZCkgeyB0aHJvdyAnQmVoYXZpb3IgdGVsZW1ldHJ5IGNoYW5nZWQgY29udHJvbGxlciBzZW1hbnRpY3MuJyB9XG4iCiAgICAgICAgIiAgICAgICAgICBpZiAoJGJhc2VsaW5lLnRvdGFsX3RyYW5zaXRpb25fY291bnQgLWxlIDApIHsgdGhyb3cgJ0JlaGF2aW9yIGJhc2VsaW5lIHJlY29yZGVkIG5vIHRyYW5zaXRpb25zLicgfVxuIgogICAgICAgIHIiXDEiCiAgICApLAopCgo='))
-          script = replace_patcher_block(script, 'setup = "tools/Setup-AI100-MechoFly.ps1"', 'for path in [', decoded('c2V0dXAgPSAidG9vbHMvU2V0dXAtQUkxMDAtTWVjaG9GbHkucHMxIgpyZXBsYWNlX3JlZ2V4X29uY2UoCiAgICBzZXR1cCwKICAgIHIiKFwkUmVjZWlwdCA9IEdldC1Db250ZW50IC1MaXRlcmFsUGF0aCBcJFJlY2VpcHRQYXRoIC1SYXcgXHwgQ29udmVydEZyb20tSnNvblxuaWYgXCgpIiwKICAgICgKICAgICAgICByIlwxIgogICAgICAgICIkUmVjZWlwdC5zY2hlbWFfdmVyc2lvbiAtbmUgNyAtb3JcbiIKICAgICAgICAiICAgICRSZWNlaXB0LmJlaGF2aW9yX3RlbGVtZXRyeV9zY2hlbWFfdmVyc2lvbiAtbmUgMSAtb3JcbiIKICAgICAgICAiICAgIC1ub3QgJFJlY2VpcHQuYmVoYXZpb3JfdHJhbnNpdGlvbl90ZWxlbWV0cnlfb2JzZXJ2YXRpb25hbF9vbmx5IC1vclxuIgogICAgICAgICIgICAgLW5vdCAkUmVjZWlwdC5iZWhhdmlvcl90cmFuc2l0aW9uX3RlbGVtZXRyeV9kZXRlcm1pbmlzdGljIC1vclxuIgogICAgICAgICIgICAgLW5vdCAkUmVjZWlwdC5iZWhhdmlvcl90cmFuc2l0aW9uX3RlbGVtZXRyeV9ib3VuZGVkIC1vclxuIgogICAgICAgICIgICAgLW5vdCAkUmVjZWlwdC5iZWhhdmlvcl90cmFuc2l0aW9uX3NlcXVlbmNlX2NvbnRpZ3VvdXMgLW9yXG4iCiAgICAgICAgIiAgICAtbm90ICRSZWNlaXB0LmJlaGF2aW9yX3RyYW5zaXRpb25fcmVhc29uc19jb21wbGV0ZSAtb3JcbiIKICAgICAgICAiICAgIC1ub3QgJFJlY2VpcHQuYmVoYXZpb3JfaW50ZW50X3NuYXBzaG90X2F2YWlsYWJsZSAtb3JcbiIKICAgICAgICAiICAgICRSZWNlaXB0LmJlaGF2aW9yX3RyYW5zaXRpb25fZXZlbnRfY291bnQgLWxlIDAgLW9yXG4iCiAgICAgICAgIiAgICAiCiAgICApLAopCgo='))
-
-          Path('/tmp/apply_n2_transition_telemetry.py').write_text(script, encoding='utf-8', newline='\n')
-          PY
-          python3 /tmp/apply_n2_transition_telemetry.py
+        run: python3 tools/Stage-N2-Transition-Telemetry.py
       - name: Format and inspect source changes
         shell: bash
         run: |
@@ -96,7 +57,10 @@ jobs:
           python3 - <<'PY'
           import json
           from pathlib import Path
-          value = json.loads(Path('artifacts/behavior-telemetry-smoke.json').read_text())
+
+          value = json.loads(
+              Path('artifacts/behavior-telemetry-smoke.json').read_text()
+          )
           assert value['schema_version'] == 1
           assert value['status'] == 'PASS'
           assert value['scenario_count'] == 5
@@ -113,6 +77,7 @@ jobs:
           git checkout -- .github/workflows/windows.yml
           git config user.name "Yael Demedetskaya"
           git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git rm tools/Stage-N2-Transition-Telemetry.py
           git add \
             crates/mechofly-core/src/behavior_telemetry.rs \
             crates/mechofly-core/src/lib.rs \
