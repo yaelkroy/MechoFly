@@ -50,6 +50,26 @@ jobs:
               else:
                   lines.append(line)
           script = '\n'.join(lines) + '\n'
+
+          fragile_start = script.index(
+              'replace_once(\n'
+              '    self_test,\n'
+              '    """    let grooming_substate_timeline'
+          )
+          fragile_end = script.index(
+              'replace_once(\n'
+              '    self_test,\n'
+              '    """    let receipt = SelfTestReceipt',
+              fragile_start,
+          )
+          robust = r'''replace_regex_once(
+              self_test,
+              r'(    let grooming_substate_timeline = grooming_program_substates\.iter\(\)\.map\(String::as_str\)\.eq\(\[.*?    \]\);\n)(\n    #\[cfg\(windows\)\])',
+              r'\1    let behavior_telemetry = run_behavior_telemetry_self_test(Arc::clone(&graph));\n\2',
+          )
+          '''
+          script = script[:fragile_start] + robust + script[fragile_end:]
+
           Path('/tmp/apply_n2_transition_telemetry.py').write_text(
               script,
               encoding='utf-8',
