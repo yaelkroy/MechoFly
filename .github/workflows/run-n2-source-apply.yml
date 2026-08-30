@@ -51,24 +51,67 @@ jobs:
                   lines.append(line)
           script = '\n'.join(lines) + '\n'
 
-          fragile_start = script.index(
-              'replace_once(\n'
-              '    self_test,\n'
-              '    """    let grooming_substate_timeline'
-          )
-          fragile_end = script.index(
-              'replace_once(\n'
-              '    self_test,\n'
-              '    """    let receipt = SelfTestReceipt',
-              fragile_start,
-          )
-          robust = r'''replace_regex_once(
+          def replace_patcher_block(source, start_marker, end_marker, replacement):
+              left = source.index(start_marker)
+              right = source.index(end_marker, left)
+              return source[:left] + replacement + source[right:]
+
+          script = replace_patcher_block(
+              script,
+              'replace_once(\n    self_test,\n    """    let grooming_substate_timeline',
+              'replace_once(\n    self_test,\n    """    let receipt = SelfTestReceipt',
+              r'''replace_regex_once(
               self_test,
               r'(    let grooming_substate_timeline = grooming_program_substates\.iter\(\)\.map\(String::as_str\)\.eq\(\[.*?    \]\);\n)(\n    #\[cfg\(windows\)\])',
               r'\1    let behavior_telemetry = run_behavior_telemetry_self_test(Arc::clone(&graph));\n\2',
           )
-          '''
-          script = script[:fragile_start] + robust + script[fragile_end:]
+          ''',
+          )
+          script = replace_patcher_block(
+              script,
+              'replace_once(\n    self_test,\n    """    let receipt = SelfTestReceipt',
+              'replace_once(\n    self_test,\n    """            && two_way_neuron_selection_sync',
+              r'''replace_regex_once(
+              self_test,
+              r'(    let receipt = SelfTestReceipt \{\n\s*)schema_version: 6,',
+              r'\1schema_version: 7,',
+          )
+          ''',
+          )
+          script = replace_patcher_block(
+              script,
+              'replace_once(\n    self_test,\n    """            && two_way_neuron_selection_sync',
+              'replace_once(\n    self_test,\n    """        behavior_controller_authoritative:',
+              r'''replace_regex_once(
+              self_test,
+              r'(\s+&& two_way_neuron_selection_sync\n\s+&& grooming_substate_timeline\n)(\s+&& anatomical_context_points == 23_210)',
+              r'\1            && behavior_telemetry.passed\n\2',
+          )
+          ''',
+          )
+          script = replace_patcher_block(
+              script,
+              'replace_once(\n    self_test,\n    """        behavior_controller_authoritative:',
+              'workflow = ".github/workflows/windows.yml"',
+              r'''replace_regex_once(
+              self_test,
+              r'(        behavior_controller_authoritative: rendered_behavior_matches_neural_state\n            && policy_action_neural_dispatch,\n)(        escape_envelope_ms:)',
+              r'''\1        behavior_telemetry_schema_version: BEHAVIOR_TELEMETRY_SCHEMA_VERSION,
+                  behavior_telemetry_controller: BEHAVIOR_TELEMETRY_CONTROLLER.to_owned(),
+                  behavior_telemetry_claim_boundary: BEHAVIOR_TELEMETRY_CLAIM_BOUNDARY.to_owned(),
+                  behavior_transition_event_count: behavior_telemetry.event_count,
+                  behavior_transition_stream_sha256: behavior_telemetry.event_stream_sha256,
+                  behavior_transition_sequence_contiguous: behavior_telemetry.sequence_contiguous,
+                  behavior_transition_telemetry_bounded: behavior_telemetry.bounded,
+                  behavior_transition_telemetry_deterministic: behavior_telemetry.deterministic,
+                  behavior_transition_telemetry_observational_only: behavior_telemetry.observational_only,
+                  behavior_transition_reasons_complete: behavior_telemetry.reasons_complete,
+                  behavior_intent_snapshot_available: behavior_telemetry.intent_snapshot_available,
+          \2''',
+          )
+          
+          ''',
+          )
 
           Path('/tmp/apply_n2_transition_telemetry.py').write_text(
               script,
