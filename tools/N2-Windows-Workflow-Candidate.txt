@@ -1,0 +1,246 @@
+name: MechoFly Windows verification
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**", "chore/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: rustfmt, clippy
+      - name: Cache Rust build products
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            target
+          key: mechofly-windows-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            mechofly-windows-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
+      - name: Parse Windows PowerShell scripts
+        shell: powershell
+        run: |
+          $errors = @()
+          Get-ChildItem -Recurse -Filter '*.ps1' | ForEach-Object {
+            $tokens = $null
+            $parse = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parse) | Out-Null
+            $errors += @($parse)
+          }
+          if ($errors.Count -gt 0) { $errors | Format-List -Force; throw 'PowerShell parser failure.' }
+      - name: Verify active tree identity
+        shell: powershell
+        run: .\tools\Verify-Tree.ps1
+      - name: Reproduce Windows PowerShell 5.1 Git stderr handling
+        shell: powershell
+        run: |
+          $scriptPath = (Resolve-Path .\tools\Setup-AI100-MechoFly.ps1).Path
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -NoLogo `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $scriptPath `
+            -GitCaptureSelfTest
+          if ($LASTEXITCODE -ne 0) { throw "Git stderr regression test exited $LASTEXITCODE" }
+      - name: Reproduce Windows PowerShell 5.1 evidence-list conversion
+        shell: powershell
+        run: |
+          $items = New-Object System.Collections.Generic.List[object]
+          $items.Add([pscustomobject]@{ name = 'first' })
+          $items.Add([pscustomobject]@{ name = 'second' })
+          $manifest = [ordered]@{ cases = [object[]]$items.ToArray() }
+          $roundTrip = $manifest | ConvertTo-Json -Depth 4 | ConvertFrom-Json
+          if (@($roundTrip.cases).Count -ne 2) {
+            throw 'Evidence generic-list conversion regression.'
+          }
+      - name: Reproduce review-branch switch from a single-branch clone
+        shell: powershell
+        run: |
+          $scriptPath = (Resolve-Path .\tools\Setup-AI100-MechoFly.ps1).Path
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -NoLogo `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $scriptPath `
+            -BranchSwitchSelfTest
+          if ($LASTEXITCODE -ne 0) { throw "Single-branch switch self-test exited $LASTEXITCODE" }
+      - name: Exercise guarded recovery, clean resume, and byte pinning
+        shell: powershell
+        run: |
+          $scriptPath = (Resolve-Path .\tools\Recover-AI100-ExactCandidate.ps1).Path
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -NoLogo `
+            -NoProfile `
+            -ExecutionPolicy Bypass `
+            -File $scriptPath `
+            -GuardSelfTest
+          if ($LASTEXITCODE -ne 0) { throw "Recovery guard self-test exited $LASTEXITCODE" }
+      - name: Check Rust formatting
+        shell: powershell
+        run: cargo fmt --all --check
+      - name: Resolve reproducible dependencies
+        shell: powershell
+        run: cargo generate-lockfile
+      - name: Test deterministic core and host
+        shell: powershell
+        run: |
+          $fixtureDirectory = Join-Path $PWD 'artifacts\visual-fixtures'
+          New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
+          $env:MECHOFLY_VISUAL_FIXTURE_DIR = $fixtureDirectory
+          cargo test --workspace --locked
+          foreach ($fixture in @(
+            'behavior-trajectory-drosophila.bmp',
+            'behavior-trajectory-prism.bmp',
+            'behavior-trajectory.json'
+          )) {
+            $path = Join-Path $fixtureDirectory $fixture
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Normal-scale behavior trajectory fixture is missing: $path"
+            }
+          }
+      - name: Lint all Rust targets
+        shell: powershell
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Compile x64 Windows host
+        shell: powershell
+        run: .\host-windows\build.ps1
+      - name: Run deterministic safety self-test
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Path .\artifacts -Force | Out-Null
+          $executable = (Resolve-Path .\host-windows\bin\MechoFly.exe).Path
+          $receiptPath = (Join-Path $PWD 'artifacts\self-test.json')
+          $arguments = '--self-test "{0}"' -f $receiptPath
+          $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru
+          if (Test-Path -LiteralPath $receiptPath -PathType Leaf) {
+            Get-Content -LiteralPath $receiptPath -Raw | Write-Host
+          }
+          if ($process.ExitCode -ne 0) { throw "Self-test exited $($process.ExitCode)" }
+          $receipt = Get-Content .\artifacts\self-test.json -Raw | ConvertFrom-Json
+          if ($receipt.schema_version -ne 7) { throw 'Self-test receipt schema is stale.' }
+          if ($receipt.status -ne 'PASS') { throw 'Self-test receipt failed.' }
+          if (-not $receipt.live_state_unchanged) { throw 'Preview mutated live state.' }
+          if (-not $receipt.alternative_differs) { throw 'Alternative trajectory did not differ.' }
+          if ($receipt.default_skin -ne 'firefly') { throw 'Recording-matched Prism is not the default skin.' }
+          if (-not $receipt.cpu_without_gpu_supported) { throw 'CPU fallback invariant failed.' }
+          if (-not $receipt.reevaluation_control) { throw 'Capacity reevaluation invariant failed.' }
+          if (-not $receipt.global_hotkey_contract_passed) { throw 'Global hotkey contract failed.' }
+          if ($receipt.global_hotkey_count -ne 8) { throw 'Expected eight global hotkeys.' }
+          if (-not $receipt.asynchronous_hotkey_fallback) { throw 'Global hotkey fallback is absent.' }
+          if ($receipt.firefly_visual_style -ne 'recorded_legacy_prism_port_v6') { throw 'Recorded Prism renderer is absent.' }
+          if (-not $receipt.firefly_visual_contract_passed) { throw 'Firefly Prism visual contract failed.' }
+          if (-not $receipt.firefly_rest_temporal_invariant) { throw 'Rest was not exactly stationary.' }
+          if (-not $receipt.firefly_escape_wing_responsive) { throw 'Escape wings did not respond.' }
+          if (-not $receipt.prism_flight_animation_responsive) { throw 'Flight animation did not respond.' }
+          if (-not $receipt.prism_landing_animation_responsive) { throw 'Landing animation did not respond.' }
+          if (-not $receipt.prism_walking_animation_responsive) { throw 'Walking animation did not respond.' }
+          if (-not $receipt.prism_grooming_animation_responsive) { throw 'Grooming animation did not respond.' }
+          if (-not $receipt.prism_wing_state_contract_passed) { throw 'Ground and air wing states do not match the recording.' }
+          if (-not $receipt.cursor_loom_neural_escape) { throw 'Cursor loom did not cross the modeled neural escape threshold.' }
+          if (-not $receipt.neural_hotkey_behavior_dispatch) { throw 'A behavior hotkey bypassed or failed to reach its modeled population.' }
+          if ($receipt.presentation_only_hotkey_path) { throw 'A presentation-only hotkey path remains enabled.' }
+          if ($receipt.presentation_only_autonomy_path) { throw 'A presentation-only autonomy path remains enabled.' }
+          if (-not $receipt.policy_action_neural_dispatch) { throw 'An autonomous action failed to enter through modeled neural drive.' }
+          if (-not $receipt.rendered_behavior_matches_neural_state) { throw 'Rendered behavior differs from modeled neural state.' }
+          if (-not $receipt.behavior_controller_authoritative) { throw 'Behavior controller is not authoritative.' }
+          if ($receipt.behavior_telemetry_schema_version -ne 1) { throw 'Behavior telemetry schema is stale.' }
+          if ($receipt.behavior_telemetry_controller -ne 'legacy-threshold-hold-v1-observed') { throw 'Behavior telemetry controller identity changed.' }
+          if (-not $receipt.behavior_transition_telemetry_observational_only) { throw 'Behavior telemetry changed controller semantics.' }
+          if (-not $receipt.behavior_transition_telemetry_deterministic) { throw 'Behavior telemetry is not deterministic.' }
+          if (-not $receipt.behavior_transition_telemetry_bounded) { throw 'Behavior telemetry is not bounded.' }
+          if (-not $receipt.behavior_transition_sequence_contiguous) { throw 'Behavior transition sequence is discontinuous.' }
+          if (-not $receipt.behavior_transition_reasons_complete) { throw 'Behavior transition reasons are incomplete.' }
+          if (-not $receipt.behavior_intent_snapshot_available) { throw 'Behavior intent snapshot is absent.' }
+          if ($receipt.behavior_transition_event_count -le 0) { throw 'Behavior transition telemetry recorded no events.' }
+          if ([string]$receipt.behavior_transition_stream_sha256 -notmatch '^[0-9a-f]{64}$') { throw 'Behavior transition stream digest is invalid.' }
+          if ($receipt.escape_envelope_ms -ne 198) { throw 'Escape timing differs from the recorded controller.' }
+          if ($receipt.flight_envelope_ms -ne 3993) { throw 'Flight timing differs from the recorded controller.' }
+          if ($receipt.landing_envelope_ms -ne 495) { throw 'Landing timing differs from the recorded controller.' }
+          if ($receipt.grooming_minimum_dwell_ms -lt 1500 -or $receipt.grooming_minimum_dwell_ms -gt 1533) { throw 'Grooming dwell differs from the recorded controller.' }
+          if (-not $receipt.recorded_motion_contract_passed) { throw 'Recorded motion trajectory contract failed.' }
+          if ($receipt.walking_translation_pixels -le 100) { throw 'Walking translation is not visible.' }
+          if ($receipt.escape_translation_pixels -le 90) { throw 'Escape burst is not visible.' }
+          if ($receipt.flight_path_pixels -le 900) { throw 'Full-duration flight path is too short.' }
+          if ($receipt.flight_horizontal_pixels -le 150 -or $receipt.flight_vertical_pixels -le 100) { throw 'Full-duration flight did not roam in both dimensions.' }
+          if ($receipt.landing_descent_pixels -le 350 -or -not $receipt.landing_reached_surface) { throw 'Long-descent landing did not reach its bounded touchdown.' }
+          if (-not $receipt.landing_position_continuous) { throw 'Flight, landing, and post-touchdown positions are discontinuous.' }
+          if ($receipt.teleport_detected) { throw 'A teleport-like landing step was detected.' }
+          if ($receipt.landing_first_step_pixels -gt 2.5) { throw 'Landing entry contains a visible position discontinuity.' }
+          if ($receipt.landing_max_step_pixels -gt 25.0) { throw 'Landing interpolation contains an excessive frame step.' }
+          if ($receipt.landing_completion_step_pixels -gt 1.0) { throw 'Landing completion still snaps to the surface.' }
+          if ($receipt.landing_to_rest_step_pixels -gt 0.01) { throw 'Post-touchdown rest did not inherit the touchdown position.' }
+          if (-not $receipt.landing_refresh_rate_invariant) { throw 'Landing changed across rendering refresh rates.' }
+          if ($receipt.landing_refresh_rate_position_error_pixels -gt 0.01) { throw 'Landing position differs across refresh rates.' }
+          if ($receipt.landing_refresh_rate_heading_error_radians -gt 0.001) { throw 'Landing heading differs across refresh rates.' }
+          if (-not $receipt.two_dimensional_flight_motion) { throw 'Flight remained one-dimensional.' }
+          if (-not $receipt.separate_live_brain_and_brain_lab) { throw 'Live Brain and Brain Lab were not separated.' }
+          if (-not $receipt.two_way_neuron_selection_sync) { throw 'Live Brain and Brain Lab neuron selection did not synchronize both ways.' }
+          if (@($receipt.brain_lab_reference_columns).Count -ne 4) { throw 'Brain Lab reference columns are incomplete.' }
+          if (-not $receipt.behavior_program_timeline) { throw 'Behavior-program timeline is absent.' }
+          if (-not $receipt.grooming_substate_timeline -or @($receipt.grooming_program_substates).Count -ne 4) { throw 'Animated grooming substate program is incomplete.' }
+          if ($receipt.anatomical_context_points -ne 23210) { throw 'Anatomical context point count changed.' }
+          if ($receipt.anatomical_context_measured) { throw 'Anatomical context was mislabeled as measured.' }
+          if ($receipt.connectome_mutated_by_learning) { throw 'Learning mutated the connectome.' }
+          if ($receipt.measured_activity) { throw 'Modeled activity was mislabeled as measured.' }
+      - name: Run deterministic behavior-transition telemetry baseline smoke
+        shell: powershell
+        run: |
+          $executable = (Resolve-Path .\host-windowsin\MechoFly.exe).Path
+          $receiptPath = (Join-Path $PWD 'artifactsehavior-telemetry-smoke.json')
+          $arguments = '--behavior-baseline "{0}" --baseline-seeds 2 --baseline-repeats 2 --baseline-seconds 10' -f $receiptPath
+          $process = Start-Process -FilePath $executable -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Behavior baseline exited $($process.ExitCode)" }
+          $baseline = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+          if ($baseline.schema_version -ne 1) { throw 'Behavior baseline schema is stale.' }
+          if ($baseline.status -ne 'PASS') { throw 'Behavior baseline failed.' }
+          if ($baseline.campaign_classification -ne 'local_smoke') { throw 'CI baseline must remain a smoke campaign.' }
+          if ($baseline.scenario_count -ne 5 -or $baseline.run_count -ne 20) { throw 'Behavior baseline matrix is incomplete.' }
+          if (-not $baseline.all_repeat_groups_equal) { throw 'Behavior baseline repeats are not deterministic.' }
+          if (-not $baseline.telemetry_observational_only -or $baseline.controller_semantics_changed) { throw 'Behavior telemetry changed controller semantics.' }
+          if ($baseline.total_transition_count -le 0) { throw 'Behavior baseline recorded no transitions.' }
+      - name: Exercise real Windows GUI startup boundary
+        shell: powershell
+        run: |
+          .\tools\Test-Windows-GuiStartup.ps1 `
+            -ExecutablePath .\host-windows\bin\MechoFly.exe `
+            -OutputDirectory .\artifacts\runtime-smoke `
+            -ObservationSeconds 12
+          $summary = Get-Content `
+            -LiteralPath .\artifacts\runtime-smoke\summary.json `
+            -Raw | ConvertFrom-Json
+          if ($summary.schema_version -ne 3) { throw 'GUI evidence receipt schema is stale.' }
+          if ($summary.status -ne 'PASS') { throw 'GUI evidence receipt failed.' }
+          if (-not $summary.pet_foreground_captured) { throw 'Layered pet foreground evidence is absent.' }
+          if (-not $summary.neural_frames_synchronized) { throw 'Neural viewport evidence is not frame-synchronized.' }
+          if (-not $summary.skin_titles_matched) { throw 'Neural viewport titles do not match the active skin.' }
+          if (-not $summary.full_window_captures) { throw 'A GUI evidence image is clipped.' }
+          foreach ($case in @($summary.cases)) {
+            if (-not $case.evidence_hold_posted) { throw 'Evidence hold was not acknowledged.' }
+            if (-not $case.neural_capture_frame_synchronized) { throw 'A GUI case has divergent neural frames.' }
+            $pet = @($case.screenshots | Where-Object {
+              $_.source_window.class_name -eq 'MechoFlyDesktopPetLayeredWindowV1'
+            })
+            if ($pet.Count -ne 1 -or [int]$pet[0].foreground_difference_pixels -lt 500) {
+              throw 'A GUI case lacks an isolated normal-scale pet foreground.'
+            }
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: mechofly-windows-verification
+          path: |
+            Cargo.lock
+            artifacts/
+            host-windows/bin/
+          if-no-files-found: warn
