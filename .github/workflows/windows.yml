@@ -128,7 +128,7 @@ jobs:
           }
           if ($process.ExitCode -ne 0) { throw "Self-test exited $($process.ExitCode)" }
           $receipt = Get-Content .\artifacts\self-test.json -Raw | ConvertFrom-Json
-          if ($receipt.schema_version -ne 8) { throw 'Self-test receipt schema is stale.' }
+          if ($receipt.schema_version -ne 9) { throw 'Self-test receipt schema is stale.' }
           if ($receipt.status -ne 'PASS') { throw 'Self-test receipt failed.' }
           if (-not $receipt.live_state_unchanged) { throw 'Preview mutated live state.' }
           if (-not $receipt.alternative_differs) { throw 'Alternative trajectory did not differ.' }
@@ -179,7 +179,10 @@ jobs:
           if ($receipt.touchdown_altitude_pixels -gt 0.01) { throw 'Touchdown retained nonzero Z altitude.' }
           if (-not $receipt.screen_space_shadow_below_body) { throw 'Shadow is not below the body in screen space.' }
           if (-not $receipt.shadow_altitude_monotonic) { throw 'Shadow does not respond monotonically to Z altitude.' }
-          if (-not $receipt.shadow_heading_invariant) { throw 'Shadow rotates with body heading.' }
+          if (-not $receipt.shadow_center_heading_invariant) { throw 'Shadow center moves with body heading.' }
+          if (-not $receipt.shadow_heading_aligned) { throw 'Shadow footprint is not aligned with body heading.' }
+          if ($receipt.shadow_heading_max_error_radians -gt 0.001) { throw 'Shadow footprint heading error exceeds tolerance.' }
+          if (-not $receipt.shadow_footprint_anisotropic) { throw 'Shadow footprint is not directionally anisotropic.' }
           if (-not $receipt.spatial_depth_contract_passed) { throw 'Spatial depth contract failed.' }
           if (-not $receipt.landing_position_continuous) { throw 'Flight, landing, and post-touchdown positions are discontinuous.' }
           if ($receipt.teleport_detected) { throw 'A teleport-like landing step was detected.' }

@@ -103,7 +103,10 @@ struct SelfTestReceipt {
     landing_position_continuous: bool,
     screen_space_shadow_below_body: bool,
     shadow_altitude_monotonic: bool,
-    shadow_heading_invariant: bool,
+    shadow_center_heading_invariant: bool,
+    shadow_heading_aligned: bool,
+    shadow_heading_max_error_radians: f32,
+    shadow_footprint_anisotropic: bool,
     spatial_depth_contract_passed: bool,
     teleport_detected: bool,
     two_dimensional_flight_motion: bool,
@@ -387,7 +390,7 @@ pub fn run(path: &Path) -> Result<(), String> {
     };
 
     let receipt = SelfTestReceipt {
-        schema_version: 8,
+        schema_version: 9,
         status: if comparison.receipt.live_state_unchanged
             && comparison.receipt.alternative_differs
             && live_before == live_after
@@ -497,7 +500,10 @@ pub fn run(path: &Path) -> Result<(), String> {
         landing_position_continuous: motion.landing_position_continuous,
         screen_space_shadow_below_body: motion.screen_space_shadow_below_body,
         shadow_altitude_monotonic: motion.shadow_altitude_monotonic,
-        shadow_heading_invariant: motion.shadow_heading_invariant,
+        shadow_center_heading_invariant: motion.shadow_center_heading_invariant,
+        shadow_heading_aligned: motion.shadow_heading_aligned,
+        shadow_heading_max_error_radians: motion.shadow_heading_max_error_radians,
+        shadow_footprint_anisotropic: motion.shadow_footprint_anisotropic,
         spatial_depth_contract_passed: motion.spatial_depth_contract_passed,
         teleport_detected: motion.teleport_detected,
         two_dimensional_flight_motion,

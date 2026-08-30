@@ -399,7 +399,7 @@ if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
     throw 'MechoFly self-test did not create its receipt.'
 }
 $Receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json
-if ($Receipt.schema_version -ne 8 -or
+if ($Receipt.schema_version -ne 9 -or
     $Receipt.behavior_telemetry_schema_version -ne 1 -or
     -not $Receipt.behavior_transition_telemetry_observational_only -or
     -not $Receipt.behavior_transition_telemetry_deterministic -or
@@ -410,7 +410,10 @@ if ($Receipt.schema_version -ne 8 -or
     $Receipt.behavior_transition_event_count -le 0 -or
     -not $Receipt.screen_space_shadow_below_body -or
     -not $Receipt.shadow_altitude_monotonic -or
-    -not $Receipt.shadow_heading_invariant -or
+    -not $Receipt.shadow_center_heading_invariant -or
+    -not $Receipt.shadow_heading_aligned -or
+    $Receipt.shadow_heading_max_error_radians -gt 0.001 -or
+    -not $Receipt.shadow_footprint_anisotropic -or
     -not $Receipt.spatial_depth_contract_passed -or
     -not $Receipt.landing_target_local -or
     -not $Receipt.landing_avoids_bottom_edge -or

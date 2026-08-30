@@ -384,7 +384,10 @@ pub struct MotionSelfTest {
     pub landing_position_continuous: bool,
     pub screen_space_shadow_below_body: bool,
     pub shadow_altitude_monotonic: bool,
-    pub shadow_heading_invariant: bool,
+    pub shadow_center_heading_invariant: bool,
+    pub shadow_heading_aligned: bool,
+    pub shadow_heading_max_error_radians: f32,
+    pub shadow_footprint_anisotropic: bool,
     pub spatial_depth_contract_passed: bool,
     pub teleport_detected: bool,
 }
@@ -493,28 +496,51 @@ pub fn run_motion_self_test() -> MotionSelfTest {
         && landing_completion_step_pixels <= 1.0
         && landing_to_rest_step_pixels <= 0.01;
 
-    let ground_shadow = shadow_projection(0.0);
-    let flight_shadow = shadow_projection(CRUISE_ALTITUDE_PIXELS);
+    let ground_shadow = shadow_projection(0.0, 0.0);
+    let flight_shadow = shadow_projection(CRUISE_ALTITUDE_PIXELS, 0.0);
     let screen_space_shadow_below_body = ground_shadow.center[1] > CENTER[1] + 40.0
         && flight_shadow.center[1] > ground_shadow.center[1];
     let shadow_altitude_monotonic = flight_shadow.core_alpha < ground_shadow.core_alpha
         && flight_shadow.core_radii[0] < ground_shadow.core_radii[0]
         && flight_shadow.center[1] > ground_shadow.center[1];
-    let shadow_signature = |heading: f32| {
+    let shadow_footprint_anisotropic = ground_shadow.core_radii[0]
+        > ground_shadow.core_radii[1] * 3.0
+        && ground_shadow.halo_radii[0] > ground_shadow.halo_radii[1] * 3.0;
+    let headings = [0.0, 0.37, PI * 0.5, -1.13, PI - 0.17];
+    let reference = shadow_projection(CRUISE_ALTITUDE_PIXELS, headings[0]);
+    let mut shadow_center_heading_invariant = true;
+    let mut shadow_heading_aligned = true;
+    let mut shadow_heading_max_error_radians = 0.0_f32;
+    for heading in headings {
+        let projection = shadow_projection(CRUISE_ALTITUDE_PIXELS, heading);
+        shadow_center_heading_invariant &= projection.center == reference.center
+            && projection.core_radii == reference.core_radii
+            && projection.halo_radii == reference.halo_radii
+            && projection.core_alpha == reference.core_alpha
+            && projection.halo_alpha == reference.halo_alpha;
+
         let mut scene = SceneBuilder::new(heading, 0.0);
-        draw_contact_shadow(&mut scene, CRUISE_ALTITUDE_PIXELS);
-        match &scene.primitives[0] {
-            Primitive::Ellipse {
-                center,
-                radii,
-                angle,
-                fill,
-                ..
-            } => (*center, *radii, *angle, fill.3),
-            _ => panic!("contact shadow must begin with an ellipse"),
-        }
-    };
-    let shadow_heading_invariant = shadow_signature(0.0) == shadow_signature(1.37);
+        draw_contact_shadow(&mut scene, CRUISE_ALTITUDE_PIXELS, heading);
+        let (halo_angle, core_angle) = match (&scene.primitives[0], &scene.primitives[1]) {
+            (Primitive::Ellipse { angle: halo, .. }, Primitive::Ellipse { angle: core, .. }) => {
+                (*halo, *core)
+            }
+            _ => panic!("contact shadow must begin with aligned halo and core ellipses"),
+        };
+        let projection_error = shadow_axis_error_radians(projection.angle, heading);
+        let halo_error = shadow_axis_error_radians(halo_angle, heading);
+        let core_error = shadow_axis_error_radians(core_angle, heading);
+        let pair_error = shadow_axis_error_radians(halo_angle, core_angle);
+        shadow_heading_max_error_radians = shadow_heading_max_error_radians
+            .max(projection_error)
+            .max(halo_error)
+            .max(core_error)
+            .max(pair_error);
+        shadow_heading_aligned &= projection_error <= 0.001
+            && halo_error <= 0.001
+            && core_error <= 0.001
+            && pair_error <= 0.001;
+    }
     let spatial_depth_contract_passed = flight_altitude_pixels >= 60.0
         && landing_descent_pixels >= 60.0
         && landing_reached_surface
@@ -523,7 +549,9 @@ pub fn run_motion_self_test() -> MotionSelfTest {
         && touchdown_altitude_pixels.abs() <= 0.01
         && screen_space_shadow_below_body
         && shadow_altitude_monotonic
-        && shadow_heading_invariant;
+        && shadow_center_heading_invariant
+        && shadow_heading_aligned
+        && shadow_footprint_anisotropic;
     let teleport_detected = !landing_position_continuous;
 
     MotionSelfTest {
@@ -560,7 +588,10 @@ pub fn run_motion_self_test() -> MotionSelfTest {
         landing_position_continuous,
         screen_space_shadow_below_body,
         shadow_altitude_monotonic,
-        shadow_heading_invariant,
+        shadow_center_heading_invariant,
+        shadow_heading_aligned,
+        shadow_heading_max_error_radians,
+        shadow_footprint_anisotropic,
         spatial_depth_contract_passed,
         teleport_detected,
     }
@@ -920,7 +951,7 @@ fn pet_scene_at_altitude(
     let mut scene = SceneBuilder::new(heading, screen_offset);
     draw_behavior_field(&mut scene, behavior, time, skin);
     draw_motion_trails(&mut scene, behavior, time);
-    draw_contact_shadow(&mut scene, altitude_pixels);
+    draw_contact_shadow(&mut scene, altitude_pixels, heading);
     draw_wings(&mut scene, behavior, time, colors);
     draw_legs(
         &mut scene,
@@ -1019,37 +1050,50 @@ struct ShadowProjection {
     center: [f32; 2],
     core_radii: [f32; 2],
     halo_radii: [f32; 2],
+    angle: f32,
     core_alpha: u8,
     halo_alpha: u8,
 }
 
-fn shadow_projection(altitude_pixels: f32) -> ShadowProjection {
+fn wrapped_axis_angle(angle: f32) -> f32 {
+    angle.rem_euclid(PI)
+}
+
+fn shadow_axis_error_radians(first: f32, second: f32) -> f32 {
+    let delta = (wrapped_axis_angle(first) - wrapped_axis_angle(second)).abs();
+    delta.min(PI - delta)
+}
+
+fn shadow_projection(altitude_pixels: f32, heading_radians: f32) -> ShadowProjection {
     let normalized = (altitude_pixels.max(0.0) / CRUISE_ALTITUDE_PIXELS).clamp(0.0, 1.4);
     let unit = normalized.min(1.0);
     let core_scale = 1.0 - 0.36 * unit;
     let halo_scale = 1.0 - 0.24 * unit;
     ShadowProjection {
+        // The projection center remains in screen/world space beneath the fly.
+        // Only the anisotropic footprint follows the body's in-plane axis.
         center: [CENTER[0], CENTER[1] + 52.0 + normalized * 22.0],
         core_radii: [78.0 * core_scale, 9.0 * (1.0 - 0.22 * unit)],
         halo_radii: [86.0 * halo_scale, 14.0 * (1.0 - 0.12 * unit)],
+        angle: wrapped_axis_angle(heading_radians),
         core_alpha: (72.0 - 50.0 * unit).round().clamp(18.0, 72.0) as u8,
         halo_alpha: (22.0 - 14.0 * unit).round().clamp(6.0, 22.0) as u8,
     }
 }
 
-fn draw_contact_shadow(scene: &mut SceneBuilder, altitude_pixels: f32) {
-    let projection = shadow_projection(altitude_pixels);
+fn draw_contact_shadow(scene: &mut SceneBuilder, altitude_pixels: f32, heading_radians: f32) {
+    let projection = shadow_projection(altitude_pixels, heading_radians);
     scene.screen_ellipse(
         projection.center,
         projection.halo_radii,
-        0.0,
+        projection.angle,
         Rgba(3, 10, 9, projection.halo_alpha),
         None,
     );
     scene.screen_ellipse(
         projection.center,
         projection.core_radii,
-        0.0,
+        projection.angle,
         Rgba(3, 10, 9, projection.core_alpha),
         None,
     );
@@ -2308,11 +2352,17 @@ mod tests {
     }
 
     #[test]
-    fn shadow_is_screen_vertical_and_monotonic_in_z() {
+    fn shadow_center_is_screen_stable_and_footprint_tracks_heading() {
         let result = run_motion_self_test();
         assert!(result.screen_space_shadow_below_body, "{result:#?}");
         assert!(result.shadow_altitude_monotonic, "{result:#?}");
-        assert!(result.shadow_heading_invariant, "{result:#?}");
+        assert!(result.shadow_center_heading_invariant, "{result:#?}");
+        assert!(result.shadow_heading_aligned, "{result:#?}");
+        assert!(
+            result.shadow_heading_max_error_radians <= 0.001,
+            "{result:#?}"
+        );
+        assert!(result.shadow_footprint_anisotropic, "{result:#?}");
     }
 
     #[test]
