@@ -1,0 +1,109 @@
+name: Run N2 source apply without workflow mutation
+
+on:
+  push:
+    branches: ["feat/behavior-transition-telemetry-rust-v9"]
+    paths: [".github/workflows/run-n2-source-apply.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Verify only staging workflows differ from N0
+        shell: bash
+        run: |
+          base="c80d827a0d7eae9636bbf02c2916b5946f42319e"
+          test "$(git show -s --format=%T "$base")" = "c4c59970af6dbe0449a02e916580dedf06efad1d"
+          git merge-base --is-ancestor "$base" HEAD
+          mapfile -t changed < <(git diff --name-only "$base"..HEAD)
+          test "${#changed[@]}" -ge 1
+          for path in "${changed[@]}"; do
+            case "$path" in
+              .github/workflows/*) ;;
+              *) echo "unexpected pre-N2 source change: $path" >&2; exit 1 ;;
+            esac
+          done
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - name: Extract and execute the staged N2 patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/apply-n2-transition-telemetry.yml')
+          text = workflow.read_text(encoding='utf-8')
+          start = "          python3 - <<'PY'\n"
+          end = "\n          PY\n      - name: Format and inspect"
+          if text.count(start) != 1 or text.count(end) != 1:
+              raise SystemExit('cannot locate the staged N2 Python payload')
+          payload = text.split(start, 1)[1].split(end, 1)[0]
+          lines = []
+          for line in payload.splitlines():
+              if line.startswith('          '):
+                  lines.append(line[10:])
+              else:
+                  lines.append(line)
+          script = '\n'.join(lines) + '\n'
+          Path('/tmp/apply_n2_transition_telemetry.py').write_text(
+              script,
+              encoding='utf-8',
+              newline='\n',
+          )
+          PY
+          python3 /tmp/apply_n2_transition_telemetry.py
+      - name: Format and inspect source changes
+        shell: bash
+        run: |
+          cargo fmt --all
+          git diff --check
+          git status --short
+      - name: Test Rust workspace and lint
+        shell: bash
+        run: |
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Run headless behavior telemetry smoke
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          cargo run --locked -p mechofly-app -- \
+            --behavior-baseline artifacts/behavior-telemetry-smoke.json \
+            --baseline-seeds 1 \
+            --baseline-repeats 2 \
+            --baseline-seconds 3
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('artifacts/behavior-telemetry-smoke.json').read_text())
+          assert value['schema_version'] == 1
+          assert value['status'] == 'PASS'
+          assert value['scenario_count'] == 5
+          assert value['run_count'] == 10
+          assert value['all_repeat_groups_equal'] is True
+          assert value['telemetry_observational_only'] is True
+          assert value['controller_semantics_changed'] is False
+          assert value['total_transition_count'] > 0
+          PY
+      - name: Publish source-only N2 candidate
+        shell: bash
+        run: |
+          git config user.name "Yael Demedetskaya"
+          git config user.email "31790191+yaelkroy@users.noreply.github.com"
+          git add \
+            .github/workflows/windows.yml \
+            crates/mechofly-core/src/behavior_telemetry.rs \
+            crates/mechofly-core/src/lib.rs \
+            crates/mechofly-core/src/model.rs \
+            crates/mechofly-app/src/behavior_baseline.rs \
+            crates/mechofly-app/src/main.rs \
+            crates/mechofly-app/src/brain_lab.rs \
+            crates/mechofly-app/src/self_test.rs \
+            tools/Setup-AI100-MechoFly.ps1
+          git commit -m "N2: add observational behavior transition telemetry"
+          git push origin HEAD:feat/behavior-transition-telemetry-rust-v9
