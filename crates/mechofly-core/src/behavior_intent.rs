@@ -4,8 +4,7 @@
 //! deliberately adds no smoothing, duration sampling, policy bias, or new inputs.
 
 use crate::{
-    behavior_telemetry::BEHAVIOR_TELEMETRY_SCHEMA_VERSION,
-    model::Behavior,
+    behavior_telemetry::BEHAVIOR_TELEMETRY_SCHEMA_VERSION, model::Behavior,
     neural_evidence::NeuralEvidence,
 };
 

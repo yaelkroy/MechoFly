@@ -196,7 +196,8 @@ impl ModelEngine {
         self.state.spikes = spikes;
         self.state.frame += 1;
         let spike_count = self.state.spikes.iter().map(|value| *value as usize).sum();
-        let evidence = NeuralEvidence::collect(self.state.frame, &self.state.activation, spike_count);
+        let evidence =
+            NeuralEvidence::collect(self.state.frame, &self.state.activation, spike_count);
         let mean_activation_q15 = evidence.mean_activation_q15;
         let intent = BehaviorIntentBuilder::build(
             &evidence,

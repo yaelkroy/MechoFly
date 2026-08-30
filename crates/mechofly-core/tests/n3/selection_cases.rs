@@ -54,11 +54,25 @@ fn spike_rate_strict_boundary_and_saturating_representation_preserved() {
         behavior: Behavior::Rest,
         behavior_age_frames: 0,
     };
-    for spikes in [0, 1_199, 1_200, 1_201, 10_000, u32::MAX as usize, usize::MAX] {
+    for spikes in [
+        0,
+        1_199,
+        1_200,
+        1_201,
+        10_000,
+        u32::MAX as usize,
+        usize::MAX,
+    ] {
         assert_selector_parity(&state, spikes);
     }
-    assert_eq!(LegacyBehaviorSelector::select(&new_intent(&state, 1_200)).behavior, Behavior::Walk);
-    assert_eq!(LegacyBehaviorSelector::select(&new_intent(&state, 1_201)).behavior, Behavior::Alert);
+    assert_eq!(
+        LegacyBehaviorSelector::select(&new_intent(&state, 1_200)).behavior,
+        Behavior::Walk
+    );
+    assert_eq!(
+        LegacyBehaviorSelector::select(&new_intent(&state, 1_201)).behavior,
+        Behavior::Alert
+    );
     state.activation.clear();
     state.spikes.clear();
     for spikes in [0, 1, usize::MAX] {
@@ -92,7 +106,11 @@ fn sparse_population_extrema_and_signed_mean_match_frozen_rules() {
         let expected_mean = if count == 0 {
             0
         } else {
-            (state.activation.iter().map(|value| i64::from(*value)).sum::<i64>()
+            (state
+                .activation
+                .iter()
+                .map(|value| i64::from(*value))
+                .sum::<i64>()
                 / count as i64) as i32
         };
         assert_eq!(evidence.mean_activation_q15, expected_mean);
@@ -123,12 +141,20 @@ fn intent_serialization_is_byte_exact_and_round_trips() {
         "\"authored_behavior_entry_threshold_q15\":4600}"
     );
     assert_eq!(encoded, expected.as_bytes());
-    assert_eq!(encoded, serde_json::to_vec(&frozen::intent(&state, 2)).unwrap());
+    assert_eq!(
+        encoded,
+        serde_json::to_vec(&frozen::intent(&state, 2)).unwrap()
+    );
     let decoded: BehaviorIntentSnapshot = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(decoded, intent);
-    assert_eq!(LegacyBehaviorSelector::select(&decoded), LegacyBehaviorSelector::select(&intent));
+    assert_eq!(
+        LegacyBehaviorSelector::select(&decoded),
+        LegacyBehaviorSelector::select(&intent)
+    );
     let before = state.clone();
     let _ = new_intent(&state, 2);
-    assert_eq!(state, before, "intent construction may not mutate source state");
+    assert_eq!(
+        state, before,
+        "intent construction may not mutate source state"
+    );
 }
-

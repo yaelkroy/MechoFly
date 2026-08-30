@@ -69,13 +69,16 @@ fn assert_selector_parity(state: &ModelState, spikes: usize) {
     assert_eq!(intent, old_intent);
     let decision = LegacyBehaviorSelector::select(&intent);
     let old_behavior = frozen::behavior(state, spikes);
-    assert_eq!(decision.behavior, old_behavior, "state={state:?}, spikes={spikes}");
+    assert_eq!(
+        decision.behavior, old_behavior,
+        "state={state:?}, spikes={spikes}"
+    );
     let old_reason = (old_behavior != state.behavior)
         .then(|| frozen::reason(state.behavior, old_behavior, &old_intent));
     assert_eq!(decision.transition_reason, old_reason);
 }
 
-#[path = "n3/selection_cases.rs"]
-mod selection_cases;
 #[path = "n3/engine_cases.rs"]
 mod engine_cases;
+#[path = "n3/selection_cases.rs"]
+mod selection_cases;

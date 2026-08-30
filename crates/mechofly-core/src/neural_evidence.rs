@@ -4,9 +4,8 @@
 //! maximum activation in its strided lane, not a mean or a measured firing rate.
 
 use crate::model::{
-    ACTIVATION_MIN, ALERT_POPULATION_OFFSET, FUNCTIONAL_POPULATION_COUNT,
-    GROOM_POPULATION_OFFSET, LOOM_POPULATION_OFFSET, REVERSE_POPULATION_OFFSET,
-    WALK_POPULATION_OFFSET,
+    ACTIVATION_MIN, ALERT_POPULATION_OFFSET, FUNCTIONAL_POPULATION_COUNT, GROOM_POPULATION_OFFSET,
+    LOOM_POPULATION_OFFSET, REVERSE_POPULATION_OFFSET, WALK_POPULATION_OFFSET,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,8 +29,8 @@ impl NeuralEvidence {
         let mean_activation_q15 = if activation.is_empty() {
             0
         } else {
-            (activation.iter().map(|value| *value as i64).sum::<i64>()
-                / activation.len() as i64) as i32
+            (activation.iter().map(|value| *value as i64).sum::<i64>() / activation.len() as i64)
+                as i32
         };
         Self {
             frame,

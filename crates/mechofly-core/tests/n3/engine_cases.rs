@@ -47,7 +47,12 @@ impl ReferenceEngine {
         let mean = if self.state.activation.is_empty() {
             0
         } else {
-            (self.state.activation.iter().map(|value| *value as i64).sum::<i64>()
+            (self
+                .state
+                .activation
+                .iter()
+                .map(|value| *value as i64)
+                .sum::<i64>()
                 / self.state.activation.len() as i64) as i32
         };
         self.intent = frozen::intent(&self.state, spike_count);
@@ -85,8 +90,14 @@ impl ReferenceEngine {
 fn assert_engine_equal(candidate: &ModelEngine, reference: &ReferenceEngine) {
     assert_eq!(candidate.state, reference.state);
     assert_eq!(candidate.last_behavior_intent, reference.intent);
-    assert_eq!(candidate.behavior_telemetry_stream_sha256(), reference.ledger.event_stream_sha256());
-    assert_eq!(candidate.latest_behavior_transition(), reference.ledger.latest());
+    assert_eq!(
+        candidate.behavior_telemetry_stream_sha256(),
+        reference.ledger.event_stream_sha256()
+    );
+    assert_eq!(
+        candidate.latest_behavior_transition(),
+        reference.ledger.latest()
+    );
 }
 
 #[test]
@@ -96,7 +107,8 @@ fn per_frame_neural_state_intent_events_and_checkpoint_parity() {
         let graph = Arc::new(ModelGraph::synthetic(ModelTier::Demo4096, seed));
         for scenario in 0..5 {
             let mut candidate = ModelEngine::new(Arc::clone(&graph), 0x7E1E_0000 ^ seed);
-            let mut reference = ReferenceEngine::from_state(Arc::clone(&graph), candidate.state.clone());
+            let mut reference =
+                ReferenceEngine::from_state(Arc::clone(&graph), candidate.state.clone());
             for frame in 0..900_u64 {
                 let mut stimulus = vec![0; graph.neuron_ids.len()];
                 let offset = match scenario {
@@ -115,24 +127,40 @@ fn per_frame_neural_state_intent_events_and_checkpoint_parity() {
                     _ => None,
                 };
                 if let Some(offset) = offset {
-                    for value in stimulus.iter_mut().skip(offset).step_by(FUNCTIONAL_POPULATION_COUNT) {
+                    for value in stimulus
+                        .iter_mut()
+                        .skip(offset)
+                        .step_by(FUNCTIONAL_POPULATION_COUNT)
+                    {
                         *value = 8_192;
                     }
                 }
-                let actual = candidate.step_cpu(StepInput { stimulus_q15: &stimulus });
+                let actual = candidate.step_cpu(StepInput {
+                    stimulus_q15: &stimulus,
+                });
                 let expected = reference.step(&stimulus);
-                assert_eq!(actual, expected, "seed={seed} scenario={scenario} frame={frame}");
-                assert_eq!(serde_json::to_vec(&actual).unwrap(), serde_json::to_vec(&expected).unwrap());
+                assert_eq!(
+                    actual, expected,
+                    "seed={seed} scenario={scenario} frame={frame}"
+                );
+                assert_eq!(
+                    serde_json::to_vec(&actual).unwrap(),
+                    serde_json::to_vec(&expected).unwrap()
+                );
                 assert_engine_equal(&candidate, &reference);
                 if frame == 449 {
                     let serialized = serde_json::to_vec(&candidate.state).unwrap();
                     let restored: ModelState = serde_json::from_slice(&serialized).unwrap();
-                    candidate = ModelEngine::from_state(Arc::clone(&graph), restored.clone()).unwrap();
+                    candidate =
+                        ModelEngine::from_state(Arc::clone(&graph), restored.clone()).unwrap();
                     reference = ReferenceEngine::from_state(Arc::clone(&graph), restored);
                     assert_engine_equal(&candidate, &reference);
                 }
             }
-            assert_eq!(candidate.behavior_telemetry_snapshot(), reference.ledger.snapshot(reference.intent));
+            assert_eq!(
+                candidate.behavior_telemetry_snapshot(),
+                reference.ledger.snapshot(reference.intent)
+            );
         }
     }
     println!("N3_FRAMEWISE_FULL_GRAPH_CHECKS=9000");
@@ -147,7 +175,11 @@ fn accepted_backend_output_parity_survives_ring_eviction_and_disabled_logging() 
     let mut reference = ReferenceEngine::from_state(graph, candidate.state.clone());
     for frame in 0..1_400 {
         let mut activation = vec![ACTIVATION_MIN; candidate.state.activation.len()];
-        let offset = if frame % 2 == 0 { ALERT_POPULATION_OFFSET } else { WALK_POPULATION_OFFSET };
+        let offset = if frame % 2 == 0 {
+            ALERT_POPULATION_OFFSET
+        } else {
+            WALK_POPULATION_OFFSET
+        };
         activation[offset] = 4_600;
         let spikes = vec![0; activation.len()];
         let expected = reference.accept(activation.clone(), spikes.clone());
@@ -162,5 +194,8 @@ fn accepted_backend_output_parity_survives_ring_eviction_and_disabled_logging() 
     assert_eq!(telemetry.dropped_event_count, 888);
     assert_eq!(telemetry, reference.ledger.snapshot(reference.intent));
     assert_eq!(disabled.behavior_telemetry_total_event_count(), 0);
-    assert_eq!(disabled.last_behavior_intent, candidate.last_behavior_intent);
+    assert_eq!(
+        disabled.last_behavior_intent,
+        candidate.last_behavior_intent
+    );
 }

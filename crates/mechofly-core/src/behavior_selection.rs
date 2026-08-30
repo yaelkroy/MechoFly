@@ -5,12 +5,13 @@
 
 use crate::{
     behavior_intent::{
-        AUTHORED_BEHAVIOR_ACTIVATION_Q15, BehaviorIntentSnapshot,
-        LOOM_ESCAPE_ACTIVATION_Q15, SPIKE_ALERT_THRESHOLD_PER_10K,
+        AUTHORED_BEHAVIOR_ACTIVATION_Q15, BehaviorIntentSnapshot, LOOM_ESCAPE_ACTIVATION_Q15,
+        SPIKE_ALERT_THRESHOLD_PER_10K,
     },
     behavior_telemetry::BehaviorTransitionReason,
-    model::{Behavior, ESCAPE_HOLD_FRAMES, FLIGHT_HOLD_FRAMES, GROOM_HOLD_FRAMES,
-        LANDING_HOLD_FRAMES},
+    model::{
+        Behavior, ESCAPE_HOLD_FRAMES, FLIGHT_HOLD_FRAMES, GROOM_HOLD_FRAMES, LANDING_HOLD_FRAMES,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,9 +28,8 @@ impl LegacyBehaviorSelector {
         let behavior = select_behavior(intent);
         BehaviorDecision {
             behavior,
-            transition_reason: (behavior != intent.current_behavior).then(|| {
-                classify_transition_reason(intent.current_behavior, behavior, intent)
-            }),
+            transition_reason: (behavior != intent.current_behavior)
+                .then(|| classify_transition_reason(intent.current_behavior, behavior, intent)),
         }
     }
 }
@@ -127,4 +127,3 @@ fn classify_transition_reason(
         BehaviorTransitionReason::LegacyAutonomousSchedule
     }
 }
-
