@@ -34,6 +34,7 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
+          import base64
           from pathlib import Path
 
           workflow = Path('.github/workflows/apply-n2-transition-telemetry.yml')
@@ -45,11 +46,11 @@ jobs:
           payload = text[start_index:end_index]
           lines = []
           for line in payload.splitlines():
-              if line.startswith('          '):
-                  lines.append(line[10:])
-              else:
-                  lines.append(line)
+              lines.append(line[10:] if line.startswith('          ') else line)
           script = '\n'.join(lines) + '\n'
+
+          def decoded(value):
+              return base64.b64decode(value).decode('utf-8')
 
           def replace_patcher_block(source, start_marker, end_marker, replacement):
               left = source.index(start_marker)
@@ -57,93 +58,17 @@ jobs:
               return source[:left] + replacement + source[right:]
 
           triple = '"' * 3
-          groom_start = (
-              'replace_once(\n    self_test,\n    ' + triple +
-              '    let grooming_substate_timeline'
-          )
-          receipt_start = (
-              'replace_once(\n    self_test,\n    ' + triple +
-              '    let receipt = SelfTestReceipt'
-          )
-          pass_start = (
-              'replace_once(\n    self_test,\n    ' + triple +
-              '            && two_way_neuron_selection_sync'
-          )
-          fields_start = (
-              'replace_once(\n    self_test,\n    ' + triple +
-              '        behavior_controller_authoritative:'
-          )
+          groom_start = 'replace_once(\n    self_test,\n    ' + triple + '    let grooming_substate_timeline'
+          receipt_start = 'replace_once(\n    self_test,\n    ' + triple + '    let receipt = SelfTestReceipt'
+          pass_start = 'replace_once(\n    self_test,\n    ' + triple + '            && two_way_neuron_selection_sync'
+          fields_start = 'replace_once(\n    self_test,\n    ' + triple + '        behavior_controller_authoritative:'
 
-          script = replace_patcher_block(
-              script,
-              groom_start,
-              receipt_start,
-              """replace_regex_once(
-          self_test,
-          r'(    let grooming_substate_timeline = grooming_program_substates\\.iter\\(\\)\\.map\\(String::as_str\\)\\.eq\\(\\[.*?    \\]\\);\\n)(\\n    #\\[cfg\\(windows\\)\\])',
-          r'\\1    let behavior_telemetry = run_behavior_telemetry_self_test(Arc::clone(&graph));\\n\\2',
-      )
+          script = replace_patcher_block(script, groom_start, receipt_start, decoded('cmVwbGFjZV9yZWdleF9vbmNlKAogICAgc2VsZl90ZXN0LAogICAgcicoICAgIGxldCBncm9vbWluZ19zdWJzdGF0ZV90aW1lbGluZSA9IGdyb29taW5nX3Byb2dyYW1fc3Vic3RhdGVzXC5pdGVyXChcKVwubWFwXChTdHJpbmc6OmFzX3N0clwpXC5lcVwoXFsuKj8gICAgXF1cKTtcbikoXG4gICAgI1xbY2ZnXCh3aW5kb3dzXClcXSknLAogICAgcidcMSAgICBsZXQgYmVoYXZpb3JfdGVsZW1ldHJ5ID0gcnVuX2JlaGF2aW9yX3RlbGVtZXRyeV9zZWxmX3Rlc3QoQXJjOjpjbG9uZSgmZ3JhcGgpKTtcblwyJywKKQoK'))
+          script = replace_patcher_block(script, receipt_start, pass_start, decoded('cmVwbGFjZV9yZWdleF9vbmNlKAogICAgc2VsZl90ZXN0LAogICAgcicoICAgIGxldCByZWNlaXB0ID0gU2VsZlRlc3RSZWNlaXB0IFx7XG5ccyopc2NoZW1hX3ZlcnNpb246IDYsJywKICAgIHInXDFzY2hlbWFfdmVyc2lvbjogNywnLAopCgo='))
+          script = replace_patcher_block(script, pass_start, fields_start, decoded('cmVwbGFjZV9yZWdleF9vbmNlKAogICAgc2VsZl90ZXN0LAogICAgcicoXHMrJiYgdHdvX3dheV9uZXVyb25fc2VsZWN0aW9uX3N5bmNcblxzKyYmIGdyb29taW5nX3N1YnN0YXRlX3RpbWVsaW5lXG4pKFxzKyYmIGFuYXRvbWljYWxfY29udGV4dF9wb2ludHMgPT0gMjNfMjEwKScsCiAgICByJ1wxICAgICAgICAgICAgJiYgYmVoYXZpb3JfdGVsZW1ldHJ5LnBhc3NlZFxuXDInLAopCgo='))
+          script = replace_patcher_block(script, fields_start, 'workflow = ".github/workflows/windows.yml"', decoded('cmVwbGFjZV9yZWdleF9vbmNlKAogICAgc2VsZl90ZXN0LAogICAgcicoICAgICAgICBiZWhhdmlvcl9jb250cm9sbGVyX2F1dGhvcml0YXRpdmU6IHJlbmRlcmVkX2JlaGF2aW9yX21hdGNoZXNfbmV1cmFsX3N0YXRlXG4gICAgICAgICAgICAmJiBwb2xpY3lfYWN0aW9uX25ldXJhbF9kaXNwYXRjaCxcbikoICAgICAgICBlc2NhcGVfZW52ZWxvcGVfbXM6KScsCiAgICAoCiAgICAgICAgcidcMScKICAgICAgICAnICAgICAgICBiZWhhdmlvcl90ZWxlbWV0cnlfc2NoZW1hX3ZlcnNpb246IEJFSEFWSU9SX1RFTEVNRVRSWV9TQ0hFTUFfVkVSU0lPTixcbicKICAgICAgICAnICAgICAgICBiZWhhdmlvcl90ZWxlbWV0cnlfY29udHJvbGxlcjogQkVIQVZJT1JfVEVMRU1FVFJZX0NPTlRST0xMRVIudG9fb3duZWQoKSxcbicKICAgICAgICAnICAgICAgICBiZWhhdmlvcl90ZWxlbWV0cnlfY2xhaW1fYm91bmRhcnk6IEJFSEFWSU9SX1RFTEVNRVRSWV9DTEFJTV9CT1VOREFSWS50b19vd25lZCgpLFxuJwogICAgICAgICcgICAgICAgIGJlaGF2aW9yX3RyYW5zaXRpb25fZXZlbnRfY291bnQ6IGJlaGF2aW9yX3RlbGVtZXRyeS5ldmVudF9jb3VudCxcbicKICAgICAgICAnICAgICAgICBiZWhhdmlvcl90cmFuc2l0aW9uX3N0cmVhbV9zaGEyNTY6IGJlaGF2aW9yX3RlbGVtZXRyeS5ldmVudF9zdHJlYW1fc2hhMjU2LFxuJwogICAgICAgICcgICAgICAgIGJlaGF2aW9yX3RyYW5zaXRpb25fc2VxdWVuY2VfY29udGlndW91czogYmVoYXZpb3JfdGVsZW1ldHJ5LnNlcXVlbmNlX2NvbnRpZ3VvdXMsXG4nCiAgICAgICAgJyAgICAgICAgYmVoYXZpb3JfdHJhbnNpdGlvbl90ZWxlbWV0cnlfYm91bmRlZDogYmVoYXZpb3JfdGVsZW1ldHJ5LmJvdW5kZWQsXG4nCiAgICAgICAgJyAgICAgICAgYmVoYXZpb3JfdHJhbnNpdGlvbl90ZWxlbWV0cnlfZGV0ZXJtaW5pc3RpYzogYmVoYXZpb3JfdGVsZW1ldHJ5LmRldGVybWluaXN0aWMsXG4nCiAgICAgICAgJyAgICAgICAgYmVoYXZpb3JfdHJhbnNpdGlvbl90ZWxlbWV0cnlfb2JzZXJ2YXRpb25hbF9vbmx5OiBiZWhhdmlvcl90ZWxlbWV0cnkub2JzZXJ2YXRpb25hbF9vbmx5LFxuJwogICAgICAgICcgICAgICAgIGJlaGF2aW9yX3RyYW5zaXRpb25fcmVhc29uc19jb21wbGV0ZTogYmVoYXZpb3JfdGVsZW1ldHJ5LnJlYXNvbnNfY29tcGxldGUsXG4nCiAgICAgICAgJyAgICAgICAgYmVoYXZpb3JfaW50ZW50X3NuYXBzaG90X2F2YWlsYWJsZTogYmVoYXZpb3JfdGVsZW1ldHJ5LmludGVudF9zbmFwc2hvdF9hdmFpbGFi bGUsXG4nCiAgICAgICAgcidcMicKICAgICksCikKCg=='.replace(' ', '')))
 
-      """,
-          )
-          script = replace_patcher_block(
-              script,
-              receipt_start,
-              pass_start,
-              """replace_regex_once(
-          self_test,
-          r'(    let receipt = SelfTestReceipt \\{\\n\\s*)schema_version: 6,',
-          r'\\1schema_version: 7,',
-      )
-
-      """,
-          )
-          script = replace_patcher_block(
-              script,
-              pass_start,
-              fields_start,
-              """replace_regex_once(
-          self_test,
-          r'(\\s+&& two_way_neuron_selection_sync\\n\\s+&& grooming_substate_timeline\\n)(\\s+&& anatomical_context_points == 23_210)',
-          r'\\1            && behavior_telemetry.passed\\n\\2',
-      )
-
-      """,
-          )
-          receipt_fields = (
-              "replace_regex_once(\n"
-              "    self_test,\n"
-              "    r'(        behavior_controller_authoritative: rendered_behavior_matches_neural_state\\n"
-              "            && policy_action_neural_dispatch,\\n)(        escape_envelope_ms:)',\n"
-              "    (\n"
-              "        r'\\1'\n"
-              "        '        behavior_telemetry_schema_version: BEHAVIOR_TELEMETRY_SCHEMA_VERSION,\\n'\n"
-              "        '        behavior_telemetry_controller: BEHAVIOR_TELEMETRY_CONTROLLER.to_owned(),\\n'\n"
-              "        '        behavior_telemetry_claim_boundary: BEHAVIOR_TELEMETRY_CLAIM_BOUNDARY.to_owned(),\\n'\n"
-              "        '        behavior_transition_event_count: behavior_telemetry.event_count,\\n'\n"
-              "        '        behavior_transition_stream_sha256: behavior_telemetry.event_stream_sha256,\\n'\n"
-              "        '        behavior_transition_sequence_contiguous: behavior_telemetry.sequence_contiguous,\\n'\n"
-              "        '        behavior_transition_telemetry_bounded: behavior_telemetry.bounded,\\n'\n"
-              "        '        behavior_transition_telemetry_deterministic: behavior_telemetry.deterministic,\\n'\n"
-              "        '        behavior_transition_telemetry_observational_only: behavior_telemetry.observational_only,\\n'\n"
-              "        '        behavior_transition_reasons_complete: behavior_telemetry.reasons_complete,\\n'\n"
-              "        '        behavior_intent_snapshot_available: behavior_telemetry.intent_snapshot_available,\\n'\n"
-              "        r'\\2'\n"
-              "    ),\n"
-              ")\n\n"
-          )
-          script = replace_patcher_block(
-              script,
-              fields_start,
-              'workflow = ".github/workflows/windows.yml"',
-              receipt_fields,
-          )
-
-          Path('/tmp/apply_n2_transition_telemetry.py').write_text(
-              script,
-              encoding='utf-8',
-              newline='\n',
-          )
+          Path('/tmp/apply_n2_transition_telemetry.py').write_text(script, encoding='utf-8', newline='\n')
           PY
           python3 /tmp/apply_n2_transition_telemetry.py
       - name: Format and inspect source changes
