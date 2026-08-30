@@ -1,8 +1,10 @@
 use std::{fs, path::Path, sync::Arc};
 
 use mechofly_core::{
-    Action, Behavior, Feedback, ModelCheckpoint, ModelEngine, ModelGraph, ModelTier, PetPolicy,
-    PolicyContext, StepInput, StimulationPolicy, StimulationRequest,
+    Action, BEHAVIOR_TELEMETRY_CLAIM_BOUNDARY, BEHAVIOR_TELEMETRY_CONTROLLER,
+    BEHAVIOR_TELEMETRY_SCHEMA_VERSION, Behavior, Feedback, MAX_BEHAVIOR_TRANSITION_EVENTS,
+    ModelCheckpoint, ModelEngine, ModelGraph, ModelTier, PetPolicy, PolicyContext, StepInput,
+    StimulationPolicy, StimulationRequest,
     model::{
         ALERT_POPULATION_OFFSET, ESCAPE_HOLD_FRAMES, FLIGHT_HOLD_FRAMES,
         FUNCTIONAL_POPULATION_COUNT, GROOM_HOLD_FRAMES, GROOM_POPULATION_OFFSET,
@@ -61,6 +63,17 @@ struct SelfTestReceipt {
     policy_action_neural_dispatch: bool,
     rendered_behavior_matches_neural_state: bool,
     behavior_controller_authoritative: bool,
+    behavior_telemetry_schema_version: u32,
+    behavior_telemetry_controller: String,
+    behavior_telemetry_claim_boundary: String,
+    behavior_transition_event_count: u64,
+    behavior_transition_stream_sha256: String,
+    behavior_transition_sequence_contiguous: bool,
+    behavior_transition_telemetry_bounded: bool,
+    behavior_transition_telemetry_deterministic: bool,
+    behavior_transition_telemetry_observational_only: bool,
+    behavior_transition_reasons_complete: bool,
+    behavior_intent_snapshot_available: bool,
     escape_envelope_ms: u32,
     flight_envelope_ms: u32,
     landing_envelope_ms: u32,
@@ -91,6 +104,101 @@ struct SelfTestReceipt {
     grooming_substate_timeline: bool,
     anatomical_context_points: usize,
     anatomical_context_measured: bool,
+}
+
+#[derive(Clone, Debug)]
+struct BehaviorTelemetrySelfTest {
+    passed: bool,
+    event_count: u64,
+    event_stream_sha256: String,
+    sequence_contiguous: bool,
+    bounded: bool,
+    deterministic: bool,
+    observational_only: bool,
+    reasons_complete: bool,
+    intent_snapshot_available: bool,
+}
+
+fn run_behavior_telemetry_self_test(graph: Arc<ModelGraph>) -> BehaviorTelemetrySelfTest {
+    let mut first = ModelEngine::new(Arc::clone(&graph), 0x7E1E_0011);
+    let mut second = ModelEngine::new(Arc::clone(&graph), 0x7E1E_0011);
+    let mut disabled = ModelEngine::new(graph, 0x7E1E_0011);
+    disabled.set_behavior_telemetry_enabled(false);
+    let mut observational_only = true;
+
+    for frame in 0..720_u64 {
+        let mut stimulus = first.empty_stimulus();
+        let phase = (frame / 90) % 8;
+        let offset = match phase {
+            1 => Some(WALK_POPULATION_OFFSET),
+            2 => Some(GROOM_POPULATION_OFFSET),
+            3 => Some(ALERT_POPULATION_OFFSET),
+            4 => Some(REVERSE_POPULATION_OFFSET),
+            5 if frame % 90 < 12 => Some(LOOM_POPULATION_OFFSET),
+            _ => None,
+        };
+        if let Some(offset) = offset {
+            for value in stimulus
+                .iter_mut()
+                .skip(offset)
+                .step_by(FUNCTIONAL_POPULATION_COUNT)
+            {
+                *value = 8_192;
+            }
+        }
+
+        let first_summary = first.step_cpu(StepInput {
+            stimulus_q15: &stimulus,
+        });
+        let second_summary = second.step_cpu(StepInput {
+            stimulus_q15: &stimulus,
+        });
+        let disabled_summary = disabled.step_cpu(StepInput {
+            stimulus_q15: &stimulus,
+        });
+        observational_only &= first_summary == second_summary
+            && first_summary == disabled_summary
+            && first.state == second.state
+            && first.state == disabled.state;
+    }
+
+    let first_snapshot = first.behavior_telemetry_snapshot();
+    let second_snapshot = second.behavior_telemetry_snapshot();
+    let disabled_snapshot = disabled.behavior_telemetry_snapshot();
+    let deterministic = first_snapshot == second_snapshot;
+    let bounded = first_snapshot.retained_event_count <= first_snapshot.capacity
+        && first_snapshot.dropped_event_count + first_snapshot.retained_event_count as u64
+            == first_snapshot.total_event_count
+        && first_snapshot.capacity == MAX_BEHAVIOR_TRANSITION_EVENTS;
+    observational_only &= disabled_snapshot.total_event_count == 0
+        && !disabled.behavior_telemetry_enabled()
+        && first_snapshot.observational_only
+        && !first_snapshot.controller_semantics_changed;
+    let reasons_complete = first_snapshot
+        .events
+        .iter()
+        .all(|event| !event.reason.as_str().is_empty());
+    let intent_snapshot_available =
+        first_snapshot.latest_intent.schema_version == BEHAVIOR_TELEMETRY_SCHEMA_VERSION;
+    let passed = first_snapshot.total_event_count > 0
+        && first_snapshot.retained_sequence_contiguous
+        && bounded
+        && deterministic
+        && observational_only
+        && reasons_complete
+        && intent_snapshot_available;
+
+    BehaviorTelemetrySelfTest {
+        passed,
+        event_count: first_snapshot.total_event_count,
+        event_stream_sha256: first_snapshot.event_stream_sha256,
+        sequence_contiguous: first_snapshot.retained_sequence_contiguous,
+        bounded,
+        deterministic,
+        observational_only,
+        reasons_complete,
+        intent_snapshot_available,
+    }
 }
 
 pub fn run(path: &Path) -> Result<(), String> {
@@ -242,6 +350,7 @@ pub fn run(path: &Path) -> Result<(), String> {
         "LIMB RUB",
         "RESET",
     ]);
+    let behavior_telemetry = run_behavior_telemetry_self_test(Arc::clone(&graph));
 
     #[cfg(windows)]
     let hotkeys = crate::desktop_pet::run_hotkey_self_test();
@@ -267,7 +376,7 @@ pub fn run(path: &Path) -> Result<(), String> {
     };
 
     let receipt = SelfTestReceipt {
-        schema_version: 6,
+        schema_version: 7,
         status: if comparison.receipt.live_state_unchanged
             && comparison.receipt.alternative_differs
             && live_before == live_after
@@ -282,6 +391,7 @@ pub fn run(path: &Path) -> Result<(), String> {
             && two_dimensional_flight_motion
             && two_way_neuron_selection_sync
             && grooming_substate_timeline
+            && behavior_telemetry.passed
             && anatomical_context_points == 23_210
         {
             "PASS".to_owned()
@@ -332,6 +442,17 @@ pub fn run(path: &Path) -> Result<(), String> {
         rendered_behavior_matches_neural_state,
         behavior_controller_authoritative: rendered_behavior_matches_neural_state
             && policy_action_neural_dispatch,
+        behavior_telemetry_schema_version: BEHAVIOR_TELEMETRY_SCHEMA_VERSION,
+        behavior_telemetry_controller: BEHAVIOR_TELEMETRY_CONTROLLER.to_owned(),
+        behavior_telemetry_claim_boundary: BEHAVIOR_TELEMETRY_CLAIM_BOUNDARY.to_owned(),
+        behavior_transition_event_count: behavior_telemetry.event_count,
+        behavior_transition_stream_sha256: behavior_telemetry.event_stream_sha256,
+        behavior_transition_sequence_contiguous: behavior_telemetry.sequence_contiguous,
+        behavior_transition_telemetry_bounded: behavior_telemetry.bounded,
+        behavior_transition_telemetry_deterministic: behavior_telemetry.deterministic,
+        behavior_transition_telemetry_observational_only: behavior_telemetry.observational_only,
+        behavior_transition_reasons_complete: behavior_telemetry.reasons_complete,
+        behavior_intent_snapshot_available: behavior_telemetry.intent_snapshot_available,
         escape_envelope_ms: (ESCAPE_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
         flight_envelope_ms: (FLIGHT_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
         landing_envelope_ms: (LANDING_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
