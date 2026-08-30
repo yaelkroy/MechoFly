@@ -3,7 +3,10 @@ name: Run N2 source apply without workflow mutation
 on:
   push:
     branches: ["feat/behavior-transition-telemetry-rust-v9"]
-    paths: [".github/workflows/run-n2-source-apply.yml"]
+    paths:
+      - ".github/workflows/run-n2-source-apply.yml"
+      - "tools/Stage-N2-Transition-Telemetry.py"
+      - "tools/Stage-N2-Transition-Telemetry-v2.py"
 
 permissions:
   contents: write
