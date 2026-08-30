@@ -18,8 +18,8 @@ jobs:
       - name: Verify exact N0 parent
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "c80d827a0d7eae9636bbf02c2916b5946f42319e"
-          test "$(git rev-parse HEAD^{tree})" = "c4c59970af6dbe0449a02e916580dedf06efad1d"
+          test "$(git rev-parse HEAD^)" = "c80d827a0d7eae9636bbf02c2916b5946f42319e"
+          test "$(git show -s --format=%T HEAD^)" = "c4c59970af6dbe0449a02e916580dedf06efad1d"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
       - name: Apply observational transition telemetry
         shell: bash
