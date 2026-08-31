@@ -26,7 +26,7 @@ pub use behavior_telemetry::{
 pub use connectome::{ConnectomeImport, ConnectomeImportError, ImportManifest};
 pub use graph::{GraphIdentity, ModelGraph, ModelTier};
 pub use learning::{Action, Feedback, LearningLedgerEntry, PetPolicy, PolicyContext};
-pub use model::{Behavior, FrameSummary, ModelEngine, ModelState, StepInput};
+pub use model::{Behavior, FrameSummary, ModelEngine, ModelState, StepComponentTimings, StepInput};
 pub use neural_evidence::NeuralEvidence;
 pub use provenance::{ClaimLayer, ProvenanceRecord, sha256_hex};
 pub use replay::{BoundedReplay, ModelCheckpoint};

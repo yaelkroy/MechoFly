@@ -7,9 +7,59 @@ use sha2::{Digest, Sha256};
 use crate::model::Behavior;
 
 pub const PARAMETERS_JSON: &str = include_str!("../parameters/n4-engineering-v1.json");
+pub const N41_A_PARAMETERS_JSON: &str =
+    include_str!("../parameters/n4.1-soft-fatigue-a-responsive-v1.json");
+pub const N41_B_PARAMETERS_JSON: &str =
+    include_str!("../parameters/n4.1-soft-fatigue-b-balanced-v1.json");
+pub const N41_C_PARAMETERS_JSON: &str =
+    include_str!("../parameters/n4.1-soft-fatigue-c-conservative-v1.json");
 pub const DYNAMICS_VERSION: &str = "n4-explicit-duration-engineering-v1";
+pub const N41_DYNAMICS_VERSION: &str = "n4.1-graded-fatigue-engineering-v1";
 pub const DYNAMICS_CLAIM: &str =
     "MODELED / ENGINEERING PRIOR; context and duration rules are authored, not biologically fitted";
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FatiguePolicy {
+    #[default]
+    HardGate,
+    GradedResponse,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BehaviorParameterProfile {
+    #[default]
+    N4,
+    N41A,
+    N41B,
+    N41C,
+}
+
+impl BehaviorParameterProfile {
+    pub const ALL: [Self; 4] = [Self::N4, Self::N41A, Self::N41B, Self::N41C];
+
+    pub const fn cli(self) -> &'static str {
+        match self {
+            Self::N4 => "n4",
+            Self::N41A => "n41-a",
+            Self::N41B => "n41-b",
+            Self::N41C => "n41-c",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "n4" => Ok(Self::N4),
+            "n41-a" => Ok(Self::N41A),
+            "n41-b" => Ok(Self::N41B),
+            "n41-c" => Ok(Self::N41C),
+            _ => Err(format!(
+                "unknown behavior parameter profile {value:?}; expected n4, n41-a, n41-b, or n41-c"
+            )),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,6 +91,14 @@ pub struct BehaviorParameters {
     pub contamination_on_q15: i32,
     pub fatigue_rest_q15: i32,
     pub fatigue_critical_q15: i32,
+    #[serde(default)]
+    pub fatigue_policy: FatiguePolicy,
+    #[serde(default)]
+    pub fatigue_suppression_onset_q15: i32,
+    #[serde(default)]
+    pub fatigue_suppression_full_q15: i32,
+    #[serde(default)]
+    pub fatigue_min_response_q15: i32,
     pub arousal_on_q15: i32,
     pub arousal_divisor: i32,
     pub fatigue_delta_per_frame: [i32; 9],
@@ -61,8 +119,31 @@ impl BehaviorParameters {
             "flight",
             "landing",
         ];
-        if self.schema_version != 1
-            || self.parameter_set_id != "n4-engineering-v1"
+        let identity_valid = match self.fatigue_policy {
+            FatiguePolicy::HardGate => {
+                self.schema_version == 1
+                    && self.parameter_set_id == "n4-engineering-v1"
+                    && self.fatigue_suppression_onset_q15 == 0
+                    && self.fatigue_suppression_full_q15 == 0
+                    && self.fatigue_min_response_q15 == 0
+            }
+            FatiguePolicy::GradedResponse => {
+                self.schema_version == 2
+                    && matches!(
+                        self.parameter_set_id.as_str(),
+                        "n4.1-soft-fatigue-a-responsive-v1"
+                            | "n4.1-soft-fatigue-b-balanced-v1"
+                            | "n4.1-soft-fatigue-c-conservative-v1"
+                    )
+                    && self.fatigue_suppression_onset_q15 > 0
+                    && self.fatigue_suppression_onset_q15 < self.fatigue_suppression_full_q15
+                    && self.fatigue_suppression_full_q15 <= self.context_max_q15
+                    && self.fatigue_min_response_q15 > 0
+                    && self.fatigue_min_response_q15 < self.context_max_q15
+                    && self.fatigue_critical_q15 == self.context_max_q15
+            }
+        };
+        if !identity_valid
             || self.behavior_order.iter().map(String::as_str).ne(order)
             || self.context_max_q15 != 32_767
             || self.arousal_divisor < 1
@@ -74,7 +155,7 @@ impl BehaviorParameters {
             || self.spike_on_per_10k > 10_000
             || self.settle_frames != 15
         {
-            return Err("invalid N4 parameter schema, ordering, or thresholds".into());
+            return Err("invalid N4/N4.1 parameter schema, ordering, or thresholds".into());
         }
         for d in self.durations {
             if d.minimum_frames == 0
@@ -114,7 +195,10 @@ impl BehaviorParameters {
                 return Err("context threshold out of range".into());
             }
         }
-        if self.fatigue_rest_q15 >= self.fatigue_critical_q15 {
+        if self.fatigue_rest_q15 >= self.fatigue_critical_q15
+            || (self.fatigue_policy == FatiguePolicy::GradedResponse
+                && self.fatigue_rest_q15 >= self.fatigue_suppression_full_q15)
+        {
             return Err("invalid fatigue ordering".into());
         }
         for v in self
@@ -136,24 +220,80 @@ impl BehaviorParameters {
 }
 
 pub fn parameters() -> &'static BehaviorParameters {
-    static VALUE: OnceLock<BehaviorParameters> = OnceLock::new();
-    VALUE.get_or_init(|| {
+    parameters_for_profile(BehaviorParameterProfile::N4)
+}
+
+pub fn parameters_for_profile(profile: BehaviorParameterProfile) -> &'static BehaviorParameters {
+    static N4: OnceLock<BehaviorParameters> = OnceLock::new();
+    static N41_A: OnceLock<BehaviorParameters> = OnceLock::new();
+    static N41_B: OnceLock<BehaviorParameters> = OnceLock::new();
+    static N41_C: OnceLock<BehaviorParameters> = OnceLock::new();
+    let (cell, json) = match profile {
+        BehaviorParameterProfile::N4 => (&N4, PARAMETERS_JSON),
+        BehaviorParameterProfile::N41A => (&N41_A, N41_A_PARAMETERS_JSON),
+        BehaviorParameterProfile::N41B => (&N41_B, N41_B_PARAMETERS_JSON),
+        BehaviorParameterProfile::N41C => (&N41_C, N41_C_PARAMETERS_JSON),
+    };
+    cell.get_or_init(|| {
         let value: BehaviorParameters =
-            serde_json::from_str(PARAMETERS_JSON).expect("embedded parameter JSON");
-        value.validate().expect("embedded N4 parameter constraints");
+            serde_json::from_str(json).expect("embedded behavior parameter JSON");
         value
+            .validate()
+            .expect("embedded N4/N4.1 parameter constraints");
+        value
+    })
+}
+
+pub fn profile_for_parameter_sha256(sha256: &str) -> Option<BehaviorParameterProfile> {
+    BehaviorParameterProfile::ALL
+        .into_iter()
+        .find(|profile| parameter_sha256_for(*profile) == sha256)
+}
+
+pub fn parameters_for_sha256(sha256: &str) -> Option<&'static BehaviorParameters> {
+    profile_for_parameter_sha256(sha256).map(parameters_for_profile)
+}
+
+pub fn dynamics_version_for_sha256(sha256: &str) -> Option<&'static str> {
+    profile_for_parameter_sha256(sha256).map(|profile| match profile {
+        BehaviorParameterProfile::N4 => DYNAMICS_VERSION,
+        BehaviorParameterProfile::N41A
+        | BehaviorParameterProfile::N41B
+        | BehaviorParameterProfile::N41C => N41_DYNAMICS_VERSION,
     })
 }
 
 /// Ordinary SHA-256 of the exact parameter artifact bytes (no custom framing).
 pub fn parameter_sha256() -> &'static str {
-    static VALUE: OnceLock<String> = OnceLock::new();
-    VALUE.get_or_init(|| format!("{:x}", Sha256::digest(PARAMETERS_JSON.as_bytes())))
+    parameter_sha256_for(BehaviorParameterProfile::N4)
+}
+
+pub fn parameter_sha256_for(profile: BehaviorParameterProfile) -> &'static str {
+    static N4: OnceLock<String> = OnceLock::new();
+    static N41_A: OnceLock<String> = OnceLock::new();
+    static N41_B: OnceLock<String> = OnceLock::new();
+    static N41_C: OnceLock<String> = OnceLock::new();
+    let (cell, json) = match profile {
+        BehaviorParameterProfile::N4 => (&N4, PARAMETERS_JSON),
+        BehaviorParameterProfile::N41A => (&N41_A, N41_A_PARAMETERS_JSON),
+        BehaviorParameterProfile::N41B => (&N41_B, N41_B_PARAMETERS_JSON),
+        BehaviorParameterProfile::N41C => (&N41_C, N41_C_PARAMETERS_JSON),
+    };
+    cell.get_or_init(|| format!("{:x}", Sha256::digest(json.as_bytes())))
 }
 
 /// Stable, non-cryptographic event-keyed draw. No mutable or wall-clock RNG.
 pub fn duration_draw(seed: u64, sequence: u64, behavior: Behavior, bucket: u16) -> (u64, u32) {
-    let p = parameters();
+    duration_draw_for(parameters(), seed, sequence, behavior, bucket)
+}
+
+pub fn duration_draw_for(
+    p: &BehaviorParameters,
+    seed: u64,
+    sequence: u64,
+    behavior: Behavior,
+    bucket: u16,
+) -> (u64, u32) {
     let key = mix(seed
         ^ sequence.wrapping_mul(0x9E37_79B9_7F4A_7C15)
         ^ (behavior as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93)
@@ -164,6 +304,22 @@ pub fn duration_draw(seed: u64, sequence: u64, behavior: Behavior, bucket: u16) 
     // Multiply-high mapping: bounded integer rounding, never floating point.
     let offset = ((u128::from(key) * u128::from(span)) >> 64) as u32;
     (key, d.low_frames + offset)
+}
+
+pub fn fatigue_response_draw_q15(
+    p: &BehaviorParameters,
+    seed: u64,
+    sequence: u64,
+    behavior: Behavior,
+    bucket: u16,
+) -> i32 {
+    let key = mix(seed
+        ^ sequence.wrapping_mul(0xA24B_AED4_963E_E407)
+        ^ (behavior as u64).wrapping_mul(0x9FB2_1C65_1E98_DF25)
+        ^ u64::from(bucket).rotate_left(19)
+        ^ p.duration_key_salt
+        ^ 0x4E34_312D_4641_5449);
+    ((key >> 49) & 0x7fff) as i32
 }
 
 fn mix(mut value: u64) -> u64 {

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ use crate::{
     MODEL_VERSION,
     behavior_dynamics::BehaviorDynamicsState,
     behavior_intent::{BehaviorContext, BehaviorIntentBuilder, BehaviorIntentSnapshot},
-    behavior_parameters::{DYNAMICS_CLAIM, DYNAMICS_VERSION},
+    behavior_parameters::{BehaviorParameterProfile, DYNAMICS_CLAIM, dynamics_version_for_sha256},
     behavior_selection::LegacyBehaviorSelector,
     behavior_telemetry::{
         BehaviorTelemetryLedger, BehaviorTelemetrySnapshot, BehaviorTransitionEvent,
@@ -82,12 +82,16 @@ impl ModelState {
         match &self.behavior_dynamics {
             None => legacy,
             Some(dynamics) => {
-                let encoded = serde_json::to_vec(dynamics).expect("N4 integer state serialization");
-                sha256_hex([
-                    b"mechofly-full-state-n4-v1".as_slice(),
-                    legacy.as_bytes(),
-                    encoded.as_slice(),
-                ])
+                let encoded = serde_json::to_vec(dynamics)
+                    .expect("duration-controller integer state serialization");
+                let domain = match dynamics_version_for_sha256(&dynamics.parameter_sha256) {
+                    Some("n4-explicit-duration-engineering-v1") => {
+                        b"mechofly-full-state-n4-v1".as_slice()
+                    }
+                    Some(_) => b"mechofly-full-state-n4.1-v1".as_slice(),
+                    None => b"mechofly-full-state-unknown-v1".as_slice(),
+                };
+                sha256_hex([domain, legacy.as_bytes(), encoded.as_slice()])
             }
         }
     }
@@ -105,6 +109,16 @@ pub struct FrameSummary {
     pub mean_activation_q15: i32,
     pub behavior: Behavior,
     pub state_digest: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StepComponentTimings {
+    pub neural_compute_ns: u64,
+    pub intent_build_ns: u64,
+    pub controller_ns: u64,
+    pub telemetry_ns: u64,
+    pub summary_hash_ns: u64,
+    pub total_ns: u64,
 }
 
 #[derive(Clone)]
@@ -150,6 +164,14 @@ impl ModelEngine {
 
     /// Active application constructor. `new` remains the explicit N3 compatibility harness.
     pub fn new_duration_aware(graph: Arc<ModelGraph>, seed: u64) -> Self {
+        Self::new_duration_aware_with_profile(graph, seed, BehaviorParameterProfile::N4)
+    }
+
+    pub fn new_duration_aware_with_profile(
+        graph: Arc<ModelGraph>,
+        seed: u64,
+        profile: BehaviorParameterProfile,
+    ) -> Self {
         let mut engine = Self::new(graph, seed);
         engine.state.behavior = Behavior::Quiet;
         let evidence = NeuralEvidence::collect(0, &engine.state.activation, 0);
@@ -160,7 +182,9 @@ impl ModelEngine {
                 current_behavior_age_frames: 0,
             },
         );
-        engine.state.behavior_dynamics = Some(BehaviorDynamicsState::new(seed, intent));
+        engine.state.behavior_dynamics = Some(BehaviorDynamicsState::new_with_profile(
+            seed, intent, profile,
+        ));
         engine.last_behavior_intent = intent;
         engine
     }
@@ -208,6 +232,25 @@ impl ModelEngine {
     }
 
     pub fn step_cpu(&mut self, input: StepInput<'_>) -> FrameSummary {
+        let (activation, spikes) = self.compute_cpu_step(input);
+        self.accept_backend_step(activation, spikes)
+    }
+
+    pub fn step_cpu_profiled(
+        &mut self,
+        input: StepInput<'_>,
+    ) -> (FrameSummary, StepComponentTimings) {
+        let total_started = Instant::now();
+        let neural_started = Instant::now();
+        let (activation, spikes) = self.compute_cpu_step(input);
+        let neural_compute_ns = elapsed_ns(Some(neural_started));
+        let (summary, mut timings) = self.accept_backend_step_inner(activation, spikes, true);
+        timings.neural_compute_ns = neural_compute_ns;
+        timings.total_ns = elapsed_ns(Some(total_started));
+        (summary, timings)
+    }
+
+    fn compute_cpu_step(&self, input: StepInput<'_>) -> (Vec<i32>, Vec<u8>) {
         assert_eq!(input.stimulus_q15.len(), self.state.activation.len());
         let next_frame = self.state.frame + 1;
         let previous = &self.state.activation;
@@ -232,11 +275,21 @@ impl ModelEngine {
             })
             .collect();
 
-        let (activation, spikes): (Vec<i32>, Vec<u8>) = computed.into_iter().unzip();
-        self.accept_backend_step(activation, spikes)
+        computed.into_iter().unzip()
     }
 
     pub fn accept_backend_step(&mut self, activation: Vec<i32>, spikes: Vec<u8>) -> FrameSummary {
+        self.accept_backend_step_inner(activation, spikes, false).0
+    }
+
+    fn accept_backend_step_inner(
+        &mut self,
+        activation: Vec<i32>,
+        spikes: Vec<u8>,
+        profiled: bool,
+    ) -> (FrameSummary, StepComponentTimings) {
+        let mut timings = StepComponentTimings::default();
+        let intent_started = profiled.then(Instant::now);
         assert_eq!(activation.len(), self.state.activation.len());
         assert_eq!(spikes.len(), self.state.spikes.len());
         self.state.activation = activation;
@@ -258,6 +311,9 @@ impl ModelEngine {
                 current_behavior_age_frames: self.state.behavior_age_frames,
             },
         );
+        timings.intent_build_ns = elapsed_ns(intent_started);
+
+        let controller_started = profiled.then(Instant::now);
         let mut next_dynamics = self.state.behavior_dynamics.clone();
         let (next_behavior, transition_reason, dynamics_transition) = match &mut next_dynamics {
             Some(dynamics) => {
@@ -269,6 +325,9 @@ impl ModelEngine {
                 (decision.behavior, decision.transition_reason, None)
             }
         };
+        timings.controller_ns = elapsed_ns(controller_started);
+
+        let telemetry_started = profiled.then(Instant::now);
         self.last_behavior_intent = intent;
         if next_behavior == self.state.behavior && transition_reason.is_none() {
             self.state.behavior_age_frames += 1;
@@ -300,7 +359,12 @@ impl ModelEngine {
                 self.behavior_telemetry.record(event);
             }
         }
-        self.summary(spike_count, mean_activation_q15)
+        timings.telemetry_ns = elapsed_ns(telemetry_started);
+
+        let summary_started = profiled.then(Instant::now);
+        let summary = self.summary(spike_count, mean_activation_q15);
+        timings.summary_hash_ns = elapsed_ns(summary_started);
+        (summary, timings)
     }
 
     pub fn summary(&self, spike_count: usize, mean_activation_q15: i32) -> FrameSummary {
@@ -333,9 +397,11 @@ impl ModelEngine {
 
     pub fn behavior_telemetry_snapshot(&self) -> BehaviorTelemetrySnapshot {
         let mut snapshot = self.behavior_telemetry.snapshot(self.last_behavior_intent);
-        if self.state.behavior_dynamics.is_some() {
+        if let Some(dynamics) = &self.state.behavior_dynamics {
             snapshot.schema_version = 2;
-            snapshot.controller = DYNAMICS_VERSION.to_owned();
+            snapshot.controller = dynamics_version_for_sha256(&dynamics.parameter_sha256)
+                .unwrap_or("unknown-duration-controller")
+                .to_owned();
             snapshot.claim_boundary = DYNAMICS_CLAIM.to_owned();
             snapshot.controller_semantics_changed = true;
         }
@@ -358,13 +424,23 @@ impl ModelEngine {
         ]);
         match &self.state.behavior_dynamics {
             None => legacy,
-            Some(dynamics) => sha256_hex([
-                legacy.as_bytes(),
-                DYNAMICS_VERSION.as_bytes(),
-                dynamics.parameter_sha256.as_bytes(),
-            ]),
+            Some(dynamics) => {
+                let version = dynamics_version_for_sha256(&dynamics.parameter_sha256)
+                    .unwrap_or("unknown-duration-controller");
+                sha256_hex([
+                    legacy.as_bytes(),
+                    version.as_bytes(),
+                    dynamics.parameter_sha256.as_bytes(),
+                ])
+            }
         }
     }
+}
+
+fn elapsed_ns(started: Option<Instant>) -> u64 {
+    started
+        .map(|instant| instant.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or_default()
 }
 
 #[allow(clippy::too_many_arguments)]

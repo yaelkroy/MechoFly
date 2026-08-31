@@ -6,6 +6,7 @@ Do not interpret PowerShell's stale/null LASTEXITCODE as this executable's exit.
 from __future__ import annotations
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 
@@ -21,9 +22,10 @@ def execute(exe: Path, arguments: list[str], label: str) -> None:
 
 def main() -> None:
     root = Path.cwd()
-    exe = (root / "target/release/MechoFly.exe").resolve()
+    target = Path(os.environ.get("CARGO_TARGET_DIR", root / "target")).resolve()
+    exe = (target / "release/MechoFly.exe").resolve()
     authority = hashlib.sha256(exe.read_bytes()).hexdigest()
-    artifacts = root / "artifacts"
+    artifacts = Path(os.environ.get("MECHOFLY_ARTIFACTS_DIR", root / "artifacts")).resolve()
     artifacts.mkdir(exist_ok=True)
     receipt_path = artifacts / "n4-self-test.json"
     execute(exe, ["--self-test", str(receipt_path)], "self-test")
