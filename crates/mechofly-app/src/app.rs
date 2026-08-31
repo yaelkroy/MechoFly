@@ -394,9 +394,7 @@ impl eframe::App for MechoFlyApp {
                 self.session.step();
                 self.accumulator -= MODEL_INTERVAL;
                 steps += 1;
-                if self.session.engine.state.frame.is_multiple_of(90) {
-                    self.select_policy_action();
-                }
+                // N4 autonomy comes from controller context, never a periodic policy injection.
             }
         }
         if !self.evidence_hold && steps == MAX_CATCH_UP_STEPS && self.accumulator >= MODEL_INTERVAL
@@ -597,6 +595,7 @@ impl eframe::App for MechoFlyApp {
                         if lab_ui.input(|input| input.viewport().close_requested()) {
                             lab.open = false;
                         }
+                        crate::behavior_inspector::draw(lab_ui, session);
                         lab.draw(lab_ui, session, policy, skin, source_identity)
                     },
                 )

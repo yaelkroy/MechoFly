@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     MODEL_VERSION,
+    behavior_dynamics::BehaviorDynamicsState,
     behavior_intent::{BehaviorContext, BehaviorIntentBuilder, BehaviorIntentSnapshot},
+    behavior_parameters::{DYNAMICS_CLAIM, DYNAMICS_VERSION},
     behavior_selection::LegacyBehaviorSelector,
     behavior_telemetry::{
         BehaviorTelemetryLedger, BehaviorTelemetrySnapshot, BehaviorTransitionEvent,
@@ -53,6 +55,9 @@ pub struct ModelState {
     pub spikes: Vec<u8>,
     pub behavior: Behavior,
     pub behavior_age_frames: u32,
+    /// None is an explicit legacy/N3 checkpoint, never a partially restored N4 state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub behavior_dynamics: Option<BehaviorDynamicsState>,
 }
 
 impl ModelState {
@@ -66,14 +71,25 @@ impl ModelState {
             .iter()
             .flat_map(|value| value.to_le_bytes())
             .collect();
-        sha256_hex([
+        let legacy = sha256_hex([
             frame.as_slice(),
             seed.as_slice(),
             &behavior,
             age.as_slice(),
             activation.as_slice(),
             self.spikes.as_slice(),
-        ])
+        ]);
+        match &self.behavior_dynamics {
+            None => legacy,
+            Some(dynamics) => {
+                let encoded = serde_json::to_vec(dynamics).expect("N4 integer state serialization");
+                sha256_hex([
+                    b"mechofly-full-state-n4-v1".as_slice(),
+                    legacy.as_bytes(),
+                    encoded.as_slice(),
+                ])
+            }
+        }
     }
 }
 
@@ -113,6 +129,7 @@ impl ModelEngine {
             spikes: vec![0; count],
             behavior: Behavior::Rest,
             behavior_age_frames: 0,
+            behavior_dynamics: None,
         };
         let evidence = NeuralEvidence::collect(state.frame, &state.activation, 0);
         let last_behavior_intent = BehaviorIntentBuilder::build(
@@ -131,16 +148,46 @@ impl ModelEngine {
         }
     }
 
+    /// Active application constructor. `new` remains the explicit N3 compatibility harness.
+    pub fn new_duration_aware(graph: Arc<ModelGraph>, seed: u64) -> Self {
+        let mut engine = Self::new(graph, seed);
+        engine.state.behavior = Behavior::Quiet;
+        let evidence = NeuralEvidence::collect(0, &engine.state.activation, 0);
+        let intent = BehaviorIntentBuilder::build_duration_aware(
+            &evidence,
+            BehaviorContext {
+                current_behavior: Behavior::Quiet,
+                current_behavior_age_frames: 0,
+            },
+        );
+        engine.state.behavior_dynamics = Some(BehaviorDynamicsState::new(seed, intent));
+        engine.last_behavior_intent = intent;
+        engine
+    }
+
     pub fn from_state(graph: Arc<ModelGraph>, state: ModelState) -> Result<Self, String> {
         if state.activation.len() != graph.neuron_ids.len()
             || state.spikes.len() != graph.neuron_ids.len()
         {
             return Err("checkpoint dimensions do not match graph".to_owned());
         }
+        if let Some(dynamics) = &state.behavior_dynamics {
+            dynamics.validate(
+                state.seed,
+                state.frame,
+                state.behavior,
+                state.behavior_age_frames,
+            )?;
+        }
         let complete_from_frame = state.frame;
         let spike_count = state.spikes.iter().map(|value| *value as usize).sum();
         let evidence = NeuralEvidence::collect(state.frame, &state.activation, spike_count);
-        let last_behavior_intent = BehaviorIntentBuilder::build(
+        let builder = if state.behavior_dynamics.is_some() {
+            BehaviorIntentBuilder::build_duration_aware
+        } else {
+            BehaviorIntentBuilder::build
+        };
+        let last_behavior_intent = builder(
             &evidence,
             BehaviorContext {
                 current_behavior: state.behavior,
@@ -199,30 +246,44 @@ impl ModelEngine {
         let evidence =
             NeuralEvidence::collect(self.state.frame, &self.state.activation, spike_count);
         let mean_activation_q15 = evidence.mean_activation_q15;
-        let intent = BehaviorIntentBuilder::build(
+        let builder = if self.state.behavior_dynamics.is_some() {
+            BehaviorIntentBuilder::build_duration_aware
+        } else {
+            BehaviorIntentBuilder::build
+        };
+        let intent = builder(
             &evidence,
             BehaviorContext {
                 current_behavior: self.state.behavior,
                 current_behavior_age_frames: self.state.behavior_age_frames,
             },
         );
-        let decision = LegacyBehaviorSelector::select(&intent);
-        let next_behavior = decision.behavior;
+        let mut next_dynamics = self.state.behavior_dynamics.clone();
+        let (next_behavior, transition_reason, dynamics_transition) = match &mut next_dynamics {
+            Some(dynamics) => {
+                let decision = dynamics.advance(self.state.seed, intent);
+                (decision.behavior, decision.reason, decision.transition)
+            }
+            None => {
+                let decision = LegacyBehaviorSelector::select(&intent);
+                (decision.behavior, decision.transition_reason, None)
+            }
+        };
         self.last_behavior_intent = intent;
-        if next_behavior == self.state.behavior {
+        if next_behavior == self.state.behavior && transition_reason.is_none() {
             self.state.behavior_age_frames += 1;
+            self.state.behavior_dynamics = next_dynamics;
         } else {
             let from_behavior = self.state.behavior;
             let elapsed_frames = self.state.behavior_age_frames.saturating_add(1);
             let pre_transition_state_digest = self.state.digest();
-            let reason = decision
-                .transition_reason
-                .expect("a changed behavior must carry its transition reason");
+            let reason = transition_reason.expect("a transition must carry its reason");
             self.state.behavior = next_behavior;
             self.state.behavior_age_frames = 0;
+            self.state.behavior_dynamics = next_dynamics;
             if self.behavior_telemetry_enabled {
                 let post_transition_state_digest = self.state.digest();
-                self.behavior_telemetry.record(BehaviorTransitionEvent::new(
+                let mut event = BehaviorTransitionEvent::new(
                     self.state.frame,
                     from_behavior,
                     next_behavior,
@@ -231,7 +292,12 @@ impl ModelEngine {
                     intent,
                     pre_transition_state_digest,
                     post_transition_state_digest,
-                ));
+                );
+                if dynamics_transition.is_some() {
+                    event.schema_version = 2;
+                    event.dynamics = dynamics_transition;
+                }
+                self.behavior_telemetry.record(event);
             }
         }
         self.summary(spike_count, mean_activation_q15)
@@ -266,7 +332,14 @@ impl ModelEngine {
     }
 
     pub fn behavior_telemetry_snapshot(&self) -> BehaviorTelemetrySnapshot {
-        self.behavior_telemetry.snapshot(self.last_behavior_intent)
+        let mut snapshot = self.behavior_telemetry.snapshot(self.last_behavior_intent);
+        if self.state.behavior_dynamics.is_some() {
+            snapshot.schema_version = 2;
+            snapshot.controller = DYNAMICS_VERSION.to_owned();
+            snapshot.claim_boundary = DYNAMICS_CLAIM.to_owned();
+            snapshot.controller_semantics_changed = true;
+        }
+        snapshot
     }
 
     pub const fn behavior_telemetry_total_event_count(&self) -> u64 {
@@ -278,11 +351,19 @@ impl ModelEngine {
     }
 
     pub fn model_identity(&self) -> String {
-        sha256_hex([
+        let legacy = sha256_hex([
             MODEL_VERSION.as_bytes(),
             self.graph.identity.sha256.as_bytes(),
             self.state.seed.to_le_bytes().as_slice(),
-        ])
+        ]);
+        match &self.state.behavior_dynamics {
+            None => legacy,
+            Some(dynamics) => sha256_hex([
+                legacy.as_bytes(),
+                DYNAMICS_VERSION.as_bytes(),
+                dynamics.parameter_sha256.as_bytes(),
+            ]),
+        }
     }
 }
 

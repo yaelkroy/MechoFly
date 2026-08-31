@@ -10,6 +10,7 @@ fn exhaustive_threshold_hold_priority_and_schedule_boundary_parity() {
         spikes: vec![0; 9],
         behavior: Behavior::Rest,
         behavior_age_frames: 0,
+        behavior_dynamics: None,
     };
     // 3^5 combinations include all simultaneous-priority ties at both entry
     // thresholds. Ages straddle every hold boundary. Frames straddle schedule
@@ -53,6 +54,7 @@ fn spike_rate_strict_boundary_and_saturating_representation_preserved() {
         spikes: vec![0; 10_000],
         behavior: Behavior::Rest,
         behavior_age_frames: 0,
+        behavior_dynamics: None,
     };
     for spikes in [
         0,
@@ -99,6 +101,7 @@ fn sparse_population_extrema_and_signed_mean_match_frozen_rules() {
             spikes: vec![0; count],
             behavior: BEHAVIORS[index as usize % BEHAVIORS.len()],
             behavior_age_frames: (rng % 125) as u32,
+            behavior_dynamics: None,
         };
         let spikes = (rng % (count as u64 + 1)) as usize;
         assert_selector_parity(&state, spikes);
@@ -128,6 +131,7 @@ fn intent_serialization_is_byte_exact_and_round_trips() {
         spikes: vec![0; 9],
         behavior: Behavior::Groom,
         behavior_age_frames: 44,
+        behavior_dynamics: None,
     };
     let intent = new_intent(&state, 2);
     let encoded = serde_json::to_vec(&intent).unwrap();

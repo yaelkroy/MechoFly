@@ -22,6 +22,14 @@ pub enum BehaviorTransitionReason {
     WalkPopulationThreshold,
     SpikeRateThreshold,
     LegacyAutonomousSchedule,
+    DurationCompleted,
+    ModeledExploration,
+    ModeledContamination,
+    ModeledArousal,
+    FatigueRecovery,
+    QuietFallback,
+    SettlingCompleted,
+    InvalidControllerState,
 }
 
 impl BehaviorTransitionReason {
@@ -37,11 +45,22 @@ impl BehaviorTransitionReason {
             Self::WalkPopulationThreshold => "walk_population_threshold",
             Self::SpikeRateThreshold => "spike_rate_threshold",
             Self::LegacyAutonomousSchedule => "legacy_autonomous_schedule",
+            Self::DurationCompleted => "duration_completed",
+            Self::ModeledExploration => "modeled_exploration",
+            Self::ModeledContamination => "modeled_contamination",
+            Self::ModeledArousal => "modeled_arousal",
+            Self::FatigueRecovery => "fatigue_recovery",
+            Self::QuietFallback => "quiet_fallback",
+            Self::SettlingCompleted => "settling_completed",
+            Self::InvalidControllerState => "invalid_controller_state",
         }
     }
 
     pub const fn emergency_override(self) -> bool {
-        matches!(self, Self::LoomPopulationThreshold)
+        matches!(
+            self,
+            Self::LoomPopulationThreshold | Self::InvalidControllerState
+        )
     }
 }
 
@@ -79,6 +98,8 @@ pub struct BehaviorTransitionEvent {
     pub intent: BehaviorIntentSnapshot,
     pub pre_transition_state_digest: String,
     pub post_transition_state_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dynamics: Option<crate::behavior_dynamics::DynamicsTransition>,
 }
 
 impl BehaviorTransitionEvent {
@@ -107,6 +128,7 @@ impl BehaviorTransitionEvent {
             intent,
             pre_transition_state_digest,
             post_transition_state_digest,
+            dynamics: None,
         }
     }
 }

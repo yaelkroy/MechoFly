@@ -65,6 +65,8 @@ pub enum StimulationValidationError {
     DosageExceeded(String),
     #[error("authored intervention label is required")]
     MissingAuthoredLabel,
+    #[error("checkpoint graph, causal state, model identity or digest is invalid")]
+    InvalidCheckpoint,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -193,10 +195,18 @@ impl StimulationPolicy {
     ) -> Result<ComparisonResult, StimulationValidationError> {
         let targets = self.validate(&request, graph.neuron_ids.len())?;
         let live_before = live_state_digest();
+        if checkpoint.graph != graph.identity
+            || checkpoint.summary.state_digest != checkpoint.state.digest()
+        {
+            return Err(StimulationValidationError::InvalidCheckpoint);
+        }
         let mut actual = ModelEngine::from_state(Arc::clone(&graph), checkpoint.state.clone())
-            .expect("validated checkpoint must match its graph");
+            .map_err(|_| StimulationValidationError::InvalidCheckpoint)?;
+        if actual.model_identity() != checkpoint.model_identity {
+            return Err(StimulationValidationError::InvalidCheckpoint);
+        }
         let mut alternative = ModelEngine::from_state(graph, checkpoint.state.clone())
-            .expect("validated checkpoint must match its graph");
+            .map_err(|_| StimulationValidationError::InvalidCheckpoint)?;
         let zero = actual.empty_stimulus();
         let mut authored = alternative.empty_stimulus();
         let authored_q15 = (request.amplitude * 32_768.0).round() as i32;

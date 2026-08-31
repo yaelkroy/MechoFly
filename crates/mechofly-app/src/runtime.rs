@@ -71,7 +71,7 @@ impl SimulationSession {
         seed: u64,
         started_unix_millis: u64,
     ) -> Self {
-        let engine = ModelEngine::new(Arc::clone(&graph), seed);
+        let engine = ModelEngine::new_duration_aware(Arc::clone(&graph), seed);
         let last_summary = FrameSummary {
             frame: 0,
             spike_count: 0,

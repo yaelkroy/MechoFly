@@ -2,6 +2,8 @@
 
 mod app;
 mod behavior_baseline;
+mod behavior_campaign;
+mod behavior_inspector;
 mod brain_lab;
 mod compute;
 #[cfg(windows)]
@@ -43,6 +45,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         diagnostics::mark("starting deterministic behavior telemetry baseline");
         behavior_baseline::run(PathBuf::from(path).as_path(), &args)?;
         diagnostics::mark("deterministic behavior telemetry baseline completed");
+        return Ok(());
+    }
+    if let Some(path) = option_value(&args, "--behavior-campaign") {
+        behavior_campaign::run(PathBuf::from(path).as_path(), &args)?;
         return Ok(());
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))

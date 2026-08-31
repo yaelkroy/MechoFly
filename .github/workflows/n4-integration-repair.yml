@@ -1,0 +1,104 @@
+name: MechoFly N4 integrated controller verification
+on:
+  push:
+    branches: ["fix/n4-duration-controller-integration-rust-v14"]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: n4-integration-repair-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  n4-integrated:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: rustfmt, clippy
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            target
+          key: mechofly-n4-integrated-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            mechofly-n4-integrated-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
+            mechofly-n3-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
+            mechofly-windows-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
+          save-always: true
+      - name: Assemble and verify real runtime wiring
+        shell: powershell
+        run: |
+          python tools/verify_n4_integration.py --assemble --receipt artifacts/n4-integration.json
+          if ($LASTEXITCODE -ne 0) { throw 'N4 source integration failed.' }
+          cargo fmt --all
+          if ($LASTEXITCODE -ne 0) { throw 'Formatting failed.' }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Source whitespace check failed.' }
+          git diff --exit-code d9c4944f382c6cff0167acc9a0dd5c2be3d8a31f -- crates/mechofly-app/src/pet.rs crates/mechofly-app/src/desktop_pet.rs crates/mechofly-app/src/shaders/neural_step.wgsl
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen pet or neural shader source changed.' }
+          git add -- crates docs tools .github/workflows
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 1) {
+            git -c commit.gpgsign=false -c user.name='MechoFly validation' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'N4: connect duration dynamics to the engine, runtime, receipts and tests'
+            if ($LASTEXITCODE -ne 0) { throw 'Candidate commit failed.' }
+          } elseif ($LASTEXITCODE -ne 0) { throw 'Staged source check failed.' }
+          Write-Host ('N4_TESTED_COMMIT=' + (git rev-parse HEAD))
+          Write-Host ('N4_TESTED_TREE=' + (git show -s --format=%T HEAD))
+      - name: N4 duration invariants and N3 compatibility tests
+        shell: powershell
+        run: |
+          cargo test --release --locked -p mechofly-core --test n4_dynamics -- --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'N4 controller tests failed.' }
+          cargo test --release --locked --workspace -- --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'Workspace tests failed.' }
+      - name: Warnings denied and release executable
+        shell: powershell
+        run: |
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'Clippy failed.' }
+          cargo build --release --locked -p mechofly-app
+          if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
+      - name: N4 executable receipt and semantic smoke
+        shell: powershell
+        run: |
+          python tools/run_n4_native_checks.py
+          if ($LASTEXITCODE -ne 0) { throw 'N4 native process verification failed.' }
+      - name: Publish only the tested repair branch
+        shell: powershell
+        run: |
+          cargo fmt --all --check
+          if ($LASTEXITCODE -ne 0) { throw 'Formatting drifted during tests.' }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'Tests mutated tracked source.' }
+          python tools/verify_n4_integration.py
+          if ($LASTEXITCODE -ne 0) { throw 'Final runtime wiring check failed.' }
+          git push origin HEAD:refs/heads/fix/n4-duration-controller-integration-rust-v14
+          if ($LASTEXITCODE -ne 0) { throw 'Non-force publication failed.' }
+          Write-Host ('N4_VALIDATED_COMMIT=' + (git rev-parse HEAD))
+          Write-Host ('N4_VALIDATED_TREE=' + (git show -s --format=%T HEAD))
+      - name: Diagnostic source and receipts
+        if: always()
+        shell: powershell
+        run: |
+          Write-Host ('N4_ACTUAL_SOURCE_COMMIT=' + (git rev-parse HEAD))
+          Write-Host ('N4_ACTUAL_SOURCE_TREE=' + (git show -s --format=%T HEAD))
+          git status --short
+          if (Test-Path artifacts/n4-integration.json) { Get-Content artifacts/n4-integration.json }
+          if (Test-Path artifacts/n4-native-verification.json) { Get-Content artifacts/n4-native-verification.json }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mechofly-n4-integrated-evidence
+          path: |
+            artifacts/n4-integration.json
+            artifacts/n4-self-test.json
+            artifacts/n4-native-verification.json
+            artifacts/n4-campaign
+          if-no-files-found: error
+          retention-days: 14
