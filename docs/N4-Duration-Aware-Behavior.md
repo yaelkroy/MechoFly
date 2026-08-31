@@ -85,5 +85,5 @@ transition histories for independent event-chain and invariant validation.
 
 No new graph, learned parameters, biological sleep, full grooming grammar,
 sensorimotor loom redesign, ecological perception, new shadow/landing geometry,
-cloud telemetry, or full product checkpoint is claimed. Existing DesktopFly,
-shortcuts, D0 and N3 evidence remain untouched. No merge is authorized by CI.
+cloud telemetry, or full product checkpoint is claimed. The frozen comparison
+product, shortcuts, D0 and N3 evidence remain untouched. No merge is authorized by CI.
