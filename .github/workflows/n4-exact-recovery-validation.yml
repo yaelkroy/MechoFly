@@ -1,0 +1,75 @@
+name: N4 exact recovery launcher validation
+on:
+  push:
+    branches: ["validation/n4-exact-recovery-20260831"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  launcher-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validate transport and extract the recovery source
+        shell: powershell
+        run: |
+          $zip = (Resolve-Path tools/n4-exact-validation-tools.zip).Path
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'f9af84eacd895c9df04bd05154d57a5c17bc4f7ece5c9ef252066adcc17969b9') { throw 'Transport identity mismatch.' }
+          Expand-Archive -LiteralPath $zip -DestinationPath artifacts/recovery-tools
+          $source = 'artifacts/recovery-tools/n4_exact_recovery.py'
+          if ((Get-FileHash $source -Algorithm SHA256).Hash.ToLowerInvariant() -ne '1c6ea540981cca1bd2811430a4f78926f26857278136af89e0097b1bf5175ee7') { throw 'Supervisor identity mismatch.' }
+          $tests = 'artifacts/recovery-tools/test_n4_exact_recovery.py'
+          if ((Get-FileHash $tests -Algorithm SHA256).Hash.ToLowerInvariant() -ne '851c724f01871f817a823ca6e9e6a1957208671a10c5704b58fc8cc0df5e51fd') { throw 'Regression test identity mismatch.' }
+          Write-Host 'N4_RECOVERY_SOURCE_TRANSPORT=PASS'
+      - name: Recovery safety and adversarial accounting tests on Windows
+        shell: powershell
+        run: |
+          python -m unittest discover -s artifacts/recovery-tools -p test_n4_exact_recovery.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Recovery regression tests failed.' }
+      - name: Build exact standalone launcher and parse in Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          # Use the reviewed tracked builder, not the draft builder in the transport ZIP.
+          $launcher = Join-Path $PWD 'artifacts/START_MechoFly_N4_ExactValidation_AI100_20260831_V2.ps1'
+          python tools/build_n4_recovery_launcher.py $launcher artifacts/recovery-tools/n4_exact_recovery.py
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher generation failed.' }
+          if ((Get-FileHash $launcher -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'e2241c3da514cd4ca4827204e830cd191d09ffe39e3d2c771812132d0d879523') { throw 'Generated launcher differs from the user deliverable.' }
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($launcher, [ref]$tokens, [ref]$errors) | Out-Null
+          if (@($errors).Count -ne 0) { $errors | Format-List -Force; throw 'Windows PowerShell parsing failed.' }
+          Write-Host 'N4_LAUNCHER_POWERSHELL51_PARSE=PASS'
+          & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $launcher -VerifyOnly
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher embedded source execution failed.' }
+          Write-Host 'N4_LAUNCHER_WINDOWS_VERIFY_ONLY=PASS'
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 6b67b6f8678151f1e568ebfb84ac773f679fa583
+          path: artifacts/pinned-n4
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Independently verify the pinned model source without compiling or patching
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $PWD 'artifacts/recovery-tools'
+          python -c "import os; from pathlib import Path; import n4_exact_recovery as n; n.verify_source(Path(os.environ['GITHUB_WORKSPACE']) / 'artifacts/pinned-n4'); print('N4_EXACT_SOURCE_CHECK=PASS')"
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned source verification failed.' }
+          Push-Location artifacts/pinned-n4
+          try {
+            python tools/verify_n4_integration.py
+            if ($LASTEXITCODE -ne 0) { throw 'N4 runtime source wiring failed.' }
+          } finally { Pop-Location }
+          Write-Host 'N4_MODEL_SOURCE_PATCHED=False'
+          Write-Host 'N4_CANONICAL_DEPLOYMENT=False'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: n4-exact-recovery-launcher
+          path: artifacts/START_MechoFly_N4_ExactValidation_AI100_20260831_V2.ps1
+          if-no-files-found: error
+          retention-days: 14
