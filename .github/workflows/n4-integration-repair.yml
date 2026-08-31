@@ -30,6 +30,7 @@ jobs:
             mechofly-n4-integrated-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
             mechofly-n3-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
             mechofly-windows-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
+          save-always: true
       - name: Assemble and verify real runtime wiring
         shell: powershell
         run: |
@@ -66,16 +67,8 @@ jobs:
       - name: N4 executable receipt and semantic smoke
         shell: powershell
         run: |
-          $exe = (Resolve-Path target/release/MechoFly.exe).Path
-          $authority = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          & $exe --self-test "$pwd/artifacts/n4-self-test.json"
-          if ($LASTEXITCODE -ne 0) { throw 'N4 self-test process failed.' }
-          $receipt = Get-Content artifacts/n4-self-test.json -Raw | ConvertFrom-Json
-          if ($receipt.schema_version -ne 10 -or $receipt.status -ne 'PASS' -or -not $receipt.n4.passed -or $receipt.runtime_behavior_controller -ne 'n4-explicit-duration-engineering-v1') { throw 'Executable is not the validated N4 runtime.' }
-          & $exe --behavior-campaign "$pwd/artifacts/n4-campaign" --campaign-authority $authority --campaign-seeds 2 --campaign-repeats 2 --campaign-seconds 30
-          if ($LASTEXITCODE -ne 0) { throw 'N4 semantic smoke failed.' }
-          & $exe --behavior-campaign "$pwd/artifacts/n4-campaign" --campaign-authority $authority --campaign-seeds 2 --campaign-repeats 2 --campaign-seconds 30
-          if ($LASTEXITCODE -ne 0) { throw 'N4 completed-run resume failed.' }
+          python tools/run_n4_native_checks.py
+          if ($LASTEXITCODE -ne 0) { throw 'N4 native process verification failed.' }
       - name: Publish only the tested repair branch
         shell: powershell
         run: |
@@ -97,4 +90,15 @@ jobs:
           Write-Host ('N4_ACTUAL_SOURCE_TREE=' + (git show -s --format=%T HEAD))
           git status --short
           if (Test-Path artifacts/n4-integration.json) { Get-Content artifacts/n4-integration.json }
-          if (Test-Path artifacts/n4-self-test.json) { Get-Content artifacts/n4-self-test.json }
+          if (Test-Path artifacts/n4-native-verification.json) { Get-Content artifacts/n4-native-verification.json }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mechofly-n4-integrated-evidence
+          path: |
+            artifacts/n4-integration.json
+            artifacts/n4-self-test.json
+            artifacts/n4-native-verification.json
+            artifacts/n4-campaign
+          if-no-files-found: error
+          retention-days: 14
