@@ -87,7 +87,15 @@ def source_files() -> dict[str, bytes]:
     return result
 
 
+def normalized_wiring(text: str) -> str:
+    # rustfmt adds optional trailing commas to multiline calls. Do not mistake
+    # that formatting-only token for missing runtime integration.
+    return "".join(text.split()).replace(",)", ")")
+
+
 def verify(root: Path) -> dict:
+    assert normalized_wiring("f(a, b, )?") == normalized_wiring("f(a,b)?")
+    assert normalized_wiring("f(a,b)?") != normalized_wiring("f(a,c)?")
     checks = {
         "crates/mechofly-core/src/lib.rs": ["pub mod behavior_dynamics;", "pub mod behavior_parameters;", "pub mod behavior_validation;"],
         "crates/mechofly-core/src/model.rs": ["pub fn new_duration_aware(", "pub behavior_dynamics: Option<BehaviorDynamicsState>", "dynamics.advance(self.state.seed, intent)", "dynamics.validate(state.seed, state.frame, state.behavior, state.behavior_age_frames)?"],
@@ -100,9 +108,9 @@ def verify(root: Path) -> dict:
     }
     count = 0
     for relative, markers in checks.items():
-        compact = "".join((root / relative).read_text(encoding="utf-8-sig").split())
+        compact = normalized_wiring((root / relative).read_text(encoding="utf-8-sig"))
         for marker in markers:
-            if "".join(marker.split()) not in compact:
+            if normalized_wiring(marker) not in compact:
                 raise ValueError(f"N4 integration missing in {relative}: {marker}")
             count += 1
     app = (root / "crates/mechofly-app/src/app.rs").read_text(encoding="utf-8-sig")
@@ -131,15 +139,12 @@ def main() -> None:
             path.write_bytes(data)
         prepare = root / "tools/prepare_n4.py"
         text = prepare.read_text(encoding="utf-8")
-        # The schema predicate starts on the same line as `if (` in the pinned
-        # Setup script; matching four leading spaces was an unexecuted bug.
         anchor = "    $Receipt.schema_version -ne 10 -or"
         if text.count(anchor) != 2:
             raise ValueError("Reviewed setup-predicate assembly anchor changed")
         prepare.write_text(text.replace(anchor, "$Receipt.schema_version -ne 10 -or"), encoding="utf-8", newline="\n")
         subprocess.run([sys.executable, str(prepare), str(root)], cwd=root, check=True)
         prepare.unlink()
-        # The integrated workflow replaces the unused, zero-authority draft.
         (root / ".github/workflows/n4-dynamics.yml").unlink()
     report = verify(root)
     if args.receipt:
