@@ -128,7 +128,8 @@ jobs:
           }
           if ($process.ExitCode -ne 0) { throw "Self-test exited $($process.ExitCode)" }
           $receipt = Get-Content .\artifacts\self-test.json -Raw | ConvertFrom-Json
-          if ($receipt.schema_version -ne 9) { throw 'Self-test receipt schema is stale.' }
+          if ($receipt.schema_version -ne 10) { throw 'Self-test receipt schema is stale.' }
+          if (-not $receipt.n4.passed -or $receipt.runtime_behavior_controller -ne 'n4-explicit-duration-engineering-v1') { throw 'N4 controller validation failed.' }
           if ($receipt.status -ne 'PASS') { throw 'Self-test receipt failed.' }
           if (-not $receipt.live_state_unchanged) { throw 'Preview mutated live state.' }
           if (-not $receipt.alternative_differs) { throw 'Alternative trajectory did not differ.' }

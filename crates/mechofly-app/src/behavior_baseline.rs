@@ -18,7 +18,7 @@ const BASELINE_SCHEMA_VERSION: u32 = 1;
 const FULL_CAMPAIGN_SEEDS: usize = 20;
 const FULL_CAMPAIGN_REPEATS: usize = 2;
 const FULL_CAMPAIGN_SECONDS: u32 = 30 * 60;
-const SCENARIOS: [Scenario; 5] = [
+pub(crate) const SCENARIOS: [Scenario; 5] = [
     Scenario::QuietRest,
     Scenario::Walking,
     Scenario::Grooming,
@@ -27,7 +27,7 @@ const SCENARIOS: [Scenario; 5] = [
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Scenario {
+pub(crate) enum Scenario {
     QuietRest,
     Walking,
     Grooming,
@@ -36,7 +36,7 @@ enum Scenario {
 }
 
 impl Scenario {
-    const fn label(self) -> &'static str {
+    pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::QuietRest => "quiet_rest",
             Self::Walking => "walking",
@@ -386,7 +386,7 @@ fn observe_event(
     }
 }
 
-fn prepare_stimulus(scenario: Scenario, frame: u64, stimulus: &mut [i32]) -> bool {
+pub(crate) fn prepare_stimulus(scenario: Scenario, frame: u64, stimulus: &mut [i32]) -> bool {
     stimulus.fill(0);
     match scenario {
         Scenario::QuietRest => false,

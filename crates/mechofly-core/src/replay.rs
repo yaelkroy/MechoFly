@@ -82,6 +82,7 @@ mod tests {
             spikes: vec![0],
             behavior: Behavior::Rest,
             behavior_age_frames: frame as u32,
+            behavior_dynamics: None,
         };
         ModelCheckpoint {
             graph: GraphIdentity {

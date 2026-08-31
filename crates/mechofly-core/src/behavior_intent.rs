@@ -26,6 +26,16 @@ pub use crate::behavior_telemetry::BehaviorIntentSnapshot;
 pub struct BehaviorIntentBuilder;
 
 impl BehaviorIntentBuilder {
+    /// N4 does not consume the periodic compatibility slot. 255 explicitly marks it disabled.
+    pub fn build_duration_aware(
+        evidence: &NeuralEvidence,
+        context: BehaviorContext,
+    ) -> BehaviorIntentSnapshot {
+        let mut intent = Self::build(evidence, context);
+        intent.autonomous_schedule_slot = u8::MAX;
+        intent
+    }
+
     pub fn build(evidence: &NeuralEvidence, context: BehaviorContext) -> BehaviorIntentSnapshot {
         BehaviorIntentSnapshot {
             schema_version: BEHAVIOR_TELEMETRY_SCHEMA_VERSION,

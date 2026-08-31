@@ -19,6 +19,8 @@ use crate::pet::{PetMotion, Skin, run_motion_self_test};
 #[derive(Serialize)]
 struct SelfTestReceipt {
     schema_version: u32,
+    runtime_behavior_controller: String,
+    n4: mechofly_core::behavior_validation::DynamicsValidation,
     status: String,
     implementation: String,
     model_version: String,
@@ -390,7 +392,10 @@ pub fn run(path: &Path) -> Result<(), String> {
     };
 
     let receipt = SelfTestReceipt {
-        schema_version: 9,
+        schema_version: 10,
+        runtime_behavior_controller: mechofly_core::behavior_parameters::DYNAMICS_VERSION
+            .to_owned(),
+        n4: mechofly_core::behavior_validation::validate_dynamics()?,
         status: if comparison.receipt.live_state_unchanged
             && comparison.receipt.alternative_differs
             && live_before == live_after

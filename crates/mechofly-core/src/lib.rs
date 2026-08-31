@@ -1,8 +1,11 @@
 #![forbid(unsafe_code)]
 
+pub mod behavior_dynamics;
 pub mod behavior_intent;
+pub mod behavior_parameters;
 pub mod behavior_selection;
 pub mod behavior_telemetry;
+pub mod behavior_validation;
 pub mod connectome;
 pub mod graph;
 pub mod learning;
