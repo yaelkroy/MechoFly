@@ -1,17 +1,13 @@
 name: MechoFly N4 integrated controller verification
-
 on:
   push:
     branches: ["fix/n4-duration-controller-integration-rust-v14"]
   workflow_dispatch:
-
 permissions:
   contents: write
-
 concurrency:
   group: n4-integration-repair-${{ github.ref }}
   cancel-in-progress: false
-
 jobs:
   n4-integrated:
     runs-on: windows-latest
@@ -70,12 +66,16 @@ jobs:
       - name: N4 executable receipt and semantic smoke
         shell: powershell
         run: |
-          $process = Start-Process -FilePath (Resolve-Path target/release/MechoFly.exe) -ArgumentList @('--self-test', "$pwd/artifacts/n4-self-test.json") -PassThru -Wait
-          if ($process.ExitCode -ne 0) { throw 'N4 self-test process failed.' }
+          $exe = (Resolve-Path target/release/MechoFly.exe).Path
+          $authority = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          & $exe --self-test "$pwd/artifacts/n4-self-test.json"
+          if ($LASTEXITCODE -ne 0) { throw 'N4 self-test process failed.' }
           $receipt = Get-Content artifacts/n4-self-test.json -Raw | ConvertFrom-Json
           if ($receipt.schema_version -ne 10 -or $receipt.status -ne 'PASS' -or -not $receipt.n4.passed -or $receipt.runtime_behavior_controller -ne 'n4-explicit-duration-engineering-v1') { throw 'Executable is not the validated N4 runtime.' }
-          cargo run --release --locked -p mechofly-core --example n4_campaign -- --behavior-campaign artifacts/n4-campaign.json --campaign-seeds 2 --campaign-repeats 2 --campaign-seconds 30
+          & $exe --behavior-campaign "$pwd/artifacts/n4-campaign" --campaign-authority $authority --campaign-seeds 2 --campaign-repeats 2 --campaign-seconds 30
           if ($LASTEXITCODE -ne 0) { throw 'N4 semantic smoke failed.' }
+          & $exe --behavior-campaign "$pwd/artifacts/n4-campaign" --campaign-authority $authority --campaign-seeds 2 --campaign-repeats 2 --campaign-seconds 30
+          if ($LASTEXITCODE -ne 0) { throw 'N4 completed-run resume failed.' }
       - name: Publish only the tested repair branch
         shell: powershell
         run: |

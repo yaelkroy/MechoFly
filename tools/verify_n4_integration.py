@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""N4 source integration gate; optional one-time recovery from pinned source.
+"""Check actual N4 wiring, not merely presence of unreferenced source files.
 
-The old staged runner copied the 11 source files but omitted prepare_n4.py.
-This tool must prove actual runtime wiring, not just module-file presence.
+--assemble is a one-time CI recovery of the previously authored, pinned N4
+source. User validation fetches the finished commit and never executes a patch.
 """
 from __future__ import annotations
 import argparse
@@ -11,7 +11,6 @@ import hashlib
 import io
 import json
 import lzma
-import os
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
@@ -38,15 +37,13 @@ def api(path: str) -> dict:
 
 
 def source_files() -> dict[str, bytes]:
-    tree = api("trees/" + TRANSPORT)
-    folder = next(item for item in tree["tree"] if item["path"] == ".n4-assembly")
+    folder = next(item for item in api("trees/" + TRANSPORT)["tree"] if item["path"] == ".n4-assembly")
     entries = sorted(api("trees/" + folder["sha"])["tree"], key=lambda item: item["path"])
     if [item["path"] for item in entries] != [f"{i:02d}.txt" for i in range(13)]:
         raise ValueError("Source transport does not have the pinned 13 parts")
     pieces = []
     for item in entries:
-        blob = api("blobs/" + item["sha"])
-        raw = base64.b64decode(blob["content"])
+        raw = base64.b64decode(api("blobs/" + item["sha"])["content"])
         calculated = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()
         if calculated != item["sha"]:
             raise ValueError("Transport Git blob SHA mismatch")
@@ -76,17 +73,15 @@ def source_files() -> dict[str, bytes]:
             if isinstance(value, dict):
                 encoding = value.get("encoding", encoding)
                 value = value.get("content", value.get("text"))
-            raw = base64.b64decode(value, validate=True) if encoding == "base64" else value.encode("utf-8")
-            pairs.append((name, raw))
+            pairs.append((name, base64.b64decode(value, validate=True) if encoding == "base64" else value.encode("utf-8")))
     result = {}
     for name, raw in pairs:
         path = PurePosixPath(name.replace("\\", "/"))
         if path.is_absolute() or ".." in path.parts or ":" in name or path.parts[0] not in {"crates", "tools", "docs", ".github"}:
             raise ValueError("Unsafe source path: " + name)
-        key = str(path)
-        if key in result:
-            raise ValueError("Duplicate source path: " + key)
-        result[key] = raw
+        if str(path) in result:
+            raise ValueError("Duplicate source path: " + str(path))
+        result[str(path)] = raw
     if len(result) != 11 or "tools/prepare_n4.py" not in result:
         raise ValueError("Incomplete N4 source package")
     return result
@@ -105,8 +100,7 @@ def verify(root: Path) -> dict:
     }
     count = 0
     for relative, markers in checks.items():
-        text = (root / relative).read_text(encoding="utf-8-sig")
-        compact = "".join(text.split())
+        compact = "".join((root / relative).read_text(encoding="utf-8-sig").split())
         for marker in markers:
             if "".join(marker.split()) not in compact:
                 raise ValueError(f"N4 integration missing in {relative}: {marker}")
@@ -129,16 +123,24 @@ def main() -> None:
     root = Path(args.root).resolve()
     if args.assemble and not (root / "crates/mechofly-core/src/behavior_dynamics.rs").exists():
         subprocess.run(["git", "merge-base", "--is-ancestor", BASE, "HEAD"], cwd=root, check=True)
-        files = source_files()
-        for relative, data in files.items():
+        for relative, data in source_files().items():
             path = root / relative
             if path.exists():
                 raise ValueError("Refusing to overwrite existing assembly source: " + relative)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
-        # Critical fix: integrate BEFORE committing, compiling, or claiming N4.
-        subprocess.run([sys.executable, str(root / "tools/prepare_n4.py"), str(root)], cwd=root, check=True)
-        (root / "tools/prepare_n4.py").unlink()
+        prepare = root / "tools/prepare_n4.py"
+        text = prepare.read_text(encoding="utf-8")
+        # The schema predicate starts on the same line as `if (` in the pinned
+        # Setup script; matching four leading spaces was an unexecuted bug.
+        anchor = "    $Receipt.schema_version -ne 10 -or"
+        if text.count(anchor) != 2:
+            raise ValueError("Reviewed setup-predicate assembly anchor changed")
+        prepare.write_text(text.replace(anchor, "$Receipt.schema_version -ne 10 -or"), encoding="utf-8", newline="\n")
+        subprocess.run([sys.executable, str(prepare), str(root)], cwd=root, check=True)
+        prepare.unlink()
+        # The integrated workflow replaces the unused, zero-authority draft.
+        (root / ".github/workflows/n4-dynamics.yml").unlink()
     report = verify(root)
     if args.receipt:
         path = Path(args.receipt)
