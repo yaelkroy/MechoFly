@@ -1,0 +1,32 @@
+name: N4.1 natural motion
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+      - name: Rust tests
+        shell: pwsh
+        run: cargo test --workspace --all-targets --features mechofly-app/n41-visual-review-b
+      - name: Static natural-motion boundary
+        shell: pwsh
+        run: python tools/verify_n41_natural_motion.py --root . --receipt target/n41-natural-motion.json
+      - name: Canonical self-test schema compatibility
+        shell: pwsh
+        run: python tools/verify_n4_integration.py --root . --receipt target/n4-runtime-integration.json
+      - name: Exact extended-tier deterministic probes
+        shell: pwsh
+        run: |
+          cargo run -p mechofly-core --example n41_live_profile --release -- --profile n41-b --tier extended-65536 --seconds 600 --output target/n41-live-a.json
+          cargo run -p mechofly-core --example n41_live_profile --release -- --profile n41-b --tier extended-65536 --seconds 600 --output target/n41-live-b.json
+          $a = Get-Content target/n41-live-a.json -Raw | ConvertFrom-Json
+          $b = Get-Content target/n41-live-b.json -Raw | ConvertFrom-Json
+          if ($a.deterministic_signature_sha256 -cne $b.deterministic_signature_sha256) { throw 'Exact live probes diverged.' }
+          if ([int]$a.grooming_bouts -lt 2 -or [int]$a.grooming_frames -lt 240) { throw 'Exact live grooming visibility gate failed.' }

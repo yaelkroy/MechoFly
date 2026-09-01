@@ -399,7 +399,7 @@ if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
     throw 'MechoFly self-test did not create its receipt.'
 }
 $Receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json
-if ($Receipt.schema_version -ne 10 -or
+if ($Receipt.schema_version -ne 11 -or
     -not $Receipt.n4.passed -or
     $Receipt.runtime_behavior_controller -ne 'n4-explicit-duration-engineering-v1' -or
     $Receipt.behavior_telemetry_schema_version -ne 1 -or

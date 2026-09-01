@@ -82,6 +82,8 @@ struct SelfTestReceipt {
     grooming_minimum_dwell_ms: u32,
     recorded_motion_contract_passed: bool,
     walking_translation_pixels: f32,
+    high_refresh_native_round_trip_translation_pixels: f32,
+    native_drag_synchronization: bool,
     escape_translation_pixels: f32,
     flight_path_pixels: f32,
     flight_horizontal_pixels: f32,
@@ -356,14 +358,16 @@ pub fn run(path: &Path) -> Result<(), String> {
     live_selection.set_selected_neuron(lab_selection.selected_neuron_index());
     let lab_to_live = live_selection.selected_neuron() == 377;
     let two_way_neuron_selection_sync = live_to_lab && lab_to_live;
-    let grooming_program_substates = [0, 8, 16, 23]
+    let grooming_program_substates = [0, 8, 38, 53, 61, 69]
         .map(crate::brain_lab::grooming_substate_at)
         .map(|(label, _, _)| label.to_owned())
         .to_vec();
     let grooming_substate_timeline = grooming_program_substates.iter().map(String::as_str).eq([
         "PREPARE",
-        "CLEANING STROKE",
-        "LIMB RUB",
+        "HEAD SWEEP",
+        "FORELEG RUB",
+        "ABDOMEN BRUSH",
+        "WING CLEAN",
         "RESET",
     ]);
     let behavior_telemetry = run_behavior_telemetry_self_test(Arc::clone(&graph));
@@ -392,7 +396,7 @@ pub fn run(path: &Path) -> Result<(), String> {
     };
 
     let receipt = SelfTestReceipt {
-        schema_version: 10,
+        schema_version: 11,
         runtime_behavior_controller: mechofly_core::behavior_parameters::DYNAMICS_VERSION
             .to_owned(),
         n4: mechofly_core::behavior_validation::validate_dynamics()?,
@@ -478,6 +482,9 @@ pub fn run(path: &Path) -> Result<(), String> {
         grooming_minimum_dwell_ms: (GROOM_HOLD_FRAMES + 1) * mechofly_core::MODEL_STEP_MS,
         recorded_motion_contract_passed: motion.passed,
         walking_translation_pixels: motion.walking_translation_pixels,
+        high_refresh_native_round_trip_translation_pixels: motion
+            .high_refresh_native_round_trip_translation_pixels,
+        native_drag_synchronization: motion.native_drag_synchronization,
         escape_translation_pixels: motion.escape_translation_pixels,
         flight_path_pixels: motion.flight_path_pixels,
         flight_horizontal_pixels: motion.flight_horizontal_pixels,

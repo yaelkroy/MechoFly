@@ -11,6 +11,8 @@ mod desktop_pet;
 mod diagnostics;
 mod live_brain;
 mod pet;
+#[cfg(feature = "n41-visual-review-b")]
+mod review_evidence;
 mod runtime;
 mod self_test;
 mod storage;
@@ -144,6 +146,9 @@ struct N41VisualReviewLaunchReceipt {
     source_commit: Option<String>,
     source_tree: Option<String>,
     source_executable_sha256: Option<String>,
+    trace_path: String,
+    capture_directory: String,
+    capture_source: &'static str,
     promotion_authorized: bool,
     deployment_authorized: bool,
 }
@@ -247,7 +252,7 @@ fn write_n41_visual_review_launch_receipt(
         return Err("N4.1 visual review requires MECHOFLY_DATA_DIR".into());
     }
     let receipt = N41VisualReviewLaunchReceipt {
-        schema_version: 1,
+        schema_version: 2,
         status: "PASS",
         classification: "feature_gated_live_visual_review_candidate",
         review_feature: "n41-visual-review-b",
@@ -261,11 +266,26 @@ fn write_n41_visual_review_launch_receipt(
         executable: executable.display().to_string(),
         executable_sha256: artifact_sha256(&executable_bytes),
         storage_override_active: true,
-        storage_directory: storage_directory.map(|path| path.display().to_string()),
+        storage_directory: storage_directory
+            .as_ref()
+            .map(|path| path.display().to_string()),
         source_branch: config.source_identity.branch.clone(),
         source_commit: config.source_identity.commit.clone(),
         source_tree: config.source_identity.tree.clone(),
         source_executable_sha256: config.source_identity.executable_sha256.clone(),
+        trace_path: storage_directory
+            .as_ref()
+            .expect("storage override was checked")
+            .join("review-trace.jsonl")
+            .display()
+            .to_string(),
+        capture_directory: storage_directory
+            .as_ref()
+            .expect("storage override was checked")
+            .join("review-captures")
+            .display()
+            .to_string(),
+        capture_source: "direct pet BGRA buffer composited over a constant backdrop; no screen capture",
         promotion_authorized: false,
         deployment_authorized: false,
     };

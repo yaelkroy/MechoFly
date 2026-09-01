@@ -134,41 +134,6 @@ function Get-ReviewPetWindow {
     return $pets[0]
 }
 
-function Save-DesktopRectangle {
-    param(
-        [Parameter(Mandatory = $true)]
-        [int] $Left,
-
-        [Parameter(Mandatory = $true)]
-        [int] $Top,
-
-        [Parameter(Mandatory = $true)]
-        [int] $Width,
-
-        [Parameter(Mandatory = $true)]
-        [int] $Height,
-
-        [Parameter(Mandatory = $true)]
-        [string] $LiteralPath
-    )
-    $bitmap = New-Object System.Drawing.Bitmap($Width, $Height)
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    try {
-        $graphics.CopyFromScreen(
-            $Left,
-            $Top,
-            0,
-            0,
-            (New-Object System.Drawing.Size($Width, $Height)),
-            [System.Drawing.CopyPixelOperation]::SourceCopy)
-        $bitmap.Save($LiteralPath, [System.Drawing.Imaging.ImageFormat]::Png)
-    }
-    finally {
-        $graphics.Dispose()
-        $bitmap.Dispose()
-    }
-}
-
 function Get-NonBackdropPixelCount {
     param(
         [Parameter(Mandatory = $true)]
@@ -210,6 +175,9 @@ function Save-PrivacySafePetCapture {
         [string] $Directory,
 
         [Parameter(Mandatory = $true)]
+        [string] $CaptureDirectory,
+
+        [Parameter(Mandatory = $true)]
         [double] $ElapsedSeconds,
 
         [switch] $KeepHeld
@@ -217,53 +185,40 @@ function Save-PrivacySafePetCapture {
     $current = [MechoFly.N41VisualReview.WindowProbe]::Current(
         [int64]$Window.handle)
     Assert-Condition ($null -ne $current) 'The review pet disappeared before capture.'
-    $virtual = [System.Windows.Forms.SystemInformation]::VirtualScreen
-    $left = [Math]::Max($virtual.Left, [int]$current.x)
-    $top = [Math]::Max($virtual.Top, [int]$current.y)
-    $right = [Math]::Min(
-        $virtual.Right,
-        [int]$current.x + [int]$current.width)
-    $bottom = [Math]::Min(
-        $virtual.Bottom,
-        [int]$current.y + [int]$current.height)
-    $width = $right - $left
-    $height = $bottom - $top
-    Assert-Condition ($width -eq [int]$current.width -and
-        $height -eq [int]$current.height) (
-        'Review pet must be fully on-screen for a privacy-safe capture.')
-
+    $existing = @{}
+    Get-ChildItem -LiteralPath $CaptureDirectory -Filter 'boundary-*.png' |
+        ForEach-Object { $existing[$_.FullName] = $true }
     Assert-Condition (
         [MechoFly.N41VisualReview.WindowProbe]::SetEvidenceHold(
             [int64]$current.handle,
             $true)) 'Could not freeze the pet at the review boundary.'
-    Start-Sleep -Milliseconds 150
-
-    $backdrop = New-Object MechoFly.N41VisualReview.CaptureBackdropForm
     try {
-        $backdrop.BackColor = $script:BackdropColor
-        $backdrop.Bounds = New-Object System.Drawing.Rectangle(
-            $left,
-            $top,
-            $width,
-            $height)
-        $backdrop.Show()
-        [System.Windows.Forms.Application]::DoEvents()
-        [void][MechoFly.N41VisualReview.WindowProbe]::FlushComposition()
-        Start-Sleep -Milliseconds 100
-        Assert-Condition (
-            [MechoFly.N41VisualReview.WindowProbe]::SetCaptureLayer(
-                [int64]$current.handle,
-                $true)) 'Could not promote the pet above the privacy backdrop.'
-        [void][MechoFly.N41VisualReview.WindowProbe]::FlushComposition()
-        Start-Sleep -Milliseconds 100
-
+        $deadline = [DateTime]::UtcNow.AddSeconds(10)
+        $source = $null
+        while ([DateTime]::UtcNow -lt $deadline) {
+            $source = Get-ChildItem `
+                -LiteralPath $CaptureDirectory `
+                -Filter 'boundary-*.png' |
+                Where-Object { -not $existing.ContainsKey($_.FullName) } |
+                Sort-Object Name |
+                Select-Object -First 1
+            if ($null -ne $source) { break }
+            Start-Sleep -Milliseconds 50
+        }
+        Assert-Condition ($null -ne $source) (
+            'The candidate did not emit its direct pet-buffer boundary capture.')
         $path = Join-Path $Directory ($Name + '.png')
-        Save-DesktopRectangle `
-            -Left $left `
-            -Top $top `
-            -Width $width `
-            -Height $height `
-            -LiteralPath $path
+        Copy-Item -LiteralPath $source.FullName -Destination $path -Force
+        $bitmap = New-Object System.Drawing.Bitmap($path)
+        try {
+            $width = $bitmap.Width
+            $height = $bitmap.Height
+        }
+        finally {
+            $bitmap.Dispose()
+        }
+        Assert-Condition ($width -eq 420 -and $height -eq 280) (
+            'Direct pet-buffer capture dimensions were not 420 x 280.')
         $visiblePixels = Get-NonBackdropPixelCount -LiteralPath $path
         Assert-Condition ($visiblePixels -ge 500) (
             'Privacy-safe capture did not contain a visible pet. pixels=' +
@@ -276,7 +231,7 @@ function Save-PrivacySafePetCapture {
             height = $height
             elapsed_seconds = [Math]::Round($ElapsedSeconds, 3)
             non_backdrop_pixels = $visiblePixels
-            capture_scope = 'pet window over collector-owned solid backdrop only'
+            capture_scope = 'direct pet BGRA buffer over constant backdrop; no screen API'
             full_desktop_captured = $false
             evidence_hold = $true
             source_window_title = [string]$current.title
@@ -284,8 +239,6 @@ function Save-PrivacySafePetCapture {
         }
     }
     finally {
-        $backdrop.Hide()
-        $backdrop.Dispose()
         if (-not $KeepHeld) {
             [void][MechoFly.N41VisualReview.WindowProbe]::SetEvidenceHold(
                 [int64]$current.handle,
@@ -330,6 +283,12 @@ function Get-PhaseRatings {
         [Parameter(Mandatory = $true)]
         [string] $Phase
     )
+    $naturalnessQuestion = if ($Phase -ceq 'Late') {
+        'Did walking create real screen displacement with stops, curves, and turns, and did you see a recognizable multi-step grooming sequence (head/forelegs plus abdomen or wing) rather than pivoting or walking in place?'
+    }
+    else {
+        'Did walking create real screen displacement with believable straight/curved bouts and stops, rather than rotating or walking in place?'
+    }
     $ratings = New-Object System.Collections.Generic.List[object]
     foreach ($item in @(
         [pscustomobject]@{
@@ -338,7 +297,7 @@ function Get-PhaseRatings {
         },
         [pscustomobject]@{
             criterion = 'Naturalness'
-            question = 'Did its movement and behavior changes feel alive and stateful rather than dead, stuck, or mechanically repetitive?'
+            question = $naturalnessQuestion
         },
         [pscustomobject]@{
             criterion = 'Non-disruption'
@@ -355,6 +314,101 @@ function Get-PhaseRatings {
         }
     }
     return [object[]]$ratings.ToArray()
+}
+
+function Get-NaturalMotionMetrics {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $TracePath,
+
+        [Parameter(Mandatory = $true)]
+        [string] $CaptureDirectory
+    )
+    Assert-Condition (Test-Path -LiteralPath $TracePath -PathType Leaf) (
+        'Candidate motion trace is missing: ' + $TracePath)
+    $previous = $null
+    $previousBehavior = ''
+    $walkingPairs = 0
+    $translatedPairs = 0
+    $stationaryRotationPairs = 0
+    $walkingPath = 0.0
+    $groomingBouts = 0
+    $groomingFrames = New-Object 'System.Collections.Generic.HashSet[long]'
+    $groomingSubstates = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($line in [System.IO.File]::ReadLines($TracePath)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $sample = $line | ConvertFrom-Json
+        $behavior = [string]$sample.behavior
+        if ($behavior -ceq 'groom') {
+            [void]$groomingFrames.Add([long]$sample.model_frame)
+            if ($null -ne $sample.grooming_substate) {
+                [void]$groomingSubstates.Add(
+                    [string]$sample.grooming_substate)
+            }
+            if ($previousBehavior -cne 'groom') { $groomingBouts++ }
+        }
+        if ($null -ne $previous -and
+            $behavior -ceq 'walk' -and
+            [string]$previous.behavior -ceq 'walk' -and
+            -not [bool]$sample.dragging -and
+            -not [bool]$sample.cursor_hovered -and
+            -not [bool]$sample.evidence_hold) {
+            $dx = [double]$sample.screen_x - [double]$previous.screen_x
+            $dy = [double]$sample.screen_y - [double]$previous.screen_y
+            $distance = [Math]::Sqrt($dx * $dx + $dy * $dy)
+            $headingDelta = [Math]::Abs(
+                [double]$sample.heading_radians -
+                [double]$previous.heading_radians)
+            while ($headingDelta -gt [Math]::PI) {
+                $headingDelta = [Math]::Abs(
+                    $headingDelta - 2.0 * [Math]::PI)
+            }
+            $walkingPairs++
+            $walkingPath += $distance
+            if ($distance -ge 0.05) { $translatedPairs++ }
+            if ($distance -lt 0.05 -and $headingDelta -gt 0.003) {
+                $stationaryRotationPairs++
+            }
+        }
+        $previous = $sample
+        $previousBehavior = $behavior
+    }
+    $requiredCaptures = @(
+        'groom-head-sweep.png',
+        'groom-foreleg-rub.png',
+        'groom-abdomen-brush.png',
+        'groom-wing-clean.png'
+    )
+    $observedCaptures = @($requiredCaptures | Where-Object {
+        Test-Path -LiteralPath (Join-Path $CaptureDirectory $_) -PathType Leaf
+    })
+    $stationaryRatio = if ($walkingPairs -gt 0) {
+        [double]$stationaryRotationPairs / [double]$walkingPairs
+    }
+    else { 1.0 }
+    $groomingSeconds = [double]$groomingFrames.Count * 0.033
+    $passed = $walkingPath -ge 100.0 -and
+        $translatedPairs -ge 50 -and
+        $stationaryRatio -le 0.05 -and
+        $groomingBouts -ge 1 -and
+        $groomingSeconds -ge 1.5 -and
+        $observedCaptures.Count -eq $requiredCaptures.Count -and
+        $groomingSubstates.Count -ge 4
+    return [pscustomobject][ordered]@{
+        status = if ($passed) { 'PASS' } else { 'FAIL' }
+        walking_sample_pairs = $walkingPairs
+        translated_walking_pairs = $translatedPairs
+        walking_path_pixels = [Math]::Round($walkingPath, 3)
+        stationary_rotation_pairs = $stationaryRotationPairs
+        stationary_rotation_ratio = [Math]::Round($stationaryRatio, 6)
+        grooming_bouts = $groomingBouts
+        grooming_frames = $groomingFrames.Count
+        grooming_seconds = [Math]::Round($groomingSeconds, 3)
+        grooming_substates = @($groomingSubstates | Sort-Object)
+        required_grooming_captures = $requiredCaptures
+        observed_grooming_captures = $observedCaptures
+        gate = 'translation >= 100 px; >= 50 translated pairs; stationary-rotation ratio <= 0.05; >= 1 autonomous groom bout lasting >= 1.5 s; all four action captures'
+    }
 }
 
 $executable = (Resolve-Path -LiteralPath $ExecutablePath).Path
@@ -613,6 +667,7 @@ $earlyRatings = @()
 $lateRatings = @()
 $visualDecision = 'ABORTED'
 $finalConfirmation = 'NOT_ASKED'
+$objectiveMetrics = $null
 $startedUtc = [DateTime]::UtcNow
 try {
     $env:MECHOFLY_DATA_DIR = $dataDirectory
@@ -655,6 +710,19 @@ try {
     Assert-Condition ([string]$launchReceipt.parameter_sha256 -ceq $ExpectedParameterSha256) 'N4.1-B parameter identity mismatch.'
     Assert-Condition ([string]$launchReceipt.executable_sha256 -ceq $ExecutableSha256) 'Candidate launch binary identity mismatch.'
     Assert-Condition ([bool]$launchReceipt.storage_override_active) 'Downloads storage override was not active.'
+    Assert-Condition ([string]$launchReceipt.capture_source -ceq
+        'direct pet BGRA buffer composited over a constant backdrop; no screen capture') (
+        'Candidate did not declare direct-buffer privacy-safe capture.')
+    $captureDirectory = [string]$launchReceipt.capture_directory
+    $tracePath = [string]$launchReceipt.trace_path
+    Assert-Condition ($captureDirectory.StartsWith(
+        $dataDirectory,
+        [StringComparison]::OrdinalIgnoreCase)) (
+        'Candidate capture directory escaped the Downloads-only review directory.')
+    Assert-Condition ($tracePath.StartsWith(
+        $dataDirectory,
+        [StringComparison]::OrdinalIgnoreCase)) (
+        'Candidate trace path escaped the Downloads-only review directory.')
     Assert-Condition (-not [bool]$launchReceipt.promotion_authorized) 'Candidate incorrectly authorized promotion.'
     Assert-Condition (-not [bool]$launchReceipt.deployment_authorized) 'Candidate incorrectly authorized deployment.'
 
@@ -671,6 +739,7 @@ try {
         -Window $petWindow `
         -Name 'early-30s' `
         -Directory $output `
+        -CaptureDirectory $captureDirectory `
         -ElapsedSeconds $reviewStopwatch.Elapsed.TotalSeconds))
     $earlyRatings = Get-PhaseRatings -Phase 'Early'
     if (@($earlyRatings | Where-Object { $_.result -eq 'ABORT' }).Count -gt 0) {
@@ -691,6 +760,7 @@ try {
             -Window $petWindow `
             -Name 'late-start-5m' `
             -Directory $output `
+            -CaptureDirectory $captureDirectory `
             -ElapsedSeconds $reviewStopwatch.Elapsed.TotalSeconds))
 
         Wait-ReviewBoundary `
@@ -704,6 +774,7 @@ try {
             -Window $petWindow `
             -Name 'late-mid-7m30s' `
             -Directory $output `
+            -CaptureDirectory $captureDirectory `
             -ElapsedSeconds $reviewStopwatch.Elapsed.TotalSeconds))
 
         Wait-ReviewBoundary `
@@ -717,8 +788,15 @@ try {
             -Window $petWindow `
             -Name 'late-end-10m' `
             -Directory $output `
+            -CaptureDirectory $captureDirectory `
             -ElapsedSeconds $reviewStopwatch.Elapsed.TotalSeconds `
             -KeepHeld))
+        $objectiveMetrics = Get-NaturalMotionMetrics `
+            -TracePath $tracePath `
+            -CaptureDirectory $captureDirectory
+        Write-Host ('NATURAL_MOTION_GATE=' + $objectiveMetrics.status +
+            ' walking_path_pixels=' + [string]$objectiveMetrics.walking_path_pixels +
+            ' grooming_bouts=' + [string]$objectiveMetrics.grooming_bouts)
         [Console]::Beep(1047, 400)
         $lateRatings = Get-PhaseRatings -Phase 'Late'
         $lateAborted = @($lateRatings | Where-Object {
@@ -728,7 +806,8 @@ try {
         if ($lateAborted) {
             $visualDecision = 'ABORTED'
         }
-        elseif (@($allRatings | Where-Object {
+        elseif ([string]$objectiveMetrics.status -cne 'PASS' -or
+            @($allRatings | Where-Object {
             $_.result -ne 'PASS'
         }).Count -gt 0) {
             $visualDecision = 'REJECTED'
@@ -761,7 +840,7 @@ try {
         0
     }
     $receipt = [ordered]@{
-        schema_version = 1
+        schema_version = 2
         status = 'PASS'
         classification = 'single_owner_formative_early_late_visual_review'
         candidate_profile = 'n41-b'
@@ -780,8 +859,9 @@ try {
         late_ratings = @($lateRatings)
         final_confirmation = $finalConfirmation
         visual_acceptance = $visualDecision
+        objective_natural_motion = $objectiveMetrics
         captures = [object[]]$captures.ToArray()
-        screenshot_scope = 'pet window over collector-owned solid backdrop only'
+        screenshot_scope = 'direct pet BGRA buffer over constant backdrop; no screen API'
         full_desktop_captured = $false
         appdata_write_authorized = $false
         storage_directory = $dataDirectory

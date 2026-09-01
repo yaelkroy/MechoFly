@@ -2141,6 +2141,7 @@ dependencies = [
  "log",
  "mechofly-core",
  "naga",
+ "png",
  "pollster 0.4.0",
  "serde",
  "serde_json",

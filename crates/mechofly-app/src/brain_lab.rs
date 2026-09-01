@@ -1081,8 +1081,12 @@ fn replay_stimulation_panel(
 }
 
 fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
-    let grooming_phase = (session.engine.state.behavior == mechofly_core::Behavior::Groom)
-        .then(|| grooming_substate_at(session.engine.state.behavior_age_frames));
+    let grooming_phase =
+        (session.engine.state.behavior == mechofly_core::Behavior::Groom).then(|| {
+            mechofly_core::grooming_program::grooming_program_at(
+                session.engine.state.behavior_age_frames,
+            )
+        });
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("TRANSITION TELEMETRY")
@@ -1125,7 +1129,7 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.label(
-                egui::RichText::new("MACRO / GENERIC GROOMING PROGRAM")
+                egui::RichText::new("MACRO / ANATOMICAL GROOMING MOTOR PROGRAM")
                     .strong()
                     .color(INK),
             );
@@ -1134,9 +1138,12 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
                     "BODY REGION: UNSPECIFIED  ·  AUTHORED GENERIC GRAMMAR  ·  NOT CALIBRATED"
                         .to_owned()
                 },
-                |(substate, cycle, _)| {
+                |program| {
                     format!(
-                        "BODY REGION: UNSPECIFIED  ·  {substate}  ·  CYCLE {cycle:03}  ·  NOT CALIBRATED"
+                        "BODY REGION: {}  ·  {}  ·  CYCLE {:03}  ·  LITERATURE-INSPIRED, NOT CALIBRATED",
+                        program.substate.body_region(),
+                        program.substate.label(),
+                        program.cycle,
                     )
                 },
             );
@@ -1161,10 +1168,12 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
     painter.rect_stroke(rect, 3, Stroke::new(1.0, GRID), StrokeKind::Inside);
     let segments = match session.engine.state.behavior {
         mechofly_core::Behavior::Groom => vec![
-            ("PREPARE", 0.20, ACTUAL),
-            ("CLEAN STROKE", 0.30, VIOLET),
-            ("LIMB RUB", 0.30, ALTERNATIVE),
-            ("RESET", 0.20, POSITIVE),
+            ("PREPARE", 8.0 / 75.0, ACTUAL),
+            ("HEAD SWEEP", 30.0 / 75.0, VIOLET),
+            ("FORELEG RUB", 15.0 / 75.0, ALTERNATIVE),
+            ("ABDOMEN", 8.0 / 75.0, POSITIVE),
+            ("WING", 8.0 / 75.0, WARNING),
+            ("RESET", 6.0 / 75.0, MUTED),
         ],
         mechofly_core::Behavior::PreEscape
         | mechofly_core::Behavior::Flight
@@ -1204,7 +1213,9 @@ fn behavior_program_panel(ui: &mut egui::Ui, session: &SimulationSession) {
         x += width;
     }
     let playhead = match session.engine.state.behavior {
-        mechofly_core::Behavior::Groom => grooming_phase.map_or(0.0, |(_, _, progress)| progress),
+        mechofly_core::Behavior::Groom => {
+            grooming_phase.map_or(0.0, |program| program.cycle_progress)
+        }
         mechofly_core::Behavior::PreEscape => {
             0.24 * (session.engine.state.behavior_age_frames as f32
                 / (mechofly_core::model::ESCAPE_HOLD_FRAMES + 1) as f32)
@@ -1264,19 +1275,12 @@ fn recent_behavior_transitions(session: &SimulationSession, maximum: usize) -> V
 }
 
 pub(crate) fn grooming_substate_at(age_frames: u32) -> (&'static str, u32, f32) {
-    const SUBSTATE_MS: u32 = 250;
-    const CYCLE_MS: u32 = SUBSTATE_MS * 4;
-    let elapsed_ms = age_frames.saturating_mul(mechofly_core::MODEL_STEP_MS);
-    let segment = (elapsed_ms / SUBSTATE_MS) % 4;
-    let label = match segment {
-        0 => "PREPARE",
-        1 => "CLEANING STROKE",
-        2 => "LIMB RUB",
-        _ => "RESET",
-    };
-    let cycle = elapsed_ms / CYCLE_MS;
-    let progress = (elapsed_ms % CYCLE_MS) as f32 / CYCLE_MS as f32;
-    (label, cycle, progress)
+    let program = mechofly_core::grooming_program::grooming_program_at(age_frames);
+    (
+        program.substate.label(),
+        program.cycle,
+        program.cycle_progress,
+    )
 }
 
 fn style_context(ctx: &egui::Context) {
@@ -1974,12 +1978,14 @@ mod tests {
     }
 
     #[test]
-    fn grooming_program_advances_through_four_visible_substates() {
+    fn grooming_program_advances_through_six_anatomical_substates() {
         assert_eq!(grooming_substate_at(0).0, "PREPARE");
-        assert_eq!(grooming_substate_at(8).0, "CLEANING STROKE");
-        assert_eq!(grooming_substate_at(16).0, "LIMB RUB");
-        assert_eq!(grooming_substate_at(23).0, "RESET");
-        let wrapped = grooming_substate_at(31);
+        assert_eq!(grooming_substate_at(8).0, "HEAD SWEEP");
+        assert_eq!(grooming_substate_at(38).0, "FORELEG RUB");
+        assert_eq!(grooming_substate_at(53).0, "ABDOMEN BRUSH");
+        assert_eq!(grooming_substate_at(61).0, "WING CLEAN");
+        assert_eq!(grooming_substate_at(69).0, "RESET");
+        let wrapped = grooming_substate_at(75);
         assert_eq!(wrapped.0, "PREPARE");
         assert_eq!(wrapped.1, 1);
     }

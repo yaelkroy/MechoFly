@@ -8,6 +8,7 @@ pub mod behavior_telemetry;
 pub mod behavior_validation;
 pub mod connectome;
 pub mod graph;
+pub mod grooming_program;
 pub mod learning;
 pub mod model;
 pub mod neural_evidence;

@@ -25,6 +25,7 @@ flate2 = "1.1.5"
 log = "0.4.29"
 naga = { version = "30.0.1", features = ["wgsl-in"] }
 pollster = "0.4.0"
+png = "0.18.1"
 rayon = "1.11.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

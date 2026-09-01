@@ -59,7 +59,7 @@ def main() -> None:
                 )
         cargo = (root / "crates/mechofly-app/Cargo.toml").read_text(encoding="utf-8")
         main = (root / "crates/mechofly-app/src/main.rs").read_text(encoding="utf-8")
-        if "default = []" not in cargo or "n41-visual-review-b = []" not in cargo:
+        if "default = []" not in cargo or 'n41-visual-review-b = ["dep:png"]' not in cargo:
             raise ValueError("N4.1 visual-review feature is not opt-in")
         if 'const N41_B_VISUAL_REVIEW_FLAG: &str = "--n41-b-visual-review";' not in main:
             raise ValueError("N4.1 visual review lacks its explicit command-line gate")

@@ -47,9 +47,12 @@ def main() -> None:
         encoding="utf-8"
     )
     collector = (root / "tools/Invoke-N41VisualReview.ps1").read_text(encoding="utf-8")
+    evidence = (root / "crates/mechofly-app/src/review_evidence.rs").read_text(
+        encoding="utf-8"
+    )
 
     require(cargo, "default = []", "empty default feature set")
-    require(cargo, "n41-visual-review-b = []", "opt-in visual-review feature")
+    require(cargo, 'n41-visual-review-b = ["dep:png"]', "opt-in visual-review feature")
     require(
         runtime,
         "ModelEngine::new_duration_aware(Arc::clone(&graph), seed)",
@@ -91,6 +94,9 @@ def main() -> None:
     require(diagnostics, "crate::storage::override_directory()", "redirected diagnostics")
     require(main_rs, "storage::override_directory()", "redirected runtime profile")
     require(app, "crate::storage::override_directory()", "redirected application state")
+    require(evidence, "review-trace.jsonl", "direct motion trace")
+    require(evidence, "review-captures", "direct pet captures")
+    require(evidence, "composite_bgra_pixel", "constant-backdrop compositor")
 
     for marker, label in (
         ("$EarlyBoundarySeconds = 30", "30-second early boundary"),
@@ -100,6 +106,7 @@ def main() -> None:
         ("Get-PhaseRatings", "explicit phase ratings"),
         ("ACCEPTED_FOR_GUARDED_NEXT_STEP", "guarded acceptance decision"),
         ("full_desktop_captured = $false", "desktop privacy denial"),
+        ("Get-NaturalMotionMetrics", "objective natural-motion gate"),
         ("deployment_authorized = $false", "collector deployment denial"),
     ):
         require(collector, marker, label)
@@ -108,6 +115,7 @@ def main() -> None:
         "[System.IO.Path]::GetTempPath()",
         "[System.IO.Path]::GetTempFileName()",
         "Stop-MechoFly.ps1",
+        "CopyFromScreen",
     )
     for marker in forbidden_collector_markers:
         if marker in collector:

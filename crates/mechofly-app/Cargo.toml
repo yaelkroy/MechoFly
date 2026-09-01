@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-n41-visual-review-b = []
+n41-visual-review-b = ["dep:png"]
 
 [dependencies]
 bytemuck.workspace = true
@@ -21,6 +21,7 @@ env_logger.workspace = true
 log.workspace = true
 mechofly-core = { path = "../mechofly-core" }
 pollster.workspace = true
+png = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 wgpu.workspace = true

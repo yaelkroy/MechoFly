@@ -4,7 +4,10 @@ use std::{
 };
 
 use eframe::egui::{self, Color32, Painter, Pos2, Rect, Shape, Stroke, Vec2};
-use mechofly_core::Behavior;
+use mechofly_core::{
+    Behavior,
+    grooming_program::{GroomingMotorSubstate, GroomingProgramFrame, grooming_program_at},
+};
 use serde::{Deserialize, Serialize};
 
 pub const PET_WIDTH: usize = 420;
@@ -28,6 +31,52 @@ const LANDING_SAFE_TOP_MARGIN_PIXELS: f32 = 32.0;
 const LANDING_SAFE_BOTTOM_FRACTION: f32 = 0.12;
 const LANDING_SAFE_BOTTOM_MIN_PIXELS: f32 = 56.0;
 const LANDING_SAFE_BOTTOM_MAX_PIXELS: f32 = 112.0;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroundPathMotif {
+    Straight,
+    CurveLeft,
+    CurveRight,
+    SharpTurnLeft,
+    SharpTurnRight,
+}
+
+impl GroundPathMotif {
+    fn for_bout(sequence: u64) -> Self {
+        match motor_mix64(sequence ^ 0x4D4F_5449_4F4E_5631) % 8 {
+            0..=3 => Self::Straight,
+            4 => Self::CurveLeft,
+            5 => Self::CurveRight,
+            6 => Self::SharpTurnLeft,
+            _ => Self::SharpTurnRight,
+        }
+    }
+
+    fn turn_rate_radians_per_second(self, age_seconds: f32) -> f32 {
+        match self {
+            Self::Straight => 0.0,
+            Self::CurveLeft => -0.14,
+            Self::CurveRight => 0.14,
+            Self::SharpTurnLeft | Self::SharpTurnRight if age_seconds < 0.42 => {
+                let direction = if self == Self::SharpTurnLeft {
+                    -1.0
+                } else {
+                    1.0
+                };
+                direction * 1.7 * (PI * age_seconds / 0.42).sin().max(0.0)
+            }
+            Self::SharpTurnLeft | Self::SharpTurnRight => 0.0,
+        }
+    }
+}
+
+fn motor_mix64(mut value: u64) -> u64 {
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94D0_49BB_1331_11EB);
+    value ^ (value >> 31)
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -84,6 +133,8 @@ pub struct PetMotion {
     landing_target_heading: f32,
     landing_start_altitude_pixels: f32,
     landing_active: bool,
+    ground_bout_sequence: u64,
+    ground_path_motif: GroundPathMotif,
     pub paused: bool,
     pub reduced_motion: bool,
 }
@@ -105,6 +156,8 @@ impl Default for PetMotion {
             landing_target_heading: 0.0,
             landing_start_altitude_pixels: 0.0,
             landing_active: false,
+            ground_bout_sequence: 0,
+            ground_path_motif: GroundPathMotif::Straight,
             paused: false,
             reduced_motion: false,
         }
@@ -112,6 +165,19 @@ impl Default for PetMotion {
 }
 
 impl PetMotion {
+    /// Synchronize coordinates only while Windows is actively dragging the native window.
+    /// Autonomous motion retains its floating-point accumulator between integer HWND updates.
+    pub fn synchronize_native_drag(&mut self, dragging: bool, position: Option<Pos2>) {
+        if dragging && let Some(position) = position {
+            self.screen_position = position;
+        }
+    }
+
+    #[cfg(feature = "n41-visual-review-b")]
+    pub fn speed_pixels_per_second(&self) -> f32 {
+        self.speed_pixels_per_second
+    }
+
     pub fn advance(
         &mut self,
         dt: f32,
@@ -133,6 +199,10 @@ impl PetMotion {
             self.last_behavior = behavior;
             self.behavior_age_seconds = 0.0;
             self.behavior_start_altitude_pixels = self.altitude_pixels;
+            if matches!(behavior, Behavior::Walk | Behavior::Reverse) {
+                self.ground_bout_sequence = self.ground_bout_sequence.saturating_add(1);
+                self.ground_path_motif = GroundPathMotif::for_bout(self.ground_bout_sequence);
+            }
             if behavior == Behavior::Landing {
                 self.landing_start_position = self.screen_position;
                 self.landing_target_position = local_landing_target(
@@ -172,8 +242,9 @@ impl PetMotion {
                 self.altitude_pixels = 0.0;
                 self.heading_radians = wrapped_angle(
                     self.heading_radians
-                        + (self.animation_seconds * 0.53).sin()
-                            * (0.025 / REFERENCE_TICK_SECONDS)
+                        + self
+                            .ground_path_motif
+                            .turn_rate_radians_per_second(self.behavior_age_seconds)
                             * dt,
                 );
                 WALK_SPEED_PIXELS_PER_SECOND
@@ -361,6 +432,8 @@ fn visual_altitude_for_behavior(behavior: Behavior, age_seconds: f32) -> f32 {
 pub struct MotionSelfTest {
     pub passed: bool,
     pub walking_translation_pixels: f32,
+    pub high_refresh_native_round_trip_translation_pixels: f32,
+    pub native_drag_synchronization: bool,
     pub escape_translation_pixels: f32,
     pub flight_path_pixels: f32,
     pub flight_horizontal_pixels: f32,
@@ -406,6 +479,25 @@ pub fn run_motion_self_test() -> MotionSelfTest {
         walking.advance(1.0 / 60.0, Behavior::Walk, origin, screen, false, None);
     }
     let walking_translation_pixels = walking.screen_position.distance(walking_start);
+
+    let mut high_refresh = PetMotion {
+        screen_position: Pos2::new(220.0, bottom - 96.0),
+        ..PetMotion::default()
+    };
+    let high_refresh_start = high_refresh.screen_position;
+    for _ in 0..480 {
+        let integer_native_position = Pos2::new(
+            high_refresh.screen_position.x.round(),
+            high_refresh.screen_position.y.round(),
+        );
+        high_refresh.synchronize_native_drag(false, Some(integer_native_position));
+        high_refresh.advance(1.0 / 240.0, Behavior::Walk, origin, screen, false, None);
+    }
+    let high_refresh_native_round_trip_translation_pixels =
+        high_refresh.screen_position.distance(high_refresh_start);
+    let dragged_position = Pos2::new(777.0, 333.0);
+    high_refresh.synchronize_native_drag(true, Some(dragged_position));
+    let native_drag_synchronization = high_refresh.screen_position == dragged_position;
 
     let mut airborne = PetMotion {
         screen_position: Pos2::new(760.0, 610.0),
@@ -556,6 +648,8 @@ pub fn run_motion_self_test() -> MotionSelfTest {
 
     MotionSelfTest {
         passed: walking_translation_pixels > 100.0
+            && high_refresh_native_round_trip_translation_pixels > 100.0
+            && native_drag_synchronization
             && escape_translation_pixels > 90.0
             && flight_path_pixels > 900.0
             && flight_horizontal_pixels > 150.0
@@ -565,6 +659,8 @@ pub fn run_motion_self_test() -> MotionSelfTest {
             && landing_refresh_rate_invariant
             && !teleport_detected,
         walking_translation_pixels,
+        high_refresh_native_round_trip_translation_pixels,
+        native_drag_synchronization,
         escape_translation_pixels,
         flight_path_pixels,
         flight_horizontal_pixels,
@@ -947,12 +1043,15 @@ fn pet_scene_at_altitude(
         Behavior::Landing => (time * 4.0).sin() * 0.8,
         _ => 0.0,
     };
+    let grooming_program = (behavior == Behavior::Groom).then(|| {
+        grooming_program_at((behavior_age_seconds / REFERENCE_TICK_SECONDS).floor() as u32)
+    });
     let colors = palette(skin);
     let mut scene = SceneBuilder::new(heading, screen_offset);
     draw_behavior_field(&mut scene, behavior, time, skin);
     draw_motion_trails(&mut scene, behavior, time);
     draw_contact_shadow(&mut scene, altitude_pixels, heading);
-    draw_wings(&mut scene, behavior, time, colors);
+    draw_wings(&mut scene, behavior, time, grooming_program, colors);
     draw_legs(
         &mut scene,
         skin,
@@ -964,7 +1063,7 @@ fn pet_scene_at_altitude(
     );
     draw_abdomen(&mut scene, skin, behavior, time, colors);
     if skin == Skin::Firefly {
-        draw_prism_elytra(&mut scene, behavior, time);
+        draw_prism_elytra(&mut scene, behavior, time, grooming_program);
     }
     draw_thorax(&mut scene, skin, time, colors);
     draw_legs(
@@ -1099,7 +1198,25 @@ fn draw_contact_shadow(scene: &mut SceneBuilder, altitude_pixels: f32, heading_r
     );
 }
 
-fn draw_wings(scene: &mut SceneBuilder, behavior: Behavior, time: f32, colors: Palette) {
+fn draw_wings(
+    scene: &mut SceneBuilder,
+    behavior: Behavior,
+    time: f32,
+    grooming: Option<GroomingProgramFrame>,
+    colors: Palette,
+) {
+    if let Some(program) = grooming
+        && program.substate == GroomingMotorSubstate::WingClean
+    {
+        let side = if program.cycle.is_multiple_of(2) {
+            -1.0
+        } else {
+            1.0
+        };
+        let lift = 0.42 + 0.24 * (program.segment_progress * PI).sin();
+        draw_wing(scene, side, lift, colors, program.segment_progress, 0);
+        return;
+    }
     if !matches!(
         behavior,
         Behavior::PreEscape | Behavior::Flight | Behavior::Landing
@@ -1341,18 +1458,34 @@ fn draw_prism_abdomen(scene: &mut SceneBuilder, behavior: Behavior, time: f32, _
     }
 }
 
-fn draw_prism_elytra(scene: &mut SceneBuilder, behavior: Behavior, time: f32) {
-    let opening_radians = if behavior == Behavior::PreEscape {
-        8.0_f32.to_radians()
-    } else {
-        0.0
-    };
+fn draw_prism_elytra(
+    scene: &mut SceneBuilder,
+    behavior: Behavior,
+    time: f32,
+    grooming: Option<GroomingProgramFrame>,
+) {
+    let grooming_side = grooming
+        .filter(|program| program.substate == GroomingMotorSubstate::WingClean)
+        .map(|program| {
+            if program.cycle.is_multiple_of(2) {
+                -1.0
+            } else {
+                1.0
+            }
+        });
     let stable_time = if behavior == Behavior::PreEscape {
         time
     } else {
         0.0
     };
     for (index, side) in [-1.0_f32, 1.0].into_iter().enumerate() {
+        let opening_radians = if behavior == Behavior::PreEscape {
+            side * 8.0_f32.to_radians()
+        } else if grooming_side == Some(side) {
+            side * 30.0_f32.to_radians()
+        } else {
+            0.0
+        };
         let pivot = [-1.0, side * 2.5];
         let rotate = |point: [f32; 2]| rotate_point(point, pivot, opening_radians);
         let segments = [
@@ -1610,6 +1743,8 @@ fn draw_legs(
 ) {
     let locomoting = matches!(behavior, Behavior::Walk | Behavior::Reverse);
     let grooming = behavior == Behavior::Groom;
+    let grooming_program =
+        grooming.then(|| grooming_program_at((time / REFERENCE_TICK_SECONDS).floor() as u32));
     let landing = behavior == Behavior::Landing;
     for side_index in 0..2 {
         let side = if side_index == 0 { -1.0 } else { 1.0 };
@@ -1642,8 +1777,20 @@ fn draw_legs(
                         [reach_x, reach_y],
                         [reach_x + 14.0, reach_y + side * 5.0],
                     )
-                } else if grooming && leg_index == 0 {
-                    prism_grooming_foreleg_pose(side, time, hip)
+                } else if let Some(reach) = grooming_program
+                    .and_then(|program| grooming_leg_reach(side, leg_index, program))
+                {
+                    (
+                        [
+                            (hip_x + reach[0]) * 0.5,
+                            (hip_y + reach[1]) * 0.5 + side * 3.0,
+                        ],
+                        reach,
+                        [
+                            reach[0] + if leg_index == 2 { 10.0 } else { -8.0 },
+                            reach[1] + side * 2.0,
+                        ],
+                    )
                 } else {
                     let reach_x = match leg_index {
                         0 => -61.0 + swing * 4.0,
@@ -1677,15 +1824,10 @@ fn draw_legs(
                 scene.ellipse(knee, [1.45, 1.45], 0.0, Rgba(218, 157, 57, 220), None);
                 continue;
             }
-            let groom_motion = if grooming && leg_index == 0 {
-                (time * 12.0 + side_index as f32).sin() * 7.0
-            } else {
-                0.0
-            };
             let hip_x = -31.0 + leg_index as f32 * 13.0;
             let hip_y = side * (8.0 + leg_index as f32 * 2.0);
             let mut reach_x = match leg_index {
-                0 => -68.0 + groom_motion,
+                0 => -68.0,
                 1 => -22.0 + swing * 5.0,
                 _ => 32.0 + swing * 7.0,
             };
@@ -1695,9 +1837,11 @@ fn draw_legs(
                     1 => 44.0,
                     _ => 48.0,
                 };
-            if grooming && leg_index == 0 {
-                reach_x = -68.0 + groom_motion;
-                reach_y = side * (13.0 + (time * 12.0 + side_index as f32).cos() * 8.0);
+            if let Some(reach) =
+                grooming_program.and_then(|program| grooming_leg_reach(side, leg_index, program))
+            {
+                reach_x = reach[0];
+                reach_y = reach[1];
             } else if landing {
                 reach_y *= 1.13;
                 reach_x += if leg_index == 2 { 8.0 } else { -3.0 };
@@ -1727,62 +1871,33 @@ fn draw_legs(
     }
 }
 
-fn prism_grooming_foreleg_pose(
+fn grooming_leg_reach(
     side: f32,
-    time: f32,
-    hip: [f32; 2],
-) -> ([f32; 2], [f32; 2], [f32; 2]) {
-    let frame = ((time / REFERENCE_TICK_SECONDS).floor() as u32) % 32;
-    let (substate, progress) = match frame {
-        0..=7 => (0, frame as f32 / 7.0),
-        8..=15 => (1, (frame - 8) as f32 / 7.0),
-        16..=22 => (2, (frame - 16) as f32 / 6.0),
-        _ => (3, (frame - 23) as f32 / 8.0),
-    };
-    let smooth = progress * progress * (3.0 - 2.0 * progress);
-    let oscillation = (progress * TAU * 2.0 + if side < 0.0 { 0.0 } else { PI }).sin();
-    let (knee_x, knee_y, ankle_x, ankle_y, toe_x, toe_y) = match substate {
-        0 => (
-            mix_scalar(hip[0] - 12.0, -46.0, smooth),
-            side * mix_scalar(hip[1].abs() + 10.0, 18.0, smooth),
-            mix_scalar(-57.0, -67.0, smooth),
-            side * mix_scalar(28.0, 13.0, smooth),
-            mix_scalar(-65.0, -74.0, smooth),
-            side * mix_scalar(31.0, 8.0, smooth),
-        ),
-        1 => (
-            -47.0 + oscillation * 4.0,
-            side * (15.0 - oscillation * 2.0),
-            -68.0 + oscillation * 7.0,
-            side * (10.0 - oscillation * 7.0),
-            -79.0 + oscillation * 9.0,
-            side * (5.0 - oscillation * 8.0),
-        ),
-        2 => {
-            let rub = (progress * TAU * 3.0).sin();
-            (
-                -42.0 + rub * 2.0,
-                side * 14.0,
-                -58.0 + rub * 3.0,
-                side * (6.0 - smooth * 3.0),
-                -65.0 + rub * 4.0,
-                side * (1.8 + rub * 1.1),
-            )
+    leg_index: usize,
+    program: GroomingProgramFrame,
+) -> Option<[f32; 2]> {
+    let progress = program.segment_progress;
+    let stroke = (progress * TAU * 2.0 + if side < 0.0 { 0.0 } else { PI }).sin();
+    match (program.substate, leg_index) {
+        (GroomingMotorSubstate::Prepare, 0) => Some([-64.0, side * (28.0 - progress * 12.0)]),
+        (GroomingMotorSubstate::HeadSweep, 0) => {
+            Some([-76.0 + stroke * 10.0, side * (7.0 + stroke * 7.0)])
         }
-        _ => (
-            mix_scalar(-45.0, -43.0, smooth),
-            side * mix_scalar(16.0, 22.0, smooth),
-            mix_scalar(-64.0, -58.0, smooth),
-            side * mix_scalar(10.0, 28.0, smooth),
-            mix_scalar(-73.0, -66.0, smooth),
-            side * mix_scalar(5.0, 33.0, smooth),
-        ),
-    };
-    ([knee_x, knee_y], [ankle_x, ankle_y], [toe_x, toe_y])
-}
-
-fn mix_scalar(first: f32, second: f32, amount: f32) -> f32 {
-    first + (second - first) * amount.clamp(0.0, 1.0)
+        (GroomingMotorSubstate::ForelegRub, 0) => {
+            Some([-58.0 + stroke * 5.0, side * (2.5 + stroke.abs() * 2.5)])
+        }
+        (GroomingMotorSubstate::AbdomenBrush, 2) => {
+            Some([56.0 + stroke * 13.0, side * (14.0 + stroke * 8.0)])
+        }
+        (GroomingMotorSubstate::WingClean, 2)
+            if (program.cycle.is_multiple_of(2) && side < 0.0)
+                || (!program.cycle.is_multiple_of(2) && side > 0.0) =>
+        {
+            Some([42.0 + stroke * 12.0, side * (7.0 + stroke * 5.0)])
+        }
+        (GroomingMotorSubstate::Reset, 0) => Some([-62.0, side * (16.0 + progress * 15.0)]),
+        _ => None,
+    }
 }
 
 fn draw_antennae(
@@ -2459,6 +2574,45 @@ mod tests {
             }
             write_trajectory_fixtures(&directory);
         }
+    }
+
+    #[test]
+    fn grooming_actions_are_pairwise_visible_and_wing_clean_is_asymmetric() {
+        let render = |age_frames: u32| {
+            let seconds = age_frames as f32 * REFERENCE_TICK_SECONDS;
+            let mut pixels = vec![0; PET_WIDTH * PET_HEIGHT * 4];
+            render_pet_bgra_at_age(
+                &mut pixels,
+                Skin::Firefly,
+                Behavior::Groom,
+                seconds,
+                seconds,
+                0.0,
+                false,
+            );
+            pixels
+        };
+        let actions = [render(23), render(45), render(57), render(65)];
+        for first in 0..actions.len() {
+            for second in first + 1..actions.len() {
+                assert!(
+                    pixel_difference(&actions[first], &actions[second]) > 100,
+                    "grooming actions {first} and {second} are not visually distinct"
+                );
+            }
+        }
+        assert_eq!(
+            wing_panel_count(&pet_scene(
+                Skin::Firefly,
+                Behavior::Groom,
+                65.0 * REFERENCE_TICK_SECONDS,
+                65.0 * REFERENCE_TICK_SECONDS,
+                0.0,
+                false,
+            )),
+            1,
+            "wing cleaning must expose exactly one wing"
+        );
     }
 
     fn write_trajectory_fixtures(directory: &std::path::Path) {

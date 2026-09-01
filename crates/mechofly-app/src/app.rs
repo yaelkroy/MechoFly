@@ -84,6 +84,8 @@ pub struct MechoFlyApp {
     exit_requested: bool,
     #[cfg(feature = "n41-visual-review-b")]
     n41_visual_review_b: bool,
+    #[cfg(feature = "n41-visual-review-b")]
+    review_evidence: Option<crate::review_evidence::ReviewEvidence>,
 }
 
 impl MechoFlyApp {
@@ -160,6 +162,21 @@ impl MechoFlyApp {
             (Some(warning), None) | (None, Some(warning)) => Some(warning),
             (None, None) => None,
         };
+        #[cfg(feature = "n41-visual-review-b")]
+        let review_evidence = if config.n41_visual_review_b {
+            crate::storage::override_directory()
+                .as_deref()
+                .map(crate::review_evidence::ReviewEvidence::new)
+                .transpose()
+                .unwrap_or_else(|error| {
+                    diagnostics::mark(&format!(
+                        "visual-review evidence initialization failed: {error}"
+                    ));
+                    None
+                })
+        } else {
+            None
+        };
         let app = Self {
             render_state,
             session,
@@ -186,6 +203,8 @@ impl MechoFlyApp {
             exit_requested: false,
             #[cfg(feature = "n41-visual-review-b")]
             n41_visual_review_b: config.n41_visual_review_b,
+            #[cfg(feature = "n41-visual-review-b")]
+            review_evidence,
         };
         diagnostics::mark("eframe application construction completed");
         app
@@ -478,9 +497,8 @@ impl eframe::App for MechoFlyApp {
             cursor_position = events.cursor_position;
             cursor_over_pet = events.hovered;
             self.evidence_hold = events.evidence_hold;
-            if let Some(position) = events.position {
-                self.pet.screen_position = position;
-            }
+            self.pet
+                .synchronize_native_drag(events.dragging, events.position);
             if events.open_lab {
                 self.live_brain.open = true;
             }
@@ -516,6 +534,24 @@ impl eframe::App for MechoFlyApp {
             held,
             cursor_position,
         );
+        #[cfg(feature = "n41-visual-review-b")]
+        if self.n41_visual_review_b
+            && let Some(evidence) = &mut self.review_evidence
+            && let Err(error) = evidence.observe(
+                self.session.engine.state.frame,
+                self.session.engine.state.behavior_age_frames,
+                authoritative_display_behavior(self.session.engine.state.behavior),
+                &self.pet,
+                self.skin,
+                cursor_over_pet,
+                held,
+                self.evidence_hold,
+            )
+        {
+            self.session.runtime_warning = Some(format!(
+                "Visual-review evidence write failed; review must stop: {error}"
+            ));
+        }
         #[cfg(windows)]
         {
             let behavior = authoritative_display_behavior(self.session.engine.state.behavior);

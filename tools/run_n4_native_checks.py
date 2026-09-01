@@ -30,7 +30,7 @@ def main() -> None:
     receipt_path = artifacts / "n4-self-test.json"
     execute(exe, ["--self-test", str(receipt_path)], "self-test")
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    if (receipt.get("schema_version") != 10 or receipt.get("status") != "PASS"
+    if (receipt.get("schema_version") != 11 or receipt.get("status") != "PASS"
             or receipt.get("n4", {}).get("passed") is not True
             or receipt.get("runtime_behavior_controller") != "n4-explicit-duration-engineering-v1"):
         raise RuntimeError("The executable is not the validated N4 runtime")

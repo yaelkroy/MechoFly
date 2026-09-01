@@ -104,7 +104,9 @@ def verify(root: Path) -> dict:
         "crates/mechofly-app/src/runtime.rs": ["ModelEngine::new_duration_aware(Arc::clone(&graph), seed)"],
         "crates/mechofly-app/src/app.rs": ["crate::behavior_inspector::draw(lab_ui, session)"],
         "crates/mechofly-app/src/main.rs": ["mod behavior_campaign;", "mod behavior_inspector;", '"--behavior-campaign"'],
-        "crates/mechofly-app/src/self_test.rs": ["schema_version: 10", "validate_dynamics()?"],
+        "crates/mechofly-app/src/self_test.rs": ["schema_version: 11", "validate_dynamics()?"],
+        "tools/run_n4_native_checks.py": ['receipt.get("schema_version") != 11'],
+        "tools/Setup-AI100-MechoFly.ps1": ["$Receipt.schema_version -ne 11 -or"],
     }
     count = 0
     for relative, markers in checks.items():
@@ -119,7 +121,7 @@ def verify(root: Path) -> dict:
     for relative in ["crates/mechofly-core/src/behavior_dynamics.rs", "crates/mechofly-core/src/behavior_parameters.rs", "crates/mechofly-core/src/behavior_validation.rs", "crates/mechofly-core/tests/n4_dynamics.rs"]:
         if not (root / relative).is_file():
             raise ValueError("Required controller source is missing: " + relative)
-    return {"status": "PASS", "integration_assertions": count, "runtime_constructor": "new_duration_aware", "self_test_schema": 10, "canonical_deployment": False}
+    return {"status": "PASS", "integration_assertions": count, "runtime_constructor": "new_duration_aware", "self_test_schema": 11, "canonical_deployment": False}
 
 
 def main() -> None:
