@@ -83,7 +83,7 @@ def main() -> None:
     )
     for text, marker, label in required:
         require(text, marker, label)
-    if collector.count("[AllowEmptyCollection()]") < 5:
+    if collector.count("[AllowEmptyCollection()]") < 6:
         raise ValueError("natural-motion collector does not protect supported empty collections")
 
     forbidden = (

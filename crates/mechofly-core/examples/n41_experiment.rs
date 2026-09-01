@@ -11,7 +11,8 @@ use mechofly_core::{
     behavior_dynamics::airborne,
     behavior_parameters::{
         BehaviorParameterProfile, DYNAMICS_VERSION, N41_DYNAMICS_VERSION,
-        N41_NATURAL_BOUT_DYNAMICS_VERSION, parameter_sha256_for, parameters_for_profile,
+        N41_NATURAL_BOUT_DYNAMICS_VERSION, N41_NATURAL_FLIGHT_DYNAMICS_VERSION,
+        parameter_sha256_for, parameters_for_profile,
     },
     behavior_telemetry::{BEHAVIOR_TELEMETRY_CONTROLLER, BehaviorTransitionReason},
     model::{FUNCTIONAL_POPULATION_COUNT, WALK_POPULATION_OFFSET},
@@ -52,6 +53,9 @@ impl ExperimentProfile {
             Self::Duration(BehaviorParameterProfile::N4) => DYNAMICS_VERSION,
             Self::Duration(BehaviorParameterProfile::N41BNatural) => {
                 N41_NATURAL_BOUT_DYNAMICS_VERSION
+            }
+            Self::Duration(BehaviorParameterProfile::N41BNaturalFlight) => {
+                N41_NATURAL_FLIGHT_DYNAMICS_VERSION
             }
             Self::Duration(_) => N41_DYNAMICS_VERSION,
         }

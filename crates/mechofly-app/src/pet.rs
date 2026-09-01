@@ -20,9 +20,13 @@ const WALK_SPEED_ONSET_SECONDS: f32 = 0.16;
 const WALK_SPEED_MULTIPLIERS: [f32; 16] = [
     0.55, 0.62, 0.68, 0.75, 0.82, 0.89, 0.96, 1.03, 1.10, 1.17, 1.24, 1.31, 1.38, 1.45, 1.52, 1.60,
 ];
+const FLIGHT_SPEED_MULTIPLIERS: [f32; 16] = [
+    0.68, 0.73, 0.78, 0.83, 0.88, 0.93, 0.98, 1.03, 1.08, 1.13, 1.18, 1.23, 1.28, 1.33, 1.38, 1.43,
+];
 const REVERSE_SPEED_PIXELS_PER_SECOND: f32 = -2.2 / REFERENCE_TICK_SECONDS;
 const ESCAPE_SPEED_PIXELS_PER_SECOND: f32 = 18.0 / REFERENCE_TICK_SECONDS;
 const FLIGHT_SPEED_PIXELS_PER_SECOND: f32 = 8.4 / REFERENCE_TICK_SECONDS;
+const FLIGHT_SPEED_BLEND_SECONDS: f32 = 0.22;
 
 const NERVOUS_SPEED_PIXELS_PER_SECOND: f32 = 3.0 / REFERENCE_TICK_SECONDS;
 const LANDING_COMPLETION_SECONDS: f32 = 0.495;
@@ -30,7 +34,8 @@ const TAKEOFF_COMPLETION_SECONDS: f32 = 0.198;
 const TAKEOFF_ALTITUDE_PIXELS: f32 = 24.0;
 const CRUISE_ALTITUDE_PIXELS: f32 = 72.0;
 const FLIGHT_ALTITUDE_RISE_SECONDS: f32 = 0.45;
-const LANDING_APPROACH_PIXELS: f32 = 36.0;
+const LANDING_APPROACH_MIN_PIXELS: f32 = 36.0;
+const LANDING_APPROACH_MAX_PIXELS: f32 = 96.0;
 const LANDING_SAFE_TOP_MARGIN_PIXELS: f32 = 32.0;
 const LANDING_SAFE_BOTTOM_FRACTION: f32 = 0.12;
 const LANDING_SAFE_BOTTOM_MIN_PIXELS: f32 = 56.0;
@@ -81,6 +86,96 @@ struct GroundSpeedProfile {
     drift_phase: f32,
     stride_radians_per_second: f32,
     drift_radians_per_second: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FlightSaccade {
+    start_seconds: f32,
+    duration_seconds: f32,
+    angle_radians: f32,
+}
+
+impl FlightSaccade {
+    fn turn_rate_radians_per_second(self, age_seconds: f32) -> f32 {
+        let local = age_seconds - self.start_seconds;
+        if !(0.0..self.duration_seconds).contains(&local) || self.angle_radians == 0.0 {
+            return 0.0;
+        }
+        let phase = local / self.duration_seconds;
+        self.angle_radians * PI / (2.0 * self.duration_seconds) * (PI * phase).sin()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FlightPathProfile {
+    speed_multiplier: f32,
+    speed_phase: f32,
+    speed_radians_per_second: f32,
+    drift_radians_per_second: f32,
+    saccades: [FlightSaccade; 2],
+}
+
+impl Default for FlightPathProfile {
+    fn default() -> Self {
+        Self::for_bout(0)
+    }
+}
+
+impl FlightPathProfile {
+    fn for_bout(sequence: u64) -> Self {
+        let key = motor_mix64(sequence ^ 0x464C_4947_4854_5631);
+        let unit = |shift: u32| (key.rotate_right(shift) & 0xffff) as f32 / 65_535.0;
+        let direction = |bit: u32| if (key >> bit) & 1 == 0 { -1.0 } else { 1.0 };
+        // Every accepted Flight duration is at least 594 ms. Keep the first
+        // saccade wholly inside even the shortest bout so "one guaranteed"
+        // remains a tested motor contract, not a probabilistic observation.
+        let first_start = 0.24 + unit(7) * 0.16;
+        let first_duration = 0.060 + unit(23) * 0.050;
+        let second_start = first_start + 0.55 + unit(39) * 1.20;
+        let second_duration = 0.065 + unit(53) * 0.050;
+        let second_present = (key >> 5) & 0b11 != 0;
+        Self {
+            speed_multiplier: FLIGHT_SPEED_MULTIPLIERS
+                [(key as usize) % FLIGHT_SPEED_MULTIPLIERS.len()],
+            speed_phase: unit(13) * TAU,
+            speed_radians_per_second: 1.2 + unit(31) * 2.4,
+            drift_radians_per_second: (unit(47) - 0.5) * 0.24,
+            saccades: [
+                FlightSaccade {
+                    start_seconds: first_start,
+                    duration_seconds: first_duration,
+                    angle_radians: direction(3) * (0.55 + unit(17) * 0.90),
+                },
+                FlightSaccade {
+                    start_seconds: second_start,
+                    duration_seconds: second_duration,
+                    angle_radians: if second_present {
+                        direction(37) * (0.45 + unit(29) * 0.85)
+                    } else {
+                        0.0
+                    },
+                },
+            ],
+        }
+    }
+
+    fn turn_rate_radians_per_second(self, age_seconds: f32) -> f32 {
+        self.drift_radians_per_second
+            + self
+                .saccades
+                .iter()
+                .map(|saccade| saccade.turn_rate_radians_per_second(age_seconds))
+                .sum::<f32>()
+    }
+
+    fn speed_pixels_per_second(self, age_seconds: f32) -> f32 {
+        let cruise = FLIGHT_SPEED_PIXELS_PER_SECOND
+            * self.speed_multiplier
+            * (1.0
+                + 0.055 * (age_seconds * self.speed_radians_per_second + self.speed_phase).sin());
+        let blend = smootherstep((age_seconds / FLIGHT_SPEED_BLEND_SECONDS).clamp(0.0, 1.0));
+        lerp_scalar(ESCAPE_SPEED_PIXELS_PER_SECOND, cruise, blend)
+    }
 }
 
 impl Default for GroundSpeedProfile {
@@ -174,6 +269,7 @@ pub struct PetMotion {
     behavior_start_altitude_pixels: f32,
     landing_start_position: Pos2,
     landing_target_position: Pos2,
+    landing_start_velocity: Vec2,
     landing_start_heading: f32,
     landing_target_heading: f32,
     landing_start_altitude_pixels: f32,
@@ -181,6 +277,11 @@ pub struct PetMotion {
     ground_bout_sequence: u64,
     ground_path_motif: GroundPathMotif,
     ground_speed_profile: GroundSpeedProfile,
+    flight_bout_sequence: u64,
+    flight_path_profile: FlightPathProfile,
+    /// Opt-in presentation experiment. The canonical application and every
+    /// frozen N4/N4.1 profile retain the recorded legacy flight path.
+    pub natural_flight_motion: bool,
     pub paused: bool,
     pub reduced_motion: bool,
 }
@@ -198,6 +299,7 @@ impl Default for PetMotion {
             behavior_start_altitude_pixels: 0.0,
             landing_start_position: Pos2::new(96.0, 640.0),
             landing_target_position: Pos2::new(96.0, 640.0),
+            landing_start_velocity: Vec2::ZERO,
             landing_start_heading: 0.0,
             landing_target_heading: 0.0,
             landing_start_altitude_pixels: 0.0,
@@ -205,6 +307,9 @@ impl Default for PetMotion {
             ground_bout_sequence: 0,
             ground_path_motif: GroundPathMotif::Straight,
             ground_speed_profile: GroundSpeedProfile::default(),
+            flight_bout_sequence: 0,
+            flight_path_profile: FlightPathProfile::default(),
+            natural_flight_motion: false,
             paused: false,
             reduced_motion: false,
         }
@@ -223,6 +328,16 @@ impl PetMotion {
     #[cfg(feature = "n41-visual-review-b")]
     pub fn speed_pixels_per_second(&self) -> f32 {
         self.speed_pixels_per_second
+    }
+
+    #[cfg(feature = "n41-visual-review-b")]
+    pub fn flight_maneuver_active(&self) -> bool {
+        self.natural_flight_motion
+            && self.last_behavior == Behavior::Flight
+            && self.flight_path_profile.saccades.iter().any(|saccade| {
+                let local = self.behavior_age_seconds - saccade.start_seconds;
+                (0.0..saccade.duration_seconds).contains(&local) && saccade.angle_radians != 0.0
+            })
     }
 
     pub fn advance(
@@ -251,11 +366,25 @@ impl PetMotion {
                 self.ground_path_motif = GroundPathMotif::for_bout(self.ground_bout_sequence);
                 self.ground_speed_profile = GroundSpeedProfile::for_bout(self.ground_bout_sequence);
             }
+            if behavior == Behavior::Flight && self.natural_flight_motion {
+                self.flight_bout_sequence = self.flight_bout_sequence.saturating_add(1);
+                self.flight_path_profile = FlightPathProfile::for_bout(self.flight_bout_sequence);
+            }
             if behavior == Behavior::Landing {
                 self.landing_start_position = self.screen_position;
+                self.landing_start_velocity = if self.natural_flight_motion {
+                    Vec2::angled(self.heading_radians) * self.speed_pixels_per_second
+                } else {
+                    Vec2::ZERO
+                };
                 self.landing_target_position = local_landing_target(
                     self.screen_position,
                     self.heading_radians,
+                    if self.natural_flight_motion {
+                        self.speed_pixels_per_second
+                    } else {
+                        0.0
+                    },
                     left,
                     top,
                     right,
@@ -325,20 +454,47 @@ impl PetMotion {
                     CRUISE_ALTITUDE_PIXELS,
                     smootherstep(progress),
                 );
-                self.heading_radians = wrapped_angle(
-                    self.heading_radians
-                        + (self.animation_seconds * 1.7).sin()
-                            * (0.065 / REFERENCE_TICK_SECONDS)
-                            * dt,
-                );
-                FLIGHT_SPEED_PIXELS_PER_SECOND
+                if self.natural_flight_motion {
+                    let age_end = self.behavior_age_seconds;
+                    let age_start = (age_end - dt).max(0.0);
+                    let turn_rate_start = self
+                        .flight_path_profile
+                        .turn_rate_radians_per_second(age_start);
+                    let turn_rate_end = self
+                        .flight_path_profile
+                        .turn_rate_radians_per_second(age_end);
+                    self.heading_radians = wrapped_angle(
+                        self.heading_radians + (turn_rate_start + turn_rate_end) * 0.5 * dt,
+                    );
+                    (self.flight_path_profile.speed_pixels_per_second(age_start)
+                        + self.flight_path_profile.speed_pixels_per_second(age_end))
+                        * 0.5
+                } else {
+                    self.heading_radians = wrapped_angle(
+                        self.heading_radians
+                            + (self.animation_seconds * 1.7).sin()
+                                * (0.065 / REFERENCE_TICK_SECONDS)
+                                * dt,
+                    );
+                    FLIGHT_SPEED_PIXELS_PER_SECOND
+                }
             }
             Behavior::Landing => {
                 if !self.landing_active {
                     self.landing_start_position = self.screen_position;
+                    self.landing_start_velocity = if self.natural_flight_motion {
+                        Vec2::angled(self.heading_radians) * self.speed_pixels_per_second
+                    } else {
+                        Vec2::ZERO
+                    };
                     self.landing_target_position = local_landing_target(
                         self.screen_position,
                         self.heading_radians,
+                        if self.natural_flight_motion {
+                            self.speed_pixels_per_second
+                        } else {
+                            0.0
+                        },
                         left,
                         top,
                         right,
@@ -352,17 +508,38 @@ impl PetMotion {
                 let progress =
                     (self.behavior_age_seconds / LANDING_COMPLETION_SECONDS).clamp(0.0, 1.0);
                 let eased = smootherstep(progress);
-                self.screen_position = lerp_position(
-                    self.landing_start_position,
-                    self.landing_target_position,
-                    eased,
-                );
+                self.screen_position = if self.natural_flight_motion {
+                    hermite_position(
+                        self.landing_start_position,
+                        self.landing_target_position,
+                        self.landing_start_velocity,
+                        LANDING_COMPLETION_SECONDS,
+                        progress,
+                    )
+                } else {
+                    lerp_position(
+                        self.landing_start_position,
+                        self.landing_target_position,
+                        eased,
+                    )
+                };
                 self.altitude_pixels = lerp_scalar(self.landing_start_altitude_pixels, 0.0, eased);
                 let heading_delta =
                     wrapped_angle(self.landing_target_heading - self.landing_start_heading);
                 self.heading_radians =
                     wrapped_angle(self.landing_start_heading + heading_delta * eased);
-                0.0
+                if self.natural_flight_motion {
+                    hermite_velocity(
+                        self.landing_start_position,
+                        self.landing_target_position,
+                        self.landing_start_velocity,
+                        LANDING_COMPLETION_SECONDS,
+                        progress,
+                    )
+                    .length()
+                } else {
+                    0.0
+                }
             }
             Behavior::Alert => {
                 self.altitude_pixels = 0.0;
@@ -433,6 +610,46 @@ fn lerp_position(start: Pos2, end: Pos2, progress: f32) -> Pos2 {
     )
 }
 
+fn hermite_position(
+    start: Pos2,
+    end: Pos2,
+    start_velocity: Vec2,
+    duration_seconds: f32,
+    progress: f32,
+) -> Pos2 {
+    let progress = progress.clamp(0.0, 1.0);
+    let p2 = progress * progress;
+    let p3 = p2 * progress;
+    let h00 = 2.0 * p3 - 3.0 * p2 + 1.0;
+    let h10 = p3 - 2.0 * p2 + progress;
+    let h01 = -2.0 * p3 + 3.0 * p2;
+    let tangent = start_velocity * duration_seconds.max(f32::EPSILON);
+    Pos2::new(
+        h00 * start.x + h10 * tangent.x + h01 * end.x,
+        h00 * start.y + h10 * tangent.y + h01 * end.y,
+    )
+}
+
+fn hermite_velocity(
+    start: Pos2,
+    end: Pos2,
+    start_velocity: Vec2,
+    duration_seconds: f32,
+    progress: f32,
+) -> Vec2 {
+    let progress = progress.clamp(0.0, 1.0);
+    let p2 = progress * progress;
+    let dh00 = 6.0 * p2 - 6.0 * progress;
+    let dh10 = 3.0 * p2 - 4.0 * progress + 1.0;
+    let dh01 = -6.0 * p2 + 6.0 * progress;
+    let duration = duration_seconds.max(f32::EPSILON);
+    let tangent = start_velocity * duration;
+    Vec2::new(
+        (dh00 * start.x + dh10 * tangent.x + dh01 * end.x) / duration,
+        (dh00 * start.y + dh10 * tangent.y + dh01 * end.y) / duration,
+    )
+}
+
 fn lerp_scalar(start: f32, end: f32, progress: f32) -> f32 {
     start + (end - start) * progress
 }
@@ -444,6 +661,7 @@ fn landing_surface_heading(heading: f32) -> f32 {
 fn local_landing_target(
     position: Pos2,
     heading: f32,
+    approach_speed_pixels_per_second: f32,
     left: f32,
     top: f32,
     right: f32,
@@ -456,7 +674,9 @@ fn local_landing_target(
     );
     let safe_top = (top + LANDING_SAFE_TOP_MARGIN_PIXELS).min(bottom);
     let safe_bottom = (bottom - bottom_margin).max(safe_top);
-    let candidate = position + Vec2::angled(heading) * LANDING_APPROACH_PIXELS;
+    let approach = (approach_speed_pixels_per_second.abs() * FLIGHT_SPEED_BLEND_SECONDS)
+        .clamp(LANDING_APPROACH_MIN_PIXELS, LANDING_APPROACH_MAX_PIXELS);
+    let candidate = position + Vec2::angled(heading) * approach;
     Pos2::new(
         candidate.x.clamp(left, right),
         candidate.y.clamp(safe_top, safe_bottom),
@@ -2516,6 +2736,108 @@ mod tests {
         let first = GroundSpeedProfile::for_bout(1);
         assert_eq!(repeat.ground_speed_profile.multiplier, first.multiplier);
         assert_eq!(repeat.ground_speed_profile.stride_phase, first.stride_phase);
+    }
+
+    #[test]
+    fn natural_flight_uses_deterministic_speed_profiles_and_rapid_saccades() {
+        let origin = Pos2::ZERO;
+        let screen = Vec2::new(100_000.0, 100_000.0);
+        let mut motion = PetMotion {
+            screen_position: Pos2::new(50_000.0, 50_000.0),
+            natural_flight_motion: true,
+            ..PetMotion::default()
+        };
+        let mut mean_speeds = Vec::new();
+        let mut largest_frame_turn = 0.0_f32;
+        for _ in 0..16 {
+            motion.advance(1.0 / 120.0, Behavior::Quiet, origin, screen, false, None);
+            let mut speed_sum = 0.0;
+            let mut speed_count = 0_u32;
+            for frame in 0..480 {
+                let heading_before = motion.heading_radians;
+                motion.advance(1.0 / 120.0, Behavior::Flight, origin, screen, false, None);
+                largest_frame_turn = largest_frame_turn
+                    .max(wrapped_angle(motion.heading_radians - heading_before).abs());
+                if frame >= 36 {
+                    speed_sum += motion.speed_pixels_per_second;
+                    speed_count += 1;
+                }
+            }
+            mean_speeds.push(speed_sum / speed_count as f32);
+        }
+        let minimum = mean_speeds.iter().copied().fold(f32::INFINITY, f32::min);
+        let maximum = mean_speeds
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        let rounded_levels = mean_speeds
+            .iter()
+            .map(|value| value.round() as i32)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(maximum / minimum > 1.75, "means={mean_speeds:?}");
+        assert!(rounded_levels.len() >= 10, "means={mean_speeds:?}");
+        assert!(largest_frame_turn > 0.10, "turn={largest_frame_turn}");
+
+        for sequence in 0..4_096 {
+            let profile = FlightPathProfile::for_bout(sequence);
+            assert!(
+                profile.saccades[0].start_seconds + profile.saccades[0].duration_seconds < 0.55
+            );
+            assert_ne!(profile.saccades[0].angle_radians, 0.0);
+        }
+
+        let repeat = FlightPathProfile::for_bout(1);
+        let same = FlightPathProfile::for_bout(1);
+        assert_eq!(repeat.speed_multiplier, same.speed_multiplier);
+        assert_eq!(
+            repeat.saccades[0].start_seconds,
+            same.saccades[0].start_seconds
+        );
+        assert_eq!(
+            repeat.saccades[0].angle_radians,
+            same.saccades[0].angle_radians
+        );
+    }
+
+    #[test]
+    fn natural_landing_preserves_incoming_velocity_and_finishes_at_rest() {
+        let origin = Pos2::ZERO;
+        let screen = Vec2::new(100_000.0, 100_000.0);
+        let mut motion = PetMotion {
+            screen_position: Pos2::new(50_000.0, 50_000.0),
+            natural_flight_motion: true,
+            ..PetMotion::default()
+        };
+        motion.advance(1.0 / 60.0, Behavior::PreEscape, origin, screen, false, None);
+        for _ in 0..120 {
+            motion.advance(1.0 / 60.0, Behavior::Flight, origin, screen, false, None);
+        }
+        let before_last_flight = motion.screen_position;
+        motion.advance(1.0 / 60.0, Behavior::Flight, origin, screen, false, None);
+        let flight_step = motion.screen_position - before_last_flight;
+        let landing_start = motion.screen_position;
+        motion.advance(1.0 / 60.0, Behavior::Landing, origin, screen, false, None);
+        let landing_first_step = motion.screen_position - landing_start;
+        assert!(
+            (landing_first_step.length() - flight_step.length()).abs() <= 1.5,
+            "flight={flight_step:?} landing={landing_first_step:?}"
+        );
+        assert!(
+            landing_first_step.dot(flight_step) > 0.0,
+            "flight={flight_step:?} landing={landing_first_step:?}"
+        );
+        let mut maximum_step = landing_first_step.length();
+        let mut previous = motion.screen_position;
+        for _ in 1..30 {
+            motion.advance(1.0 / 60.0, Behavior::Landing, origin, screen, false, None);
+            maximum_step = maximum_step.max(motion.screen_position.distance(previous));
+            previous = motion.screen_position;
+        }
+        assert!(maximum_step <= 7.0, "maximum_step={maximum_step}");
+        assert!(motion.altitude_pixels.abs() <= 0.01);
+        let touchdown = motion.screen_position;
+        motion.advance(1.0 / 60.0, Behavior::Rest, origin, screen, false, None);
+        assert!(motion.screen_position.distance(touchdown) <= 0.01);
     }
 
     #[test]

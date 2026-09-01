@@ -34,6 +34,8 @@ struct ReviewTraceRecord {
     screen_y: f32,
     heading_radians: f32,
     speed_pixels_per_second: f32,
+    altitude_pixels: f32,
+    natural_flight_motion: bool,
     cursor_hovered: bool,
     dragging: bool,
     evidence_hold: bool,
@@ -46,7 +48,9 @@ pub struct ReviewEvidence {
     sequence: u64,
     boundary_sequence: u32,
     previous_hold: bool,
+    previous_behavior: Option<Behavior>,
     captured_grooming: BTreeSet<GroomingMotorSubstate>,
+    captured_flight_phases: BTreeSet<&'static str>,
 }
 
 impl ReviewEvidence {
@@ -66,7 +70,9 @@ impl ReviewEvidence {
             sequence: 0,
             boundary_sequence: 0,
             previous_hold: false,
+            previous_behavior: None,
             captured_grooming: BTreeSet::new(),
+            captured_flight_phases: BTreeSet::new(),
         })
     }
 
@@ -97,6 +103,8 @@ impl ReviewEvidence {
             screen_y: pet.screen_position.y,
             heading_radians: pet.heading_radians,
             speed_pixels_per_second: pet.speed_pixels_per_second(),
+            altitude_pixels: pet.altitude_pixels,
+            natural_flight_motion: pet.natural_flight_motion,
             cursor_hovered,
             dragging,
             evidence_hold,
@@ -132,6 +140,34 @@ impl ReviewEvidence {
             );
             self.capture(&name, skin, behavior, pet)?;
         }
+        for (name, should_capture) in [
+            (
+                "flight-takeoff.png",
+                behavior == Behavior::PreEscape && behavior_age_frames >= 2,
+            ),
+            (
+                "flight-early.png",
+                behavior == Behavior::Flight && behavior_age_frames >= 12,
+            ),
+            (
+                "flight-maneuver.png",
+                behavior == Behavior::Flight && pet.flight_maneuver_active(),
+            ),
+            (
+                "flight-landing.png",
+                behavior == Behavior::Landing && behavior_age_frames >= 4,
+            ),
+            (
+                "flight-touchdown.png",
+                matches!(behavior, Behavior::Rest | Behavior::Quiet)
+                    && self.previous_behavior == Some(Behavior::Landing),
+            ),
+        ] {
+            if should_capture && self.captured_flight_phases.insert(name) {
+                self.capture(name, skin, behavior, pet)?;
+            }
+        }
+        self.previous_behavior = Some(behavior);
         Ok(())
     }
 

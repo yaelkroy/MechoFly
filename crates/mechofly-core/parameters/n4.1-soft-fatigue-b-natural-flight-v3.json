@@ -1,0 +1,144 @@
+{
+  "schema_version": 4,
+  "parameter_set_id": "n4.1-soft-fatigue-b-natural-flight-v3",
+  "claim": "MODELED / LITERATURE-SHAPED PRODUCT PRIOR; walk and flight bout quantiles and flight motor motifs are authored from reported qualitative time scales and maneuver structure, not fitted biological constants",
+  "behavior_order": [
+    "rest",
+    "quiet",
+    "walk",
+    "reverse",
+    "groom",
+    "alert",
+    "pre_escape",
+    "flight",
+    "landing"
+  ],
+  "duration_key_salt": 1312035634,
+  "durations": [
+    {
+      "minimum_frames": 30,
+      "low_frames": 90,
+      "high_frames": 240,
+      "refractory_frames": 0
+    },
+    {
+      "minimum_frames": 20,
+      "low_frames": 60,
+      "high_frames": 180,
+      "refractory_frames": 0
+    },
+    {
+      "minimum_frames": 3,
+      "low_frames": 3,
+      "high_frames": 313,
+      "refractory_frames": 20
+    },
+    {
+      "minimum_frames": 10,
+      "low_frames": 20,
+      "high_frames": 60,
+      "refractory_frames": 20
+    },
+    {
+      "minimum_frames": 46,
+      "low_frames": 60,
+      "high_frames": 180,
+      "refractory_frames": 30
+    },
+    {
+      "minimum_frames": 10,
+      "low_frames": 20,
+      "high_frames": 60,
+      "refractory_frames": 15
+    },
+    {
+      "minimum_frames": 6,
+      "low_frames": 6,
+      "high_frames": 6,
+      "refractory_frames": 0
+    },
+    {
+      "minimum_frames": 18,
+      "low_frames": 18,
+      "high_frames": 242,
+      "refractory_frames": 0
+    },
+    {
+      "minimum_frames": 15,
+      "low_frames": 15,
+      "high_frames": 15,
+      "refractory_frames": 0
+    }
+  ],
+  "walk_duration_quantiles_frames": [
+    3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 5, 5, 6, 6, 7,
+    7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14, 14,
+    15, 15, 16, 16, 17, 18, 18, 19, 19, 20, 20, 21, 22, 22, 23, 24,
+    24, 25, 25, 26, 27, 28, 28, 29, 30, 30, 31, 32, 33, 33, 34, 35,
+    36, 37, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+    51, 52, 53, 54, 56, 57, 58, 59, 61, 62, 63, 65, 66, 68, 69, 71,
+    73, 74, 76, 78, 80, 82, 84, 86, 89, 91, 93, 96, 99, 102, 105, 108,
+    111, 115, 119, 123, 128, 133, 139, 145, 152, 160, 170, 182, 196, 216, 246, 313
+  ],
+  "flight_duration_quantiles_frames": [
+    18, 18, 18, 18, 18, 18, 18, 19, 20, 21, 21, 22, 23, 24, 24, 25,
+    26, 27, 27, 28, 29, 29, 30, 31, 31, 32, 33, 34, 34, 35, 36, 36,
+    37, 38, 38, 39, 40, 40, 41, 42, 42, 43, 44, 44, 45, 46, 47, 47,
+    48, 49, 50, 50, 51, 52, 53, 53, 54, 55, 56, 57, 58, 58, 59, 60,
+    61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
+    78, 79, 80, 81, 83, 84, 85, 87, 88, 90, 91, 93, 94, 96, 98, 100,
+    101, 103, 105, 107, 110, 112, 114, 117, 119, 122, 125, 128, 131, 134, 138, 142,
+    146, 150, 155, 160, 166, 172, 179, 187, 196, 207, 220, 236, 242, 242, 242, 242
+  ],
+  "settle_frames": 15,
+  "ordinary_on_q15": 4600,
+  "ordinary_off_q15": 3800,
+  "loom_on_q15": 5200,
+  "spike_on_per_10k": 1200,
+  "spike_off_per_10k": 1000,
+  "context_max_q15": 32767,
+  "exploration_initial_q15": 5000,
+  "exploration_on_q15": 12000,
+  "contamination_on_q15": 12000,
+  "fatigue_rest_q15": 18000,
+  "fatigue_critical_q15": 32767,
+  "fatigue_policy": "graded_response",
+  "fatigue_suppression_onset_q15": 24000,
+  "fatigue_suppression_full_q15": 32000,
+  "fatigue_min_response_q15": 11468,
+  "arousal_on_q15": 14000,
+  "arousal_divisor": 16,
+  "fatigue_delta_per_frame": [
+    -18,
+    -18,
+    10,
+    12,
+    2,
+    4,
+    35,
+    45,
+    -8
+  ],
+  "exploration_delta_per_frame": [
+    12,
+    12,
+    -36,
+    -30,
+    4,
+    -5,
+    -20,
+    -30,
+    0
+  ],
+  "contamination_delta_per_frame": [
+    2,
+    2,
+    2,
+    2,
+    -90,
+    2,
+    1,
+    1,
+    1
+  ]
+}

@@ -31,8 +31,8 @@ Add-Type -AssemblyName System.Windows.Forms
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $script:BackdropColor = [System.Drawing.Color]::FromArgb(28, 24, 36)
 $ExpectedParameterSha256 =
-    'a6c32576e4b869d10b8ff6f58ed3a7c9482ad831c767d697e5fd5e90e888ec6c'
-$ExpectedPetTitle = 'MechoFly N4.1-B visual review pet'
+    'cb3cd2654dcd4fa9def34fb0145645f5d61b59c96c407669cf1e9dd4f12628ef'
+$ExpectedPetTitle = 'MechoFly N4.1-C natural flight review pet'
 $EarlyBoundarySeconds = 30
 $LateBoundarySeconds = 300
 $LateMidpointSeconds = 450
@@ -80,7 +80,7 @@ function Test-ProcessAlive {
         if (Test-Path -LiteralPath $StandardErrorPath -PathType Leaf) {
             $stderr = [System.IO.File]::ReadAllText($StandardErrorPath)
         }
-        throw ('N4.1-B visual-review process exited unexpectedly. ExitCode=' +
+        throw ('N4.1-C visual-review process exited unexpectedly. ExitCode=' +
             [string]$Process.ExitCode + [Environment]::NewLine + $stderr)
     }
 }
@@ -147,7 +147,7 @@ function Get-ReviewPetWindow {
         [string]$_.class_name -eq 'MechoFlyDesktopPetLayeredWindowV1'
     })
     Assert-Condition ($pets.Count -eq 1) (
-        'Expected exactly one layered N4.1-B review pet window; found ' +
+        'Expected exactly one layered N4.1-C review pet window; found ' +
         [string]$pets.Count + '.')
     Assert-Condition ([string]$pets[0].title -ceq $ExpectedPetTitle) (
         'Review pet title mismatch: ' + [string]$pets[0].title)
@@ -281,7 +281,7 @@ function Ask-Criterion {
     $answer = [System.Windows.Forms.MessageBox]::Show(
         $Question + [Environment]::NewLine + [Environment]::NewLine +
             'Yes = pass, No = fail, Cancel = abort the review.',
-        ('MechoFly N4.1-B ' + $Phase + ' review — ' + $Criterion),
+        ('MechoFly N4.1-C ' + $Phase + ' review — ' + $Criterion),
         [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
         [System.Windows.Forms.MessageBoxIcon]::Question,
         [System.Windows.Forms.MessageBoxDefaultButton]::Button1)
@@ -304,10 +304,10 @@ function Get-PhaseRatings {
         [string] $Phase
     )
     $naturalnessQuestion = if ($Phase -ceq 'Late') {
-        'Did walk bouts vary clearly in duration, distance, and speed—with many short bouts and occasional long ones—while still stopping, curving, turning, and grooming in recognizable multi-step sequences, without a repeated clockwork rhythm or walking in place?'
+        'Across both walking and the flights you triggered, did bout length, distance, speed, and path vary visibly—with straight flight segments interrupted by quick turns, smooth takeoff-to-cruise and cruise-to-landing motion, natural stops, and recognizable grooming—without a repeated clockwork rhythm or motion in place?'
     }
     else {
-        'Did walking create real displacement with visibly different short and longer bouts and different speeds, rather than repeating one duration/distance or rotating in place?'
+        'Did walking create real displacement, and did the flights you triggered show visibly different lengths and speeds with a quick maneuver and a continuous landing, rather than repeating one fixed loop or rotating in place?'
     }
     $ratings = New-Object System.Collections.Generic.List[object]
     foreach ($item in @(
@@ -418,6 +418,28 @@ function Add-CompletedWalkBout {
     })
 }
 
+function Add-CompletedFlightBout {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable] $Bout,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [System.Collections.Generic.List[object]] $Destination
+    )
+    if (-not $Bout.completed_to_landing -or
+        $Bout.pairs -lt 1 -or
+        $Bout.speed_count -lt 1) { return }
+    $Destination.Add([pscustomobject][ordered]@{
+        duration_seconds = ([double]($Bout.max_age_frames + 1) * 0.033)
+        path_pixels = [double]$Bout.path_pixels
+        mean_speed_pixels_per_second =
+            [double]$Bout.speed_sum / [double]$Bout.speed_count
+        saccades = [int]$Bout.saccades
+        natural_motion = [bool]$Bout.natural_motion
+    })
+}
+
 function Get-NaturalMotionMetrics {
     param(
         [Parameter(Mandatory = $true)]
@@ -446,6 +468,8 @@ function Get-NaturalMotionMetrics {
     $previousBehavior = ''
     $currentBout = $null
     $walkBouts = New-Object 'System.Collections.Generic.List[object]'
+    $currentFlightBout = $null
+    $flightBouts = New-Object 'System.Collections.Generic.List[object]'
     $walkingPairs = 0
     $translatedPairs = 0
     $stationaryRotationPairs = 0
@@ -483,6 +507,29 @@ function Get-NaturalMotionMetrics {
             $currentBout = $null
         }
 
+        if ($behavior -ceq 'flight' -and $previousBehavior -cne 'flight') {
+            $currentFlightBout = @{
+                max_age_frames = [long]$sample.behavior_age_frames
+                path_pixels = 0.0
+                pairs = 0
+                speed_sum = 0.0
+                speed_count = 0
+                saccades = 0
+                in_saccade = $false
+                completed_to_landing = $false
+                natural_motion = [bool]$sample.natural_flight_motion
+            }
+        }
+        elseif ($behavior -cne 'flight' -and
+            $previousBehavior -ceq 'flight' -and
+            $null -ne $currentFlightBout) {
+            $currentFlightBout.completed_to_landing = $behavior -ceq 'landing'
+            Add-CompletedFlightBout `
+                -Bout $currentFlightBout `
+                -Destination $flightBouts
+            $currentFlightBout = $null
+        }
+
         if ($behavior -ceq 'walk' -and $null -ne $currentBout) {
             $currentBout.max_age_frames = [Math]::Max(
                 [long]$currentBout.max_age_frames,
@@ -492,6 +539,18 @@ function Get-NaturalMotionMetrics {
                 $currentBout.speed_sum += [double]$sample.speed_pixels_per_second
                 $currentBout.speed_count++
             }
+        }
+
+        if ($behavior -ceq 'flight' -and $null -ne $currentFlightBout) {
+            $currentFlightBout.max_age_frames = [Math]::Max(
+                [long]$currentFlightBout.max_age_frames,
+                [long]$sample.behavior_age_frames)
+            $currentFlightBout.speed_sum +=
+                [double]$sample.speed_pixels_per_second
+            $currentFlightBout.speed_count++
+            $currentFlightBout.natural_motion =
+                [bool]$currentFlightBout.natural_motion -and
+                [bool]$sample.natural_flight_motion
         }
 
         if ($null -ne $previous -and
@@ -523,6 +582,28 @@ function Get-NaturalMotionMetrics {
                     $currentBout.pairs++
                 }
             }
+        }
+        if ($null -ne $previous -and
+            $behavior -ceq 'flight' -and
+            [string]$previous.behavior -ceq 'flight' -and
+            $null -ne $currentFlightBout) {
+            $dx = [double]$sample.screen_x - [double]$previous.screen_x
+            $dy = [double]$sample.screen_y - [double]$previous.screen_y
+            $distance = [Math]::Sqrt($dx * $dx + $dy * $dy)
+            $headingDelta = [Math]::Abs(
+                [double]$sample.heading_radians -
+                [double]$previous.heading_radians)
+            while ($headingDelta -gt [Math]::PI) {
+                $headingDelta = [Math]::Abs(
+                    $headingDelta - 2.0 * [Math]::PI)
+            }
+            $currentFlightBout.path_pixels += $distance
+            $currentFlightBout.pairs++
+            $isSaccade = $headingDelta -ge 0.10
+            if ($isSaccade -and -not [bool]$currentFlightBout.in_saccade) {
+                $currentFlightBout.saccades++
+            }
+            $currentFlightBout.in_saccade = $isSaccade
         }
         $previous = $sample
         $previousBehavior = $behavior
@@ -557,6 +638,36 @@ function Get-NaturalMotionMetrics {
     else { 0.0 }
     $durationDistanceR2 = Get-SquaredCorrelation -X $durationValues -Y $distances
 
+    $flightDurationValues = [double[]]@($flightBouts | ForEach-Object {
+        [double]$_.duration_seconds
+    })
+    $flightDurations = [double[]]@($flightDurationValues | Sort-Object)
+    $flightSpeeds = [double[]]@($flightBouts | ForEach-Object {
+        [double]$_.mean_speed_pixels_per_second
+    })
+    $flightDurationStats = Get-MeanAndCv -Values $flightDurations
+    $flightSpeedStats = Get-MeanAndCv -Values $flightSpeeds
+    $flightSpeedMinimum = if ($flightSpeeds.Count -gt 0) {
+        [double]($flightSpeeds | Measure-Object -Minimum).Minimum
+    }
+    else { 0.0 }
+    $flightSpeedMaximum = if ($flightSpeeds.Count -gt 0) {
+        [double]($flightSpeeds | Measure-Object -Maximum).Maximum
+    }
+    else { 0.0 }
+    # Windows PowerShell 5.1 can return a measure object without a Sum
+    # property when the input collection is empty under StrictMode. Accumulate
+    # explicitly so the zero-bout regression has a portable numeric identity.
+    $flightPath = 0.0
+    $flightSaccades = 0
+    foreach ($flightBout in $flightBouts) {
+        $flightPath += [double]$flightBout.path_pixels
+        $flightSaccades += [int]$flightBout.saccades
+    }
+    $flightDistinctDurations = @($flightDurations | Select-Object -Unique).Count
+    $allFlightMotionNatural = $flightBouts.Count -gt 0 -and
+        @($flightBouts | Where-Object { -not [bool]$_.natural_motion }).Count -eq 0
+
     $requiredCaptures = @(
         'groom-head-sweep.png',
         'groom-foreleg-rub.png',
@@ -564,6 +675,16 @@ function Get-NaturalMotionMetrics {
         'groom-wing-clean.png'
     )
     $observedCaptures = @($requiredCaptures | Where-Object {
+        Test-Path -LiteralPath (Join-Path $CaptureDirectory $_) -PathType Leaf
+    })
+    $requiredFlightCaptures = @(
+        'flight-takeoff.png',
+        'flight-early.png',
+        'flight-maneuver.png',
+        'flight-landing.png',
+        'flight-touchdown.png'
+    )
+    $observedFlightCaptures = @($requiredFlightCaptures | Where-Object {
         Test-Path -LiteralPath (Join-Path $CaptureDirectory $_) -PathType Leaf
     })
     $stationaryRatio = if ($walkingPairs -gt 0) {
@@ -581,6 +702,15 @@ function Get-NaturalMotionMetrics {
         $speedStats.cv -ge 0.18 -and
         ($speedMaximum - $speedMinimum) -ge 20.0 -and
         $durationDistanceR2 -le 0.98 -and
+        $flightBouts.Count -ge 6 -and
+        $flightDistinctDurations -ge 3 -and
+        $flightDurationStats.cv -ge 0.25 -and
+        $flightSpeedStats.cv -ge 0.08 -and
+        ($flightSpeedMaximum - $flightSpeedMinimum) -ge 30.0 -and
+        $flightPath -ge 500.0 -and
+        $flightSaccades -ge 2 -and
+        $allFlightMotionNatural -and
+        $observedFlightCaptures.Count -eq $requiredFlightCaptures.Count -and
         $groomingBouts -ge 1 -and
         $groomingSeconds -ge 1.5 -and
         $observedCaptures.Count -eq $requiredCaptures.Count -and
@@ -607,13 +737,32 @@ function Get-NaturalMotionMetrics {
         walking_path_pixels = [Math]::Round($walkingPath, 3)
         stationary_rotation_pairs = $stationaryRotationPairs
         stationary_rotation_ratio = [Math]::Round($stationaryRatio, 6)
+        complete_flight_bouts = $flightBouts.Count
+        flight_distinct_durations = $flightDistinctDurations
+        flight_duration_min_seconds = [Math]::Round((Get-NearestRank `
+            -SortedValues $flightDurations -Quantile 0.0), 3)
+        flight_duration_p50_seconds = [Math]::Round((Get-NearestRank `
+            -SortedValues $flightDurations -Quantile 0.5), 3)
+        flight_duration_max_seconds = [Math]::Round((Get-NearestRank `
+            -SortedValues $flightDurations -Quantile 1.0), 3)
+        flight_duration_cv = [Math]::Round($flightDurationStats.cv, 6)
+        flight_mean_speed_min_pixels_per_second =
+            [Math]::Round($flightSpeedMinimum, 3)
+        flight_mean_speed_max_pixels_per_second =
+            [Math]::Round($flightSpeedMaximum, 3)
+        flight_mean_speed_cv = [Math]::Round($flightSpeedStats.cv, 6)
+        flight_path_pixels = [Math]::Round($flightPath, 3)
+        flight_saccades = $flightSaccades
+        natural_flight_motion_all_bouts = $allFlightMotionNatural
+        required_flight_captures = $requiredFlightCaptures
+        observed_flight_captures = $observedFlightCaptures
         grooming_bouts = $groomingBouts
         grooming_frames = $groomingFrames.Count
         grooming_seconds = [Math]::Round($groomingSeconds, 3)
         grooming_substates = @($groomingSubstates | Sort-Object)
         required_grooming_captures = $requiredCaptures
         observed_grooming_captures = $observedCaptures
-        gate = '>= 20 autonomous complete walk bouts; duration CV >= 0.55; >= 25% <= 1 s; >= 1 bout >= 4.5 s; per-bout mean-speed CV >= 0.18 and range >= 20 px/s; duration-distance R^2 <= 0.98; translation >= 100 px; stationary-rotation ratio <= 0.01; grooming sequence and captures complete'
+        gate = 'ground gates preserved; >= 6 complete flight bouts; >= 3 flight durations; flight duration CV >= 0.25; flight speed CV >= 0.08 and range >= 30 px/s; >= 500 px flight path; >= 2 rapid saccades; natural-flight flag and five phase captures present; grooming sequence and captures complete'
     }
 }
 
@@ -829,16 +978,20 @@ namespace MechoFly.N41VisualReview
 }
 
 $intro = [System.Windows.Forms.MessageBox]::Show(
-    'This launches the isolated N4.1-B natural-bout candidate for ten minutes.' +
+    'This launches the isolated N4.1-C natural-flight candidate for ten minutes.' +
         [Environment]::NewLine + [Environment]::NewLine +
         'Observe the first 30 seconds, then the final five-minute window.' +
-        ' Watch specifically for a mix of very short and occasional long walks,' +
-        ' different walking speeds, and grooming. Hover and click occasionally' +
-        ' so responsiveness is visible.' +
+        ' Watch specifically for varied walking, grooming, and visibly different' +
+        ' flight lengths, speeds, and paths.' +
+        [Environment]::NewLine + [Environment]::NewLine +
+        'Trigger at least eight separate flights across the early and late windows' +
+        ' with Ctrl+Alt+L. After each trigger, move the pointer away and allow the' +
+        ' complete takeoff, flight, maneuver, landing, and touchdown to finish.' +
+        ' Keep the triggers separated so each flight is a complete bout.' +
         [Environment]::NewLine + [Environment]::NewLine +
         'The review does not deploy anything, change shortcuts, or write to AppData.' +
         ' Press Cancel if you cannot observe the full session.',
-    'MechoFly N4.1-B early/late visual acceptance',
+    'MechoFly N4.1-C natural-flight visual acceptance',
     [System.Windows.Forms.MessageBoxButtons]::OKCancel,
     [System.Windows.Forms.MessageBoxIcon]::Information,
     [System.Windows.Forms.MessageBoxDefaultButton]::Button1)
@@ -913,9 +1066,9 @@ try {
     $launchReceipt = Get-Content -LiteralPath $launchReceiptPath -Raw |
         ConvertFrom-Json
     Assert-Condition ([string]$launchReceipt.status -ceq 'PASS') 'Candidate launch receipt failed.'
-    Assert-Condition ([string]$launchReceipt.active_profile -ceq 'n41-b-natural') 'Candidate did not activate n41-b-natural.'
+    Assert-Condition ([string]$launchReceipt.active_profile -ceq 'n41-b-natural-flight') 'Candidate did not activate n41-b-natural-flight.'
     Assert-Condition ([string]$launchReceipt.canonical_default_profile -ceq 'n4') 'Canonical default is not N4.'
-    Assert-Condition ([string]$launchReceipt.parameter_sha256 -ceq $ExpectedParameterSha256) 'N4.1-B parameter identity mismatch.'
+    Assert-Condition ([string]$launchReceipt.parameter_sha256 -ceq $ExpectedParameterSha256) 'N4.1-C parameter identity mismatch.'
     Assert-Condition ([string]$launchReceipt.executable_sha256 -ceq $ExecutableSha256) 'Candidate launch binary identity mismatch.'
     Assert-Condition ([bool]$launchReceipt.storage_override_active) 'Downloads storage override was not active.'
     Assert-Condition ([string]$launchReceipt.capture_source -ceq
@@ -1013,9 +1166,13 @@ try {
             -CaptureDirectory $captureDirectory
         Write-Host ('NATURAL_MOTION_GATE=' + $objectiveMetrics.status +
             ' walk_bouts=' + [string]$objectiveMetrics.autonomous_complete_walk_bouts +
-            ' duration_cv=' + [string]$objectiveMetrics.walk_duration_cv +
-            ' speed_cv=' + [string]$objectiveMetrics.walk_mean_speed_cv +
+            ' walk_duration_cv=' + [string]$objectiveMetrics.walk_duration_cv +
+            ' walk_speed_cv=' + [string]$objectiveMetrics.walk_mean_speed_cv +
             ' walking_path_pixels=' + [string]$objectiveMetrics.walking_path_pixels +
+            ' flight_bouts=' + [string]$objectiveMetrics.complete_flight_bouts +
+            ' flight_duration_cv=' + [string]$objectiveMetrics.flight_duration_cv +
+            ' flight_speed_cv=' + [string]$objectiveMetrics.flight_mean_speed_cv +
+            ' flight_saccades=' + [string]$objectiveMetrics.flight_saccades +
             ' grooming_bouts=' + [string]$objectiveMetrics.grooming_bouts)
         [Console]::Beep(1047, 400)
         $lateRatings = Get-PhaseRatings -Phase 'Late'
@@ -1036,9 +1193,9 @@ try {
             $confirmation = [System.Windows.Forms.MessageBox]::Show(
                 'All six early/late criteria passed.' +
                     [Environment]::NewLine + [Environment]::NewLine +
-                    'Accept this exact N4.1-B natural-bout candidate binary only for the next guarded step?' +
+                    'Accept this exact N4.1-C natural-flight candidate binary only for the next guarded step?' +
                     ' This still does not authorize deployment or shortcut changes.',
-                'MechoFly N4.1-B explicit visual-acceptance decision',
+                'MechoFly N4.1-C explicit visual-acceptance decision',
                 [System.Windows.Forms.MessageBoxButtons]::YesNo,
                 [System.Windows.Forms.MessageBoxIcon]::Question,
                 [System.Windows.Forms.MessageBoxDefaultButton]::Button2)
@@ -1060,10 +1217,10 @@ try {
         0
     }
     $receipt = [ordered]@{
-        schema_version = 3
+        schema_version = 4
         status = 'PASS'
-        classification = 'single_owner_formative_early_late_visual_review'
-        candidate_profile = 'n41-b-natural'
+        classification = 'single_owner_formative_natural_flight_review'
+        candidate_profile = 'n41-b-natural-flight'
         parameter_sha256 = $ExpectedParameterSha256
         source_branch = $SourceBranch
         source_commit = $SourceCommit

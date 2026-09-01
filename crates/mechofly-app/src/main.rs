@@ -219,7 +219,7 @@ fn visual_review_enabled(args: &[String]) -> Result<bool, String> {
         || option_value(args, N41_VISUAL_REVIEW_RECEIPT_OPTION).is_some()
     {
         return Err(
-            "N4.1-B visual review requires a build with feature n41-visual-review-b".into(),
+            "N4.1-C visual review requires a build with feature n41-visual-review-b".into(),
         );
     }
     Ok(false)
@@ -234,8 +234,8 @@ fn write_n41_visual_review_launch_receipt(
         return Ok(());
     }
     use mechofly_core::behavior_parameters::{
-        BehaviorParameterProfile, N41_NATURAL_BOUT_DYNAMICS_CLAIM,
-        N41_NATURAL_BOUT_DYNAMICS_VERSION, artifact_sha256, parameter_sha256_for,
+        BehaviorParameterProfile, N41_NATURAL_FLIGHT_DYNAMICS_CLAIM,
+        N41_NATURAL_FLIGHT_DYNAMICS_VERSION, artifact_sha256, parameter_sha256_for,
     };
 
     let destination = option_value(args, N41_VISUAL_REVIEW_RECEIPT_OPTION).ok_or_else(|| {
@@ -252,16 +252,16 @@ fn write_n41_visual_review_launch_receipt(
         return Err("N4.1 visual review requires MECHOFLY_DATA_DIR".into());
     }
     let receipt = N41VisualReviewLaunchReceipt {
-        schema_version: 3,
+        schema_version: 4,
         status: "PASS",
-        classification: "feature_gated_live_visual_review_candidate",
+        classification: "feature_gated_natural_flight_visual_review_candidate",
         review_feature: "n41-visual-review-b",
         required_explicit_flag: N41_B_VISUAL_REVIEW_FLAG,
         canonical_default_profile: "n4",
-        active_profile: "n41-b-natural",
-        parameter_sha256: parameter_sha256_for(BehaviorParameterProfile::N41BNatural),
-        dynamics_version: N41_NATURAL_BOUT_DYNAMICS_VERSION,
-        dynamics_claim: N41_NATURAL_BOUT_DYNAMICS_CLAIM,
+        active_profile: "n41-b-natural-flight",
+        parameter_sha256: parameter_sha256_for(BehaviorParameterProfile::N41BNaturalFlight),
+        dynamics_version: N41_NATURAL_FLIGHT_DYNAMICS_VERSION,
+        dynamics_claim: N41_NATURAL_FLIGHT_DYNAMICS_CLAIM,
         process_id: std::process::id(),
         executable: executable.display().to_string(),
         executable_sha256: artifact_sha256(&executable_bytes),

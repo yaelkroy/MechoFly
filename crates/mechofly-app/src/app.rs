@@ -118,9 +118,13 @@ impl MechoFlyApp {
         diagnostics::mark("system tray initialization attempted");
         let mut pet = PetMotion::default();
         pet.reduced_motion = config.reduced_motion;
+        #[cfg(feature = "n41-visual-review-b")]
+        {
+            pet.natural_flight_motion = config.n41_visual_review_b;
+        }
         #[cfg(all(windows, feature = "n41-visual-review-b"))]
         let desktop_pet_title = if config.n41_visual_review_b {
-            "MechoFly N4.1-B visual review pet"
+            "MechoFly N4.1-C natural flight review pet"
         } else {
             "MechoFly desktop pet"
         };

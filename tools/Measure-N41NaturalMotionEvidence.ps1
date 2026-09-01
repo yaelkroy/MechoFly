@@ -57,6 +57,7 @@ $requiredFunctions = @(
     'Get-NearestRank',
     'Get-SquaredCorrelation',
     'Add-CompletedWalkBout',
+    'Add-CompletedFlightBout',
     'Get-NaturalMotionMetrics'
 )
 foreach ($name in $requiredFunctions) {
@@ -82,7 +83,7 @@ $captureRecords = @(Get-ChildItem -LiteralPath $captures -Filter '*.png' -File |
         }
     })
 $receipt = [pscustomobject][ordered]@{
-    schema_version = 1
+    schema_version = 2
     status = 'PASS'
     classification = 'offline_n4_1_natural_motion_evidence_measurement'
     collector = $collector
@@ -110,4 +111,5 @@ $receipt = [pscustomobject][ordered]@{
 Write-Host ('N41_NATURAL_MOTION_EVIDENCE=' +
     [string]$metrics.status +
     ' walk_bouts=' + [string]$metrics.autonomous_complete_walk_bouts +
+    ' flight_bouts=' + [string]$metrics.complete_flight_bouts +
     ' grooming_bouts=' + [string]$metrics.grooming_bouts)
