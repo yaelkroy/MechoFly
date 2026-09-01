@@ -24,6 +24,10 @@ fn immutable_profiles_are_valid_unique_and_keep_the_frozen_n4_artifact() {
             "bec74a4ab771b61923ac81d71fd532d88001abd4bf00e90bf799e6e30703c138",
         ),
         (
+            BehaviorParameterProfile::N41BNatural,
+            "a6c32576e4b869d10b8ff6f58ed3a7c9482ad831c767d697e5fd5e90e888ec6c",
+        ),
+        (
             BehaviorParameterProfile::N41C,
             "b1296cd9640a39852dfa5d8cba2387798fbe681869dc53b8fd24224225f0a18d",
         ),
@@ -49,6 +53,7 @@ fn immutable_profiles_are_valid_unique_and_keep_the_frozen_n4_artifact() {
     for profile in [
         BehaviorParameterProfile::N41A,
         BehaviorParameterProfile::N41B,
+        BehaviorParameterProfile::N41BNatural,
         BehaviorParameterProfile::N41C,
     ] {
         assert_eq!(
@@ -63,6 +68,7 @@ fn graded_gain_is_bounded_monotone_and_never_zero() {
     for profile in [
         BehaviorParameterProfile::N41A,
         BehaviorParameterProfile::N41B,
+        BehaviorParameterProfile::N41BNatural,
         BehaviorParameterProfile::N41C,
     ] {
         let p = parameters_for_profile(profile);
@@ -89,6 +95,7 @@ fn response_draw_is_deterministic_and_floor_is_reachable_across_event_keys() {
     for profile in [
         BehaviorParameterProfile::N41A,
         BehaviorParameterProfile::N41B,
+        BehaviorParameterProfile::N41BNatural,
         BehaviorParameterProfile::N41C,
     ] {
         let p = parameters_for_profile(profile);

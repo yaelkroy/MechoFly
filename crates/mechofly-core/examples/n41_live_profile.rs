@@ -50,7 +50,8 @@ struct Report {
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     let output = option(&args, "--output").ok_or("--output is required")?;
-    let profile = BehaviorParameterProfile::parse(option(&args, "--profile").unwrap_or("n41-b"))?;
+    let profile =
+        BehaviorParameterProfile::parse(option(&args, "--profile").unwrap_or("n41-b-natural"))?;
     let tier = parse_tier(option(&args, "--tier").unwrap_or("extended-65536"))?;
     let seconds = option(&args, "--seconds")
         .unwrap_or("600")

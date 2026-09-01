@@ -2,7 +2,7 @@ name: MechoFly N4.1-B visual-review candidate
 
 on:
   push:
-    branches: ["test/n4-1-b-visual-acceptance-rust-v16"]
+    branches: ["fix/n4-1-b-natural-bouts-rust-v18"]
   workflow_dispatch:
 
 permissions:
@@ -97,7 +97,7 @@ jobs:
             candidate_executable_sha256 = $candidateHash
             hashes_differ = ($canonicalHash -cne $candidateHash)
             canonical_default_profile = 'n4'
-            candidate_review_profile = 'n41-b'
+            candidate_review_profile = 'n41-b-natural'
             candidate_requires_feature = 'n41-visual-review-b'
             candidate_requires_flag = '--n41-b-visual-review'
             live_gui_review_run_in_ci = $false
@@ -114,7 +114,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: mechofly-n41-b-visual-review-candidate
+          name: mechofly-n41-b-natural-visual-review-candidate
           path: |
             artifacts/n41-runtime-isolation.json
             artifacts/n41-visual-review-integration.json

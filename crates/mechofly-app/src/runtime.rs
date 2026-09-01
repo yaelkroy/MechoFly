@@ -63,7 +63,7 @@ impl SimulationSession {
         let engine = ModelEngine::new_duration_aware_with_profile(
             Arc::clone(&graph),
             seed,
-            BehaviorParameterProfile::N41B,
+            BehaviorParameterProfile::N41BNatural,
         );
         Self::with_graph_and_engine(render_state, assessment, graph, engine, started_unix_millis)
     }

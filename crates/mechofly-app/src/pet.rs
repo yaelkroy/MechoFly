@@ -16,6 +16,10 @@ const CENTER: [f32; 2] = [PET_WIDTH as f32 * 0.5, PET_HEIGHT as f32 * 0.5];
 const RASTER_SCALE: usize = 2;
 const REFERENCE_TICK_SECONDS: f32 = 0.033;
 const WALK_SPEED_PIXELS_PER_SECOND: f32 = 1.85 / REFERENCE_TICK_SECONDS;
+const WALK_SPEED_ONSET_SECONDS: f32 = 0.16;
+const WALK_SPEED_MULTIPLIERS: [f32; 16] = [
+    0.55, 0.62, 0.68, 0.75, 0.82, 0.89, 0.96, 1.03, 1.10, 1.17, 1.24, 1.31, 1.38, 1.45, 1.52, 1.60,
+];
 const REVERSE_SPEED_PIXELS_PER_SECOND: f32 = -2.2 / REFERENCE_TICK_SECONDS;
 const ESCAPE_SPEED_PIXELS_PER_SECOND: f32 = 18.0 / REFERENCE_TICK_SECONDS;
 const FLIGHT_SPEED_PIXELS_PER_SECOND: f32 = 8.4 / REFERENCE_TICK_SECONDS;
@@ -67,6 +71,47 @@ impl GroundPathMotif {
             }
             Self::SharpTurnLeft | Self::SharpTurnRight => 0.0,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GroundSpeedProfile {
+    multiplier: f32,
+    stride_phase: f32,
+    drift_phase: f32,
+    stride_radians_per_second: f32,
+    drift_radians_per_second: f32,
+}
+
+impl Default for GroundSpeedProfile {
+    fn default() -> Self {
+        Self::for_bout(0)
+    }
+}
+
+impl GroundSpeedProfile {
+    fn for_bout(sequence: u64) -> Self {
+        let key = motor_mix64(sequence ^ 0x5350_4545_445F_5631);
+        let multiplier = WALK_SPEED_MULTIPLIERS[(key as usize) % WALK_SPEED_MULTIPLIERS.len()];
+        let phase = |shift: u32| ((key.rotate_right(shift) & 0xffff) as f32 / 65_535.0) * TAU;
+        Self {
+            multiplier,
+            stride_phase: phase(11),
+            drift_phase: phase(37),
+            stride_radians_per_second: 7.2 + ((key >> 16) & 0xff) as f32 / 255.0 * 5.4,
+            drift_radians_per_second: 1.1 + ((key >> 40) & 0xff) as f32 / 255.0 * 1.8,
+        }
+    }
+
+    fn onset(self, age_seconds: f32) -> f32 {
+        smootherstep((age_seconds / WALK_SPEED_ONSET_SECONDS).clamp(0.0, 1.0))
+    }
+
+    fn speed_pixels_per_second(self, age_seconds: f32) -> f32 {
+        let texture = 1.0
+            + 0.09 * (age_seconds * self.stride_radians_per_second + self.stride_phase).sin()
+            + 0.045 * (age_seconds * self.drift_radians_per_second + self.drift_phase).sin();
+        WALK_SPEED_PIXELS_PER_SECOND * self.multiplier * self.onset(age_seconds) * texture.max(0.5)
     }
 }
 
@@ -135,6 +180,7 @@ pub struct PetMotion {
     landing_active: bool,
     ground_bout_sequence: u64,
     ground_path_motif: GroundPathMotif,
+    ground_speed_profile: GroundSpeedProfile,
     pub paused: bool,
     pub reduced_motion: bool,
 }
@@ -158,6 +204,7 @@ impl Default for PetMotion {
             landing_active: false,
             ground_bout_sequence: 0,
             ground_path_motif: GroundPathMotif::Straight,
+            ground_speed_profile: GroundSpeedProfile::default(),
             paused: false,
             reduced_motion: false,
         }
@@ -202,6 +249,7 @@ impl PetMotion {
             if matches!(behavior, Behavior::Walk | Behavior::Reverse) {
                 self.ground_bout_sequence = self.ground_bout_sequence.saturating_add(1);
                 self.ground_path_motif = GroundPathMotif::for_bout(self.ground_bout_sequence);
+                self.ground_speed_profile = GroundSpeedProfile::for_bout(self.ground_bout_sequence);
             }
             if behavior == Behavior::Landing {
                 self.landing_start_position = self.screen_position;
@@ -240,14 +288,20 @@ impl PetMotion {
         self.speed_pixels_per_second = match behavior {
             Behavior::Walk => {
                 self.altitude_pixels = 0.0;
+                let age_end = self.behavior_age_seconds;
+                let age_start = (age_end - dt).max(0.0);
+                let turn_rate_start = self
+                    .ground_path_motif
+                    .turn_rate_radians_per_second(age_start)
+                    * self.ground_speed_profile.onset(age_start);
+                let turn_rate_end = self.ground_path_motif.turn_rate_radians_per_second(age_end)
+                    * self.ground_speed_profile.onset(age_end);
                 self.heading_radians = wrapped_angle(
-                    self.heading_radians
-                        + self
-                            .ground_path_motif
-                            .turn_rate_radians_per_second(self.behavior_age_seconds)
-                            * dt,
+                    self.heading_radians + (turn_rate_start + turn_rate_end) * 0.5 * dt,
                 );
-                WALK_SPEED_PIXELS_PER_SECOND
+                (self.ground_speed_profile.speed_pixels_per_second(age_start)
+                    + self.ground_speed_profile.speed_pixels_per_second(age_end))
+                    * 0.5
             }
             Behavior::Reverse => {
                 self.altitude_pixels = 0.0;
@@ -2407,6 +2461,165 @@ mod tests {
         }
         assert!((at_30_hz.screen_position.x - at_120_hz.screen_position.x).abs() < 0.8);
         assert!((at_30_hz.animation_seconds - at_120_hz.animation_seconds).abs() < 0.001);
+    }
+
+    #[test]
+    fn walking_speed_varies_between_and_within_deterministic_bouts() {
+        let origin = Pos2::ZERO;
+        let screen = Vec2::new(8_000.0, 4_000.0);
+        let mut motion = PetMotion {
+            screen_position: Pos2::new(3_000.0, 2_000.0),
+            ..PetMotion::default()
+        };
+        let mut bout_means = Vec::new();
+        let mut first_bout_samples = Vec::new();
+        for bout in 0..16 {
+            motion.advance(1.0 / 60.0, Behavior::Quiet, origin, screen, false, None);
+            let mut sum = 0.0;
+            let mut count = 0;
+            for frame in 0..120 {
+                motion.advance(1.0 / 60.0, Behavior::Walk, origin, screen, false, None);
+                if frame >= 15 {
+                    sum += motion.speed_pixels_per_second;
+                    count += 1;
+                    if bout == 0 {
+                        first_bout_samples.push(motion.speed_pixels_per_second);
+                    }
+                }
+            }
+            bout_means.push(sum / count as f32);
+        }
+        let minimum = bout_means.iter().copied().fold(f32::INFINITY, f32::min);
+        let maximum = bout_means.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let rounded_levels = bout_means
+            .iter()
+            .map(|value| value.round() as i32)
+            .collect::<std::collections::BTreeSet<_>>();
+        let within_minimum = first_bout_samples
+            .iter()
+            .copied()
+            .fold(f32::INFINITY, f32::min);
+        let within_maximum = first_bout_samples
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(maximum / minimum > 2.2, "means={bout_means:?}");
+        assert!(rounded_levels.len() >= 10, "means={bout_means:?}");
+        assert!(within_maximum - within_minimum > 7.0);
+
+        let mut repeat = PetMotion {
+            screen_position: Pos2::new(3_000.0, 2_000.0),
+            ..PetMotion::default()
+        };
+        repeat.advance(1.0 / 60.0, Behavior::Quiet, origin, screen, false, None);
+        repeat.advance(1.0 / 60.0, Behavior::Walk, origin, screen, false, None);
+        let first = GroundSpeedProfile::for_bout(1);
+        assert_eq!(repeat.ground_speed_profile.multiplier, first.multiplier);
+        assert_eq!(repeat.ground_speed_profile.stride_phase, first.stride_phase);
+    }
+
+    #[test]
+    fn walking_turns_never_rotate_at_a_stationary_onset() {
+        let origin = Pos2::ZERO;
+        let screen = Vec2::new(8_000.0, 4_000.0);
+        let sharp_sequence = (1..64)
+            .find(|sequence| {
+                matches!(
+                    GroundPathMotif::for_bout(*sequence),
+                    GroundPathMotif::SharpTurnLeft | GroundPathMotif::SharpTurnRight
+                )
+            })
+            .expect("a sharp motif must be reachable");
+        let mut motion = PetMotion {
+            screen_position: Pos2::new(3_000.0, 2_000.0),
+            ground_bout_sequence: sharp_sequence - 1,
+            ..PetMotion::default()
+        };
+        for _ in 0..30 {
+            let before_position = motion.screen_position;
+            let before_heading = motion.heading_radians;
+            motion.advance(1.0 / 240.0, Behavior::Walk, origin, screen, false, None);
+            let translation = motion.screen_position.distance(before_position);
+            let turn = wrapped_angle(motion.heading_radians - before_heading).abs();
+            if translation < 0.01 {
+                assert!(turn < 0.0001, "translation={translation} turn={turn}");
+            }
+        }
+    }
+
+    #[test]
+    fn natural_bout_duration_no_longer_predicts_path_length() {
+        use mechofly_core::behavior_parameters::{
+            BehaviorParameterProfile, duration_draw_for, parameters_for_profile,
+        };
+
+        let origin = Pos2::ZERO;
+        let screen = Vec2::new(100_000.0, 100_000.0);
+        let parameters = parameters_for_profile(BehaviorParameterProfile::N41BNatural);
+        let mut motion = PetMotion {
+            screen_position: Pos2::new(50_000.0, 50_000.0),
+            ..PetMotion::default()
+        };
+        let mut durations = Vec::new();
+        let mut distances = Vec::new();
+        let mut speeds = Vec::new();
+        for sequence in 1..=128_u64 {
+            motion.advance(1.0 / 60.0, Behavior::Quiet, origin, screen, false, None);
+            let frames = duration_draw_for(
+                parameters,
+                0x4D45_4348_4F46_4C59,
+                sequence,
+                Behavior::Walk,
+                0,
+            )
+            .1;
+            let duration = frames as f32 * REFERENCE_TICK_SECONDS;
+            let render_steps = (duration * 60.0).ceil() as usize;
+            let mut path = 0.0;
+            let mut speed_sum = 0.0;
+            for _ in 0..render_steps {
+                let before = motion.screen_position;
+                motion.advance(1.0 / 60.0, Behavior::Walk, origin, screen, false, None);
+                path += motion.screen_position.distance(before);
+                speed_sum += motion.speed_pixels_per_second;
+            }
+            durations.push(duration as f64);
+            distances.push(path as f64);
+            speeds.push((speed_sum / render_steps as f32) as f64);
+        }
+
+        let stats = |values: &[f64]| {
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            let variance = values
+                .iter()
+                .map(|value| (value - mean).powi(2))
+                .sum::<f64>()
+                / values.len() as f64;
+            (mean, variance.sqrt() / mean)
+        };
+        let squared_correlation = |x: &[f64], y: &[f64]| {
+            let x_mean = stats(x).0;
+            let y_mean = stats(y).0;
+            let covariance = x
+                .iter()
+                .zip(y)
+                .map(|(x, y)| (x - x_mean) * (y - y_mean))
+                .sum::<f64>();
+            let x_variance = x.iter().map(|x| (x - x_mean).powi(2)).sum::<f64>();
+            let y_variance = y.iter().map(|y| (y - y_mean).powi(2)).sum::<f64>();
+            (covariance / (x_variance * y_variance).sqrt()).powi(2)
+        };
+        let speed_cv = stats(&speeds).1;
+        let speed_minimum = speeds.iter().copied().fold(f64::INFINITY, f64::min);
+        let speed_maximum = speeds.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let duration_distance_r_squared = squared_correlation(&durations, &distances);
+
+        assert!(speed_cv >= 0.18, "speed_cv={speed_cv}");
+        assert!(speed_maximum - speed_minimum >= 20.0);
+        assert!(
+            duration_distance_r_squared <= 0.98,
+            "duration_distance_r_squared={duration_distance_r_squared}"
+        );
     }
 
     #[test]

@@ -11,12 +11,17 @@ pub const N41_A_PARAMETERS_JSON: &str =
     include_str!("../parameters/n4.1-soft-fatigue-a-responsive-v1.json");
 pub const N41_B_PARAMETERS_JSON: &str =
     include_str!("../parameters/n4.1-soft-fatigue-b-balanced-v1.json");
+pub const N41_B_NATURAL_PARAMETERS_JSON: &str =
+    include_str!("../parameters/n4.1-soft-fatigue-b-natural-bouts-v2.json");
 pub const N41_C_PARAMETERS_JSON: &str =
     include_str!("../parameters/n4.1-soft-fatigue-c-conservative-v1.json");
 pub const DYNAMICS_VERSION: &str = "n4-explicit-duration-engineering-v1";
 pub const N41_DYNAMICS_VERSION: &str = "n4.1-graded-fatigue-engineering-v1";
+pub const N41_NATURAL_BOUT_DYNAMICS_VERSION: &str =
+    "n4.1-literature-shaped-walk-bouts-product-prior-v1";
 pub const DYNAMICS_CLAIM: &str =
     "MODELED / ENGINEERING PRIOR; context and duration rules are authored, not biologically fitted";
+pub const N41_NATURAL_BOUT_DYNAMICS_CLAIM: &str = "MODELED / LITERATURE-SHAPED PRODUCT PRIOR; walk-bout quantiles are authored from reported qualitative time scales, not fitted biological constants";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,17 +38,25 @@ pub enum BehaviorParameterProfile {
     N4,
     N41A,
     N41B,
+    N41BNatural,
     N41C,
 }
 
 impl BehaviorParameterProfile {
-    pub const ALL: [Self; 4] = [Self::N4, Self::N41A, Self::N41B, Self::N41C];
+    pub const ALL: [Self; 5] = [
+        Self::N4,
+        Self::N41A,
+        Self::N41B,
+        Self::N41BNatural,
+        Self::N41C,
+    ];
 
     pub const fn cli(self) -> &'static str {
         match self {
             Self::N4 => "n4",
             Self::N41A => "n41-a",
             Self::N41B => "n41-b",
+            Self::N41BNatural => "n41-b-natural",
             Self::N41C => "n41-c",
         }
     }
@@ -53,9 +66,10 @@ impl BehaviorParameterProfile {
             "n4" => Ok(Self::N4),
             "n41-a" => Ok(Self::N41A),
             "n41-b" => Ok(Self::N41B),
+            "n41-b-natural" => Ok(Self::N41BNatural),
             "n41-c" => Ok(Self::N41C),
             _ => Err(format!(
-                "unknown behavior parameter profile {value:?}; expected n4, n41-a, n41-b, or n41-c"
+                "unknown behavior parameter profile {value:?}; expected n4, n41-a, n41-b, n41-b-natural, or n41-c"
             )),
         }
     }
@@ -79,6 +93,10 @@ pub struct BehaviorParameters {
     pub behavior_order: [String; 9],
     pub duration_key_salt: u64,
     pub durations: [DurationParameters; 9],
+    /// Optional event-keyed quantile table for Walk bouts. Empty preserves the
+    /// frozen bounded-uniform N4/N4.1-A/B/C behavior exactly.
+    #[serde(default)]
+    pub walk_duration_quantiles_frames: Vec<u32>,
     pub settle_frames: u32,
     pub ordinary_on_q15: i32,
     pub ordinary_off_q15: i32,
@@ -128,13 +146,15 @@ impl BehaviorParameters {
                     && self.fatigue_min_response_q15 == 0
             }
             FatiguePolicy::GradedResponse => {
-                self.schema_version == 2
+                ((self.schema_version == 2
                     && matches!(
                         self.parameter_set_id.as_str(),
                         "n4.1-soft-fatigue-a-responsive-v1"
                             | "n4.1-soft-fatigue-b-balanced-v1"
                             | "n4.1-soft-fatigue-c-conservative-v1"
-                    )
+                    ))
+                    || (self.schema_version == 3
+                        && self.parameter_set_id == "n4.1-soft-fatigue-b-natural-bouts-v2"))
                     && self.fatigue_suppression_onset_q15 > 0
                     && self.fatigue_suppression_onset_q15 < self.fatigue_suppression_full_q15
                     && self.fatigue_suppression_full_q15 <= self.context_max_q15
@@ -166,6 +186,26 @@ impl BehaviorParameters {
             {
                 return Err("invalid N4 duration bounds".into());
             }
+        }
+        let walk = self.for_behavior(Behavior::Walk);
+        let natural_bouts = self.parameter_set_id == "n4.1-soft-fatigue-b-natural-bouts-v2";
+        if natural_bouts {
+            if self.walk_duration_quantiles_frames.len() != 128
+                || self.walk_duration_quantiles_frames.first() != Some(&walk.low_frames)
+                || self.walk_duration_quantiles_frames.last() != Some(&walk.high_frames)
+                || self
+                    .walk_duration_quantiles_frames
+                    .windows(2)
+                    .any(|pair| pair[0] > pair[1])
+                || self
+                    .walk_duration_quantiles_frames
+                    .iter()
+                    .any(|value| !(walk.low_frames..=walk.high_frames).contains(value))
+            {
+                return Err("invalid natural walk-bout quantile table".into());
+            }
+        } else if !self.walk_duration_quantiles_frames.is_empty() {
+            return Err("frozen N4/N4.1-A/B/C profiles cannot carry walk quantiles".into());
         }
         if u64::from(self.for_behavior(Behavior::Groom).minimum_frames)
             * u64::from(crate::MODEL_STEP_MS)
@@ -227,11 +267,13 @@ pub fn parameters_for_profile(profile: BehaviorParameterProfile) -> &'static Beh
     static N4: OnceLock<BehaviorParameters> = OnceLock::new();
     static N41_A: OnceLock<BehaviorParameters> = OnceLock::new();
     static N41_B: OnceLock<BehaviorParameters> = OnceLock::new();
+    static N41_B_NATURAL: OnceLock<BehaviorParameters> = OnceLock::new();
     static N41_C: OnceLock<BehaviorParameters> = OnceLock::new();
     let (cell, json) = match profile {
         BehaviorParameterProfile::N4 => (&N4, PARAMETERS_JSON),
         BehaviorParameterProfile::N41A => (&N41_A, N41_A_PARAMETERS_JSON),
         BehaviorParameterProfile::N41B => (&N41_B, N41_B_PARAMETERS_JSON),
+        BehaviorParameterProfile::N41BNatural => (&N41_B_NATURAL, N41_B_NATURAL_PARAMETERS_JSON),
         BehaviorParameterProfile::N41C => (&N41_C, N41_C_PARAMETERS_JSON),
     };
     cell.get_or_init(|| {
@@ -260,6 +302,7 @@ pub fn dynamics_version_for_sha256(sha256: &str) -> Option<&'static str> {
         BehaviorParameterProfile::N41A
         | BehaviorParameterProfile::N41B
         | BehaviorParameterProfile::N41C => N41_DYNAMICS_VERSION,
+        BehaviorParameterProfile::N41BNatural => N41_NATURAL_BOUT_DYNAMICS_VERSION,
     })
 }
 
@@ -272,11 +315,13 @@ pub fn parameter_sha256_for(profile: BehaviorParameterProfile) -> &'static str {
     static N4: OnceLock<String> = OnceLock::new();
     static N41_A: OnceLock<String> = OnceLock::new();
     static N41_B: OnceLock<String> = OnceLock::new();
+    static N41_B_NATURAL: OnceLock<String> = OnceLock::new();
     static N41_C: OnceLock<String> = OnceLock::new();
     let (cell, json) = match profile {
         BehaviorParameterProfile::N4 => (&N4, PARAMETERS_JSON),
         BehaviorParameterProfile::N41A => (&N41_A, N41_A_PARAMETERS_JSON),
         BehaviorParameterProfile::N41B => (&N41_B, N41_B_PARAMETERS_JSON),
+        BehaviorParameterProfile::N41BNatural => (&N41_B_NATURAL, N41_B_NATURAL_PARAMETERS_JSON),
         BehaviorParameterProfile::N41C => (&N41_C, N41_C_PARAMETERS_JSON),
     };
     cell.get_or_init(|| format!("{:x}", Sha256::digest(json.as_bytes())))
@@ -300,6 +345,11 @@ pub fn duration_draw_for(
         ^ u64::from(bucket).rotate_left(33)
         ^ p.duration_key_salt);
     let d = p.for_behavior(behavior);
+    if behavior == Behavior::Walk && !p.walk_duration_quantiles_frames.is_empty() {
+        let count = p.walk_duration_quantiles_frames.len() as u64;
+        let index = ((u128::from(key) * u128::from(count)) >> 64) as usize;
+        return (key, p.walk_duration_quantiles_frames[index]);
+    }
     let span = u64::from(d.high_frames - d.low_frames) + 1;
     // Multiply-high mapping: bounded integer rounding, never floating point.
     let offset = ((u128::from(key) * u128::from(span)) >> 64) as u32;

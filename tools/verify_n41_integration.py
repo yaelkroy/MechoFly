@@ -11,6 +11,7 @@ EXPECTED = {
     "crates/mechofly-core/parameters/n4-engineering-v1.json": "1c950fcbe0c4884e238f6279e10309b8810c6949d5610dfc4889d6c35252072b",
     "crates/mechofly-core/parameters/n4.1-soft-fatigue-a-responsive-v1.json": "94350dcaa0755fce9fca2d8c3d429eb54c0b4aa370c7cf56bfc4236bb7339615",
     "crates/mechofly-core/parameters/n4.1-soft-fatigue-b-balanced-v1.json": "bec74a4ab771b61923ac81d71fd532d88001abd4bf00e90bf799e6e30703c138",
+    "crates/mechofly-core/parameters/n4.1-soft-fatigue-b-natural-bouts-v2.json": "a6c32576e4b869d10b8ff6f58ed3a7c9482ad831c767d697e5fd5e90e888ec6c",
     "crates/mechofly-core/parameters/n4.1-soft-fatigue-c-conservative-v1.json": "b1296cd9640a39852dfa5d8cba2387798fbe681869dc53b8fd24224225f0a18d",
 }
 
@@ -50,7 +51,7 @@ def main() -> None:
         review_markers = (
             '#[cfg(feature = "n41-visual-review-b")]',
             "pub fn calibrated_n41_visual_review_b(",
-            "BehaviorParameterProfile::N41B",
+            "BehaviorParameterProfile::N41BNatural",
         )
         for marker in review_markers:
             if marker not in runtime:
@@ -79,7 +80,7 @@ def main() -> None:
         "classification": "isolated_n4_1_experiment_and_feature_gated_visual_review_boundary",
         "application_default_profile": "n4",
         "experimental_profiles_in_canonical_application_runtime": False,
-        "experimental_profile_in_opt_in_visual_review_build": "n41-b",
+        "experimental_profile_in_opt_in_visual_review_build": "n41-b-natural",
         "visual_review_requires_feature": "n41-visual-review-b",
         "visual_review_requires_flag": "--n41-b-visual-review",
         "parameter_sha256": hashes,

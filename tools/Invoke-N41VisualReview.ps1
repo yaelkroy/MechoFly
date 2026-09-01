@@ -31,7 +31,7 @@ Add-Type -AssemblyName System.Windows.Forms
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $script:BackdropColor = [System.Drawing.Color]::FromArgb(28, 24, 36)
 $ExpectedParameterSha256 =
-    'bec74a4ab771b61923ac81d71fd532d88001abd4bf00e90bf799e6e30703c138'
+    'a6c32576e4b869d10b8ff6f58ed3a7c9482ad831c767d697e5fd5e90e888ec6c'
 $ExpectedPetTitle = 'MechoFly N4.1-B visual review pet'
 $EarlyBoundarySeconds = 30
 $LateBoundarySeconds = 300
@@ -83,6 +83,26 @@ function Test-ProcessAlive {
         throw ('N4.1-B visual-review process exited unexpectedly. ExitCode=' +
             [string]$Process.ExitCode + [Environment]::NewLine + $stderr)
     }
+}
+
+function Stop-ReviewCandidate {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Diagnostics.Process] $Process
+    )
+    $Process.Refresh()
+    if ($Process.HasExited) { return }
+
+    # This function is called only for the exact process object created below.
+    # Give the GUI a bounded opportunity to close its trace writer normally.
+    [void]$Process.CloseMainWindow()
+    if (-not $Process.WaitForExit(3000)) {
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+        $Process.WaitForExit()
+    }
+    $Process.Refresh()
+    Assert-Condition $Process.HasExited (
+        'The owned visual-review candidate did not exit before trace analysis.')
 }
 
 function Wait-ReviewBoundary {
@@ -284,10 +304,10 @@ function Get-PhaseRatings {
         [string] $Phase
     )
     $naturalnessQuestion = if ($Phase -ceq 'Late') {
-        'Did walking create real screen displacement with stops, curves, and turns, and did you see a recognizable multi-step grooming sequence (head/forelegs plus abdomen or wing) rather than pivoting or walking in place?'
+        'Did walk bouts vary clearly in duration, distance, and speed—with many short bouts and occasional long ones—while still stopping, curving, turning, and grooming in recognizable multi-step sequences, without a repeated clockwork rhythm or walking in place?'
     }
     else {
-        'Did walking create real screen displacement with believable straight/curved bouts and stops, rather than rotating or walking in place?'
+        'Did walking create real displacement with visibly different short and longer bouts and different speeds, rather than repeating one duration/distance or rotating in place?'
     }
     $ratings = New-Object System.Collections.Generic.List[object]
     foreach ($item in @(
@@ -316,6 +336,83 @@ function Get-PhaseRatings {
     return [object[]]$ratings.ToArray()
 }
 
+function Get-MeanAndCv {
+    param(
+        [Parameter(Mandatory = $true)]
+        [double[]] $Values
+    )
+    if ($Values.Count -eq 0) {
+        return [pscustomobject]@{ mean = 0.0; cv = 0.0 }
+    }
+    $sum = 0.0
+    foreach ($value in $Values) { $sum += $value }
+    $mean = $sum / [double]$Values.Count
+    $variance = 0.0
+    foreach ($value in $Values) {
+        $variance += ($value - $mean) * ($value - $mean)
+    }
+    $variance /= [double]$Values.Count
+    $cv = if ($mean -gt 0.0) { [Math]::Sqrt($variance) / $mean } else { 0.0 }
+    return [pscustomobject]@{ mean = $mean; cv = $cv }
+}
+
+function Get-NearestRank {
+    param(
+        [Parameter(Mandatory = $true)]
+        [double[]] $SortedValues,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(0.0, 1.0)]
+        [double] $Quantile
+    )
+    if ($SortedValues.Count -eq 0) { return 0.0 }
+    $index = [Math]::Ceiling($Quantile * $SortedValues.Count) - 1
+    $index = [Math]::Max(0, [Math]::Min($SortedValues.Count - 1, $index))
+    return [double]$SortedValues[$index]
+}
+
+function Get-SquaredCorrelation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [double[]] $X,
+
+        [Parameter(Mandatory = $true)]
+        [double[]] $Y
+    )
+    if ($X.Count -lt 3 -or $X.Count -ne $Y.Count) { return 1.0 }
+    $xStats = Get-MeanAndCv -Values $X
+    $yStats = Get-MeanAndCv -Values $Y
+    $covariance = 0.0
+    $xVariance = 0.0
+    $yVariance = 0.0
+    for ($index = 0; $index -lt $X.Count; $index++) {
+        $dx = $X[$index] - $xStats.mean
+        $dy = $Y[$index] - $yStats.mean
+        $covariance += $dx * $dy
+        $xVariance += $dx * $dx
+        $yVariance += $dy * $dy
+    }
+    if ($xVariance -le 0.0 -or $yVariance -le 0.0) { return 1.0 }
+    $correlation = $covariance / [Math]::Sqrt($xVariance * $yVariance)
+    return $correlation * $correlation
+}
+
+function Add-CompletedWalkBout {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable] $Bout,
+
+        [Parameter(Mandatory = $true)]
+        [System.Collections.Generic.List[object]] $Destination
+    )
+    if ($Bout.interactive -or $Bout.pairs -lt 1 -or $Bout.speed_count -lt 1) { return }
+    $Destination.Add([pscustomobject][ordered]@{
+        duration_seconds = ([double]($Bout.max_age_frames + 1) * 0.033)
+        path_pixels = [double]$Bout.path_pixels
+        mean_speed_pixels_per_second = [double]$Bout.speed_sum / [double]$Bout.speed_count
+    })
+}
+
 function Get-NaturalMotionMetrics {
     param(
         [Parameter(Mandatory = $true)]
@@ -326,8 +423,24 @@ function Get-NaturalMotionMetrics {
     )
     Assert-Condition (Test-Path -LiteralPath $TracePath -PathType Leaf) (
         'Candidate motion trace is missing: ' + $TracePath)
+
+    # The UI may emit several records for one model frame. Keep the last one so
+    # metrics describe modeled states rather than rendering-loop frequency.
+    $byFrame = @{}
+    foreach ($line in [System.IO.File]::ReadLines($TracePath)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $sample = $line | ConvertFrom-Json
+        $byFrame[[long]$sample.model_frame] = $sample
+    }
+    $samples = @($byFrame.Values | Sort-Object { [long]$_.model_frame })
+    Assert-Condition ($samples.Count -ge 1000) (
+        'Motion trace did not contain enough unique modeled frames: ' +
+        [string]$samples.Count)
+
     $previous = $null
     $previousBehavior = ''
+    $currentBout = $null
+    $walkBouts = New-Object 'System.Collections.Generic.List[object]'
     $walkingPairs = 0
     $translatedPairs = 0
     $stationaryRotationPairs = 0
@@ -335,44 +448,110 @@ function Get-NaturalMotionMetrics {
     $groomingBouts = 0
     $groomingFrames = New-Object 'System.Collections.Generic.HashSet[long]'
     $groomingSubstates = New-Object 'System.Collections.Generic.HashSet[string]'
-    foreach ($line in [System.IO.File]::ReadLines($TracePath)) {
-        if ([string]::IsNullOrWhiteSpace($line)) { continue }
-        $sample = $line | ConvertFrom-Json
+
+    foreach ($sample in $samples) {
         $behavior = [string]$sample.behavior
+        $interactive = [bool]$sample.dragging -or
+            [bool]$sample.cursor_hovered -or
+            [bool]$sample.evidence_hold
         if ($behavior -ceq 'groom') {
             [void]$groomingFrames.Add([long]$sample.model_frame)
             if ($null -ne $sample.grooming_substate) {
-                [void]$groomingSubstates.Add(
-                    [string]$sample.grooming_substate)
+                [void]$groomingSubstates.Add([string]$sample.grooming_substate)
             }
             if ($previousBehavior -cne 'groom') { $groomingBouts++ }
         }
+
+        if ($behavior -ceq 'walk' -and $previousBehavior -cne 'walk') {
+            $currentBout = @{
+                max_age_frames = [long]$sample.behavior_age_frames
+                path_pixels = 0.0
+                pairs = 0
+                speed_sum = 0.0
+                speed_count = 0
+                interactive = $interactive
+            }
+        }
+        elseif ($behavior -cne 'walk' -and $previousBehavior -ceq 'walk' -and
+            $null -ne $currentBout) {
+            Add-CompletedWalkBout -Bout $currentBout -Destination $walkBouts
+            $currentBout = $null
+        }
+
+        if ($behavior -ceq 'walk' -and $null -ne $currentBout) {
+            $currentBout.max_age_frames = [Math]::Max(
+                [long]$currentBout.max_age_frames,
+                [long]$sample.behavior_age_frames)
+            if ($interactive) { $currentBout.interactive = $true }
+            if (-not $interactive -and [long]$sample.behavior_age_frames -ge 1) {
+                $currentBout.speed_sum += [double]$sample.speed_pixels_per_second
+                $currentBout.speed_count++
+            }
+        }
+
         if ($null -ne $previous -and
             $behavior -ceq 'walk' -and
-            [string]$previous.behavior -ceq 'walk' -and
-            -not [bool]$sample.dragging -and
-            -not [bool]$sample.cursor_hovered -and
-            -not [bool]$sample.evidence_hold) {
-            $dx = [double]$sample.screen_x - [double]$previous.screen_x
-            $dy = [double]$sample.screen_y - [double]$previous.screen_y
-            $distance = [Math]::Sqrt($dx * $dx + $dy * $dy)
-            $headingDelta = [Math]::Abs(
-                [double]$sample.heading_radians -
-                [double]$previous.heading_radians)
-            while ($headingDelta -gt [Math]::PI) {
+            [string]$previous.behavior -ceq 'walk') {
+            $pairInteractive = $interactive -or
+                [bool]$previous.dragging -or
+                [bool]$previous.cursor_hovered -or
+                [bool]$previous.evidence_hold
+            if (-not $pairInteractive) {
+                $dx = [double]$sample.screen_x - [double]$previous.screen_x
+                $dy = [double]$sample.screen_y - [double]$previous.screen_y
+                $distance = [Math]::Sqrt($dx * $dx + $dy * $dy)
                 $headingDelta = [Math]::Abs(
-                    $headingDelta - 2.0 * [Math]::PI)
-            }
-            $walkingPairs++
-            $walkingPath += $distance
-            if ($distance -ge 0.05) { $translatedPairs++ }
-            if ($distance -lt 0.05 -and $headingDelta -gt 0.003) {
-                $stationaryRotationPairs++
+                    [double]$sample.heading_radians -
+                    [double]$previous.heading_radians)
+                while ($headingDelta -gt [Math]::PI) {
+                    $headingDelta = [Math]::Abs(
+                        $headingDelta - 2.0 * [Math]::PI)
+                }
+                $walkingPairs++
+                $walkingPath += $distance
+                if ($distance -ge 0.05) { $translatedPairs++ }
+                if ($distance -lt 0.05 -and $headingDelta -gt 0.003) {
+                    $stationaryRotationPairs++
+                }
+                if ($null -ne $currentBout) {
+                    $currentBout.path_pixels += $distance
+                    $currentBout.pairs++
+                }
             }
         }
         $previous = $sample
         $previousBehavior = $behavior
     }
+    # A walk still active at trace end is right-censored and intentionally omitted.
+
+    $durationValues = [double[]]@($walkBouts | ForEach-Object {
+        [double]$_.duration_seconds
+    })
+    $durations = [double[]]@($durationValues | Sort-Object)
+    $distances = [double[]]@($walkBouts | ForEach-Object {
+        [double]$_.path_pixels
+    })
+    $meanSpeeds = [double[]]@($walkBouts | ForEach-Object {
+        [double]$_.mean_speed_pixels_per_second
+    })
+    $durationStats = Get-MeanAndCv -Values $durations
+    $speedStats = Get-MeanAndCv -Values $meanSpeeds
+    $shortCount = @($durations | Where-Object { $_ -le 1.0 }).Count
+    $longCount = @($durations | Where-Object { $_ -ge 4.5 }).Count
+    $shortFraction = if ($durations.Count -gt 0) {
+        [double]$shortCount / [double]$durations.Count
+    }
+    else { 0.0 }
+    $speedMinimum = if ($meanSpeeds.Count -gt 0) {
+        [double]($meanSpeeds | Measure-Object -Minimum).Minimum
+    }
+    else { 0.0 }
+    $speedMaximum = if ($meanSpeeds.Count -gt 0) {
+        [double]($meanSpeeds | Measure-Object -Maximum).Maximum
+    }
+    else { 0.0 }
+    $durationDistanceR2 = Get-SquaredCorrelation -X $durationValues -Y $distances
+
     $requiredCaptures = @(
         'groom-head-sweep.png',
         'groom-foreleg-rub.png',
@@ -389,13 +568,35 @@ function Get-NaturalMotionMetrics {
     $groomingSeconds = [double]$groomingFrames.Count * 0.033
     $passed = $walkingPath -ge 100.0 -and
         $translatedPairs -ge 50 -and
-        $stationaryRatio -le 0.05 -and
+        $stationaryRatio -le 0.01 -and
+        $walkBouts.Count -ge 20 -and
+        $durationStats.cv -ge 0.55 -and
+        $shortFraction -ge 0.25 -and
+        $longCount -ge 1 -and
+        $speedStats.cv -ge 0.18 -and
+        ($speedMaximum - $speedMinimum) -ge 20.0 -and
+        $durationDistanceR2 -le 0.98 -and
         $groomingBouts -ge 1 -and
         $groomingSeconds -ge 1.5 -and
         $observedCaptures.Count -eq $requiredCaptures.Count -and
         $groomingSubstates.Count -ge 4
     return [pscustomobject][ordered]@{
         status = if ($passed) { 'PASS' } else { 'FAIL' }
+        unique_modeled_frames = $samples.Count
+        autonomous_complete_walk_bouts = $walkBouts.Count
+        walk_duration_min_seconds = [Math]::Round((Get-NearestRank -SortedValues $durations -Quantile 0.0), 3)
+        walk_duration_p50_seconds = [Math]::Round((Get-NearestRank -SortedValues $durations -Quantile 0.5), 3)
+        walk_duration_p90_seconds = [Math]::Round((Get-NearestRank -SortedValues $durations -Quantile 0.9), 3)
+        walk_duration_max_seconds = [Math]::Round((Get-NearestRank -SortedValues $durations -Quantile 1.0), 3)
+        walk_duration_mean_seconds = [Math]::Round($durationStats.mean, 3)
+        walk_duration_cv = [Math]::Round($durationStats.cv, 6)
+        walk_bouts_at_or_below_one_second = $shortCount
+        walk_short_bout_fraction = [Math]::Round($shortFraction, 6)
+        walk_bouts_at_or_above_4_5_seconds = $longCount
+        walk_mean_speed_min_pixels_per_second = [Math]::Round($speedMinimum, 3)
+        walk_mean_speed_max_pixels_per_second = [Math]::Round($speedMaximum, 3)
+        walk_mean_speed_cv = [Math]::Round($speedStats.cv, 6)
+        walk_duration_distance_r_squared = [Math]::Round($durationDistanceR2, 6)
         walking_sample_pairs = $walkingPairs
         translated_walking_pairs = $translatedPairs
         walking_path_pixels = [Math]::Round($walkingPath, 3)
@@ -407,7 +608,7 @@ function Get-NaturalMotionMetrics {
         grooming_substates = @($groomingSubstates | Sort-Object)
         required_grooming_captures = $requiredCaptures
         observed_grooming_captures = $observedCaptures
-        gate = 'translation >= 100 px; >= 50 translated pairs; stationary-rotation ratio <= 0.05; >= 1 autonomous groom bout lasting >= 1.5 s; all four action captures'
+        gate = '>= 20 autonomous complete walk bouts; duration CV >= 0.55; >= 25% <= 1 s; >= 1 bout >= 4.5 s; per-bout mean-speed CV >= 0.18 and range >= 20 px/s; duration-distance R^2 <= 0.98; translation >= 100 px; stationary-rotation ratio <= 0.01; grooming sequence and captures complete'
     }
 }
 
@@ -623,10 +824,12 @@ namespace MechoFly.N41VisualReview
 }
 
 $intro = [System.Windows.Forms.MessageBox]::Show(
-    'This launches the isolated N4.1-B candidate for ten minutes.' +
+    'This launches the isolated N4.1-B natural-bout candidate for ten minutes.' +
         [Environment]::NewLine + [Environment]::NewLine +
         'Observe the first 30 seconds, then the final five-minute window.' +
-        ' Hover and click the pet occasionally so responsiveness is visible.' +
+        ' Watch specifically for a mix of very short and occasional long walks,' +
+        ' different walking speeds, and grooming. Hover and click occasionally' +
+        ' so responsiveness is visible.' +
         [Environment]::NewLine + [Environment]::NewLine +
         'The review does not deploy anything, change shortcuts, or write to AppData.' +
         ' Press Cancel if you cannot observe the full session.',
@@ -705,7 +908,7 @@ try {
     $launchReceipt = Get-Content -LiteralPath $launchReceiptPath -Raw |
         ConvertFrom-Json
     Assert-Condition ([string]$launchReceipt.status -ceq 'PASS') 'Candidate launch receipt failed.'
-    Assert-Condition ([string]$launchReceipt.active_profile -ceq 'n41-b') 'Candidate did not activate n41-b.'
+    Assert-Condition ([string]$launchReceipt.active_profile -ceq 'n41-b-natural') 'Candidate did not activate n41-b-natural.'
     Assert-Condition ([string]$launchReceipt.canonical_default_profile -ceq 'n4') 'Canonical default is not N4.'
     Assert-Condition ([string]$launchReceipt.parameter_sha256 -ceq $ExpectedParameterSha256) 'N4.1-B parameter identity mismatch.'
     Assert-Condition ([string]$launchReceipt.executable_sha256 -ceq $ExecutableSha256) 'Candidate launch binary identity mismatch.'
@@ -791,10 +994,22 @@ try {
             -CaptureDirectory $captureDirectory `
             -ElapsedSeconds $reviewStopwatch.Elapsed.TotalSeconds `
             -KeepHeld))
+        $heldWindow = [MechoFly.N41VisualReview.WindowProbe]::Current(
+            [int64]$petWindow.handle)
+        if ($null -ne $heldWindow) {
+            Assert-Condition (
+                [MechoFly.N41VisualReview.WindowProbe]::SetEvidenceHold(
+                    [int64]$heldWindow.handle,
+                    $false)) 'Could not release the final evidence hold.'
+        }
+        Stop-ReviewCandidate -Process $process
         $objectiveMetrics = Get-NaturalMotionMetrics `
             -TracePath $tracePath `
             -CaptureDirectory $captureDirectory
         Write-Host ('NATURAL_MOTION_GATE=' + $objectiveMetrics.status +
+            ' walk_bouts=' + [string]$objectiveMetrics.autonomous_complete_walk_bouts +
+            ' duration_cv=' + [string]$objectiveMetrics.walk_duration_cv +
+            ' speed_cv=' + [string]$objectiveMetrics.walk_mean_speed_cv +
             ' walking_path_pixels=' + [string]$objectiveMetrics.walking_path_pixels +
             ' grooming_bouts=' + [string]$objectiveMetrics.grooming_bouts)
         [Console]::Beep(1047, 400)
@@ -816,7 +1031,7 @@ try {
             $confirmation = [System.Windows.Forms.MessageBox]::Show(
                 'All six early/late criteria passed.' +
                     [Environment]::NewLine + [Environment]::NewLine +
-                    'Accept this exact N4.1-B candidate binary only for the next guarded step?' +
+                    'Accept this exact N4.1-B natural-bout candidate binary only for the next guarded step?' +
                     ' This still does not authorize deployment or shortcut changes.',
                 'MechoFly N4.1-B explicit visual-acceptance decision',
                 [System.Windows.Forms.MessageBoxButtons]::YesNo,
@@ -840,10 +1055,10 @@ try {
         0
     }
     $receipt = [ordered]@{
-        schema_version = 2
+        schema_version = 3
         status = 'PASS'
         classification = 'single_owner_formative_early_late_visual_review'
-        candidate_profile = 'n41-b'
+        candidate_profile = 'n41-b-natural'
         parameter_sha256 = $ExpectedParameterSha256
         source_branch = $SourceBranch
         source_commit = $SourceCommit
@@ -881,10 +1096,6 @@ try {
 }
 finally {
     if ($null -ne $process) {
-        $process.Refresh()
-        if (-not $process.HasExited) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            $process.WaitForExit()
-        }
+        Stop-ReviewCandidate -Process $process
     }
 }

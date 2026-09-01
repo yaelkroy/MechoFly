@@ -24,8 +24,8 @@ jobs:
       - name: Exact extended-tier deterministic probes
         shell: pwsh
         run: |
-          cargo run -p mechofly-core --example n41_live_profile --release -- --profile n41-b --tier extended-65536 --seconds 600 --output target/n41-live-a.json
-          cargo run -p mechofly-core --example n41_live_profile --release -- --profile n41-b --tier extended-65536 --seconds 600 --output target/n41-live-b.json
+          cargo run -p mechofly-core --example n41_live_profile --release -- --profile n41-b-natural --tier extended-65536 --seconds 600 --output target/n41-live-a.json
+          cargo run -p mechofly-core --example n41_live_profile --release -- --profile n41-b-natural --tier extended-65536 --seconds 600 --output target/n41-live-b.json
           $a = Get-Content target/n41-live-a.json -Raw | ConvertFrom-Json
           $b = Get-Content target/n41-live-b.json -Raw | ConvertFrom-Json
           if ($a.deterministic_signature_sha256 -cne $b.deterministic_signature_sha256) { throw 'Exact live probes diverged.' }
