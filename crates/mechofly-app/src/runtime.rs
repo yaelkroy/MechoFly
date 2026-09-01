@@ -1,5 +1,7 @@
 use std::{sync::Arc, time::Instant};
 
+#[cfg(feature = "n41-visual-review-b")]
+use mechofly_core::behavior_parameters::BehaviorParameterProfile;
 use mechofly_core::{
     Action, Behavior, BoundedReplay, FrameSummary, ModelCheckpoint, ModelEngine, ModelGraph,
     ModelTier,
@@ -49,6 +51,23 @@ impl SimulationSession {
         Self::with_graph(render_state, assessment, graph, seed, started_unix_millis)
     }
 
+    #[cfg(feature = "n41-visual-review-b")]
+    pub fn calibrated_n41_visual_review_b(
+        render_state: Option<&eframe::egui_wgpu::RenderState>,
+        preference: ComputePreference,
+        seed: u64,
+        started_unix_millis: u64,
+    ) -> Self {
+        let assessment = assess_capacity(render_state, preference);
+        let graph = Arc::new(ModelGraph::synthetic(assessment.tier, seed ^ 0x47A9_2D31));
+        let engine = ModelEngine::new_duration_aware_with_profile(
+            Arc::clone(&graph),
+            seed,
+            BehaviorParameterProfile::N41B,
+        );
+        Self::with_graph_and_engine(render_state, assessment, graph, engine, started_unix_millis)
+    }
+
     pub fn with_imported_graph(
         render_state: Option<&eframe::egui_wgpu::RenderState>,
         preference: ComputePreference,
@@ -66,12 +85,22 @@ impl SimulationSession {
 
     fn with_graph(
         render_state: Option<&eframe::egui_wgpu::RenderState>,
-        mut assessment: CapacityAssessment,
+        assessment: CapacityAssessment,
         graph: Arc<ModelGraph>,
         seed: u64,
         started_unix_millis: u64,
     ) -> Self {
         let engine = ModelEngine::new_duration_aware(Arc::clone(&graph), seed);
+        Self::with_graph_and_engine(render_state, assessment, graph, engine, started_unix_millis)
+    }
+
+    fn with_graph_and_engine(
+        render_state: Option<&eframe::egui_wgpu::RenderState>,
+        mut assessment: CapacityAssessment,
+        graph: Arc<ModelGraph>,
+        engine: ModelEngine,
+        started_unix_millis: u64,
+    ) -> Self {
         let last_summary = FrameSummary {
             frame: 0,
             spike_count: 0,

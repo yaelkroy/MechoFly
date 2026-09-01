@@ -229,7 +229,7 @@ pub struct PetOverlay {
 }
 
 impl PetOverlay {
-    pub fn new(position: Pos2) -> Result<Self, String> {
+    pub fn new(position: Pos2, title: &str) -> Result<Self, String> {
         // SAFETY: all handles are checked before use, the registered callback
         // has the required system ABI, and this method runs on the GUI thread.
         unsafe {
@@ -249,7 +249,7 @@ impl PetOverlay {
                 return Err(last_error("RegisterClassExW"));
             }
 
-            let window_name = wide("MechoFly desktop pet");
+            let window_name = wide(title);
             let hwnd = CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
                 class_name.as_ptr(),

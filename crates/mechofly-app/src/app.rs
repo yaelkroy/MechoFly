@@ -34,6 +34,8 @@ pub struct AppConfig {
     pub open_brain_lab: bool,
     pub reduced_motion: bool,
     pub source_identity: RuntimeSourceIdentity,
+    #[cfg(feature = "n41-visual-review-b")]
+    pub n41_visual_review_b: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -80,6 +82,8 @@ pub struct MechoFlyApp {
     evidence_hold: bool,
     seed: u64,
     exit_requested: bool,
+    #[cfg(feature = "n41-visual-review-b")]
+    n41_visual_review_b: bool,
 }
 
 impl MechoFlyApp {
@@ -88,6 +92,18 @@ impl MechoFlyApp {
         let render_state = cc.wgpu_render_state.clone();
         let seed = 0x4D45_4348_4F46_4C59;
         let now = unix_millis();
+        #[cfg(feature = "n41-visual-review-b")]
+        let session = if config.n41_visual_review_b {
+            SimulationSession::calibrated_n41_visual_review_b(
+                render_state.as_ref(),
+                config.compute,
+                seed,
+                now,
+            )
+        } else {
+            SimulationSession::calibrated(render_state.as_ref(), config.compute, seed, now)
+        };
+        #[cfg(not(feature = "n41-visual-review-b"))]
         let session =
             SimulationSession::calibrated(render_state.as_ref(), config.compute, seed, now);
         diagnostics::mark("capacity assessment and simulation session initialized");
@@ -100,9 +116,18 @@ impl MechoFlyApp {
         diagnostics::mark("system tray initialization attempted");
         let mut pet = PetMotion::default();
         pet.reduced_motion = config.reduced_motion;
+        #[cfg(all(windows, feature = "n41-visual-review-b"))]
+        let desktop_pet_title = if config.n41_visual_review_b {
+            "MechoFly N4.1-B visual review pet"
+        } else {
+            "MechoFly desktop pet"
+        };
+        #[cfg(all(windows, not(feature = "n41-visual-review-b")))]
+        let desktop_pet_title = "MechoFly desktop pet";
         #[cfg(windows)]
         let (desktop_pet, overlay_warning) = match crate::desktop_pet::PetOverlay::new(
             pet.screen_position,
+            desktop_pet_title,
         ) {
             Ok(overlay) => {
                 diagnostics::mark("native per-pixel-alpha desktop pet initialized");
@@ -159,6 +184,8 @@ impl MechoFlyApp {
             evidence_hold: false,
             seed,
             exit_requested: false,
+            #[cfg(feature = "n41-visual-review-b")]
+            n41_visual_review_b: config.n41_visual_review_b,
         };
         diagnostics::mark("eframe application construction completed");
         app
@@ -279,12 +306,33 @@ impl MechoFlyApp {
 
     fn reevaluate(&mut self, preference: ComputePreference) {
         let previous = self.session.short_session_id().to_owned();
-        self.session = SimulationSession::calibrated(
-            self.render_state.as_ref(),
-            preference,
-            self.seed,
-            unix_millis(),
-        );
+        #[cfg(feature = "n41-visual-review-b")]
+        {
+            self.session = if self.n41_visual_review_b {
+                SimulationSession::calibrated_n41_visual_review_b(
+                    self.render_state.as_ref(),
+                    preference,
+                    self.seed,
+                    unix_millis(),
+                )
+            } else {
+                SimulationSession::calibrated(
+                    self.render_state.as_ref(),
+                    preference,
+                    self.seed,
+                    unix_millis(),
+                )
+            };
+        }
+        #[cfg(not(feature = "n41-visual-review-b"))]
+        {
+            self.session = SimulationSession::calibrated(
+                self.render_state.as_ref(),
+                preference,
+                self.seed,
+                unix_millis(),
+            );
+        }
         self.lab.compute_preference = preference;
         self.lab.comparison = None;
         self.lab.replay_frames_back = 0;
@@ -663,14 +711,16 @@ pub(crate) const fn authoritative_display_behavior(neural_behavior: Behavior) ->
 }
 
 fn app_data_dir() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::var_os("XDG_DATA_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(".mechofly"))
-        })
-        .join("MechoFly")
+    crate::storage::override_directory().unwrap_or_else(|| {
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::var_os("XDG_DATA_HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from(".mechofly"))
+            })
+            .join("MechoFly")
+    })
 }
 
 fn policy_path() -> PathBuf {

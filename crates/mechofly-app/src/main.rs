@@ -13,6 +13,7 @@ mod live_brain;
 mod pet;
 mod runtime;
 mod self_test;
+mod storage;
 mod tray;
 
 use std::{path::PathBuf, str::FromStr};
@@ -23,6 +24,11 @@ use pet::Skin;
 #[cfg(not(windows))]
 use pet::{PET_HEIGHT, PET_WIDTH};
 use serde::Deserialize;
+#[cfg(feature = "n41-visual-review-b")]
+use serde::Serialize;
+
+const N41_B_VISUAL_REVIEW_FLAG: &str = "--n41-b-visual-review";
+const N41_VISUAL_REVIEW_RECEIPT_OPTION: &str = "--n41-visual-review-receipt";
 
 fn main() {
     diagnostics::initialize();
@@ -55,6 +61,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .try_init()
         .ok();
     let config = AppConfig::from_profile_and_args(&args)?;
+    write_n41_visual_review_launch_receipt(&args, &config)?;
     diagnostics::mark("runtime profile and command line accepted");
     let icon = app_icon();
     let options = eframe::NativeOptions {
@@ -115,6 +122,32 @@ struct RuntimeProfile {
     executable_sha256: Option<String>,
 }
 
+#[cfg(feature = "n41-visual-review-b")]
+#[derive(Serialize)]
+struct N41VisualReviewLaunchReceipt {
+    schema_version: u32,
+    status: &'static str,
+    classification: &'static str,
+    review_feature: &'static str,
+    required_explicit_flag: &'static str,
+    canonical_default_profile: &'static str,
+    active_profile: &'static str,
+    parameter_sha256: &'static str,
+    dynamics_version: &'static str,
+    dynamics_claim: &'static str,
+    process_id: u32,
+    executable: String,
+    executable_sha256: String,
+    storage_override_active: bool,
+    storage_directory: Option<String>,
+    source_branch: Option<String>,
+    source_commit: Option<String>,
+    source_tree: Option<String>,
+    source_executable_sha256: Option<String>,
+    promotion_authorized: bool,
+    deployment_authorized: bool,
+}
+
 impl AppConfig {
     fn from_profile_and_args(args: &[String]) -> Result<Self, String> {
         let profile = load_runtime_profile().unwrap_or_default();
@@ -134,7 +167,11 @@ impl AppConfig {
                 tree: profile.source_tree,
                 executable_sha256: profile.executable_sha256,
             },
+            #[cfg(feature = "n41-visual-review-b")]
+            n41_visual_review_b: visual_review_enabled(args)?,
         };
+        #[cfg(not(feature = "n41-visual-review-b"))]
+        visual_review_enabled(args)?;
         if let Some(value) = option_value(args, "--skin") {
             config.skin = Skin::from_str(value)?;
         }
@@ -151,11 +188,101 @@ impl AppConfig {
 }
 
 fn load_runtime_profile() -> Option<RuntimeProfile> {
-    let local = std::env::var_os("LOCALAPPDATA")?;
-    let path = PathBuf::from(local)
-        .join("MechoFly")
-        .join("runtime-profile.json");
+    let directory = if let Some(directory) = storage::override_directory() {
+        directory
+    } else {
+        PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("MechoFly")
+    };
+    let path = directory.join("runtime-profile.json");
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+#[cfg(feature = "n41-visual-review-b")]
+fn visual_review_enabled(args: &[String]) -> Result<bool, String> {
+    let requested = args.iter().any(|arg| arg == N41_B_VISUAL_REVIEW_FLAG);
+    if option_value(args, N41_VISUAL_REVIEW_RECEIPT_OPTION).is_some() && !requested {
+        return Err(format!(
+            "{N41_VISUAL_REVIEW_RECEIPT_OPTION} requires {N41_B_VISUAL_REVIEW_FLAG}"
+        ));
+    }
+    Ok(requested)
+}
+
+#[cfg(not(feature = "n41-visual-review-b"))]
+fn visual_review_enabled(args: &[String]) -> Result<bool, String> {
+    if args.iter().any(|arg| arg == N41_B_VISUAL_REVIEW_FLAG)
+        || option_value(args, N41_VISUAL_REVIEW_RECEIPT_OPTION).is_some()
+    {
+        return Err(
+            "N4.1-B visual review requires a build with feature n41-visual-review-b".into(),
+        );
+    }
+    Ok(false)
+}
+
+#[cfg(feature = "n41-visual-review-b")]
+fn write_n41_visual_review_launch_receipt(
+    args: &[String],
+    config: &AppConfig,
+) -> Result<(), String> {
+    if !config.n41_visual_review_b {
+        return Ok(());
+    }
+    use mechofly_core::behavior_parameters::{
+        BehaviorParameterProfile, DYNAMICS_CLAIM, N41_DYNAMICS_VERSION, artifact_sha256,
+        parameter_sha256_for,
+    };
+
+    let destination = option_value(args, N41_VISUAL_REVIEW_RECEIPT_OPTION).ok_or_else(|| {
+        format!("{N41_B_VISUAL_REVIEW_FLAG} requires {N41_VISUAL_REVIEW_RECEIPT_OPTION} PATH")
+    })?;
+    let destination = PathBuf::from(destination);
+    if !destination.is_absolute() {
+        return Err("N4.1 visual-review receipt path must be absolute".into());
+    }
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let executable_bytes = std::fs::read(&executable).map_err(|error| error.to_string())?;
+    let storage_directory = storage::override_directory();
+    if storage_directory.is_none() {
+        return Err("N4.1 visual review requires MECHOFLY_DATA_DIR".into());
+    }
+    let receipt = N41VisualReviewLaunchReceipt {
+        schema_version: 1,
+        status: "PASS",
+        classification: "feature_gated_live_visual_review_candidate",
+        review_feature: "n41-visual-review-b",
+        required_explicit_flag: N41_B_VISUAL_REVIEW_FLAG,
+        canonical_default_profile: "n4",
+        active_profile: "n41-b",
+        parameter_sha256: parameter_sha256_for(BehaviorParameterProfile::N41B),
+        dynamics_version: N41_DYNAMICS_VERSION,
+        dynamics_claim: DYNAMICS_CLAIM,
+        process_id: std::process::id(),
+        executable: executable.display().to_string(),
+        executable_sha256: artifact_sha256(&executable_bytes),
+        storage_override_active: true,
+        storage_directory: storage_directory.map(|path| path.display().to_string()),
+        source_branch: config.source_identity.branch.clone(),
+        source_commit: config.source_identity.commit.clone(),
+        source_tree: config.source_identity.tree.clone(),
+        source_executable_sha256: config.source_identity.executable_sha256.clone(),
+        promotion_authorized: false,
+        deployment_authorized: false,
+    };
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let bytes = serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?;
+    std::fs::write(&destination, [bytes.as_slice(), b"\n"].concat())
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(feature = "n41-visual-review-b"))]
+fn write_n41_visual_review_launch_receipt(
+    args: &[String],
+    _config: &AppConfig,
+) -> Result<(), String> {
+    visual_review_enabled(args).map(|_| ())
 }
 
 fn option_value<'a>(args: &'a [String], option: &str) -> Option<&'a str> {
@@ -189,5 +316,35 @@ fn app_icon() -> eframe::egui::IconData {
         rgba,
         width: 32,
         height: 32,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_launch_does_not_enable_visual_review() {
+        assert!(!visual_review_enabled(&[]).expect("ordinary launch must parse"));
+    }
+
+    #[cfg(feature = "n41-visual-review-b")]
+    #[test]
+    fn feature_build_still_requires_explicit_flag() {
+        let args = vec![N41_B_VISUAL_REVIEW_FLAG.to_owned()];
+        assert!(visual_review_enabled(&args).expect("feature-gated flag must parse"));
+
+        let receipt_only = vec![
+            N41_VISUAL_REVIEW_RECEIPT_OPTION.to_owned(),
+            "C:\\review.json".to_owned(),
+        ];
+        assert!(visual_review_enabled(&receipt_only).is_err());
+    }
+
+    #[cfg(not(feature = "n41-visual-review-b"))]
+    #[test]
+    fn canonical_build_rejects_visual_review_flag() {
+        let args = vec![N41_B_VISUAL_REVIEW_FLAG.to_owned()];
+        assert!(visual_review_enabled(&args).is_err());
     }
 }

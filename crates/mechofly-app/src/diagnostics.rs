@@ -50,10 +50,13 @@ fn append(message: &str) {
 }
 
 fn log_directory() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("MechoFly")
+    crate::storage::override_directory()
+        .unwrap_or_else(|| {
+            std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir)
+                .join("MechoFly")
+        })
         .join("logs")
 }
 

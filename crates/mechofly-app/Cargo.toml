@@ -10,6 +10,10 @@ repository.workspace = true
 name = "MechoFly"
 path = "src/main.rs"
 
+[features]
+default = []
+n41-visual-review-b = []
+
 [dependencies]
 bytemuck.workspace = true
 eframe.workspace = true

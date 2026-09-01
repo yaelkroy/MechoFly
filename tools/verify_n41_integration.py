@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static fail-closed checks for the isolated N4.1 experiment boundary."""
+"""Static fail-closed checks for the isolated N4.1 experiment/review boundary."""
 from __future__ import annotations
 
 import argparse
@@ -47,7 +47,22 @@ def main() -> None:
     if "ModelEngine::new_duration_aware(Arc::clone(&graph), seed)" not in runtime:
         raise ValueError("application no longer constructs the frozen-default N4 profile")
     if "new_duration_aware_with_profile" in runtime:
-        raise ValueError("experimental profile selection leaked into the application runtime")
+        review_markers = (
+            '#[cfg(feature = "n41-visual-review-b")]',
+            "pub fn calibrated_n41_visual_review_b(",
+            "BehaviorParameterProfile::N41B",
+        )
+        for marker in review_markers:
+            if marker not in runtime:
+                raise ValueError(
+                    "experimental application profile is not confined to the visual-review feature"
+                )
+        cargo = (root / "crates/mechofly-app/Cargo.toml").read_text(encoding="utf-8")
+        main = (root / "crates/mechofly-app/src/main.rs").read_text(encoding="utf-8")
+        if "default = []" not in cargo or "n41-visual-review-b = []" not in cargo:
+            raise ValueError("N4.1 visual-review feature is not opt-in")
+        if 'const N41_B_VISUAL_REVIEW_FLAG: &str = "--n41-b-visual-review";' not in main:
+            raise ValueError("N4.1 visual review lacks its explicit command-line gate")
     for relative in (
         "crates/mechofly-core/examples/n41_experiment.rs",
         "crates/mechofly-core/tests/n41_soft_fatigue.rs",
@@ -61,9 +76,12 @@ def main() -> None:
     receipt = {
         "schema_version": 1,
         "status": "PASS",
-        "classification": "isolated_n4_1_experiment_boundary",
+        "classification": "isolated_n4_1_experiment_and_feature_gated_visual_review_boundary",
         "application_default_profile": "n4",
-        "experimental_profiles_in_application_runtime": False,
+        "experimental_profiles_in_canonical_application_runtime": False,
+        "experimental_profile_in_opt_in_visual_review_build": "n41-b",
+        "visual_review_requires_feature": "n41-visual-review-b",
+        "visual_review_requires_flag": "--n41-b-visual-review",
         "parameter_sha256": hashes,
         "promotion_authorized": False,
     }
