@@ -51,6 +51,12 @@ def main() -> None:
         encoding="utf-8"
     )
     collector = (root / "tools/Invoke-N41VisualReview.ps1").read_text(encoding="utf-8")
+    measure = (root / "tools/Measure-N41NaturalMotionEvidence.ps1").read_text(
+        encoding="utf-8"
+    )
+    metrics_regression = (root / "tools/Test-N41VisualReviewMetrics.ps1").read_text(
+        encoding="utf-8"
+    )
     evidence = (root / "crates/mechofly-app/src/review_evidence.rs").read_text(
         encoding="utf-8"
     )
@@ -114,9 +120,26 @@ def main() -> None:
         ("Stop-ReviewCandidate -Process $process", "trace-writer close before analysis"),
         ("walk_duration_cv", "duration-distribution evidence"),
         ("walk_mean_speed_cv", "speed-distribution evidence"),
+        ("[AllowEmptyCollection()]", "empty-collection parameter binding repair"),
         ("deployment_authorized = $false", "collector deployment denial"),
     ):
         require(collector, marker, label)
+    if collector.count("[AllowEmptyCollection()]") < 5:
+        raise ValueError("visual collector does not protect every supported empty collection")
+    for text, marker, label in (
+        (measure, "Parser]::ParseFile", "offline collector-function loading"),
+        (measure, "Get-NaturalMotionMetrics", "offline objective measurement"),
+        (measure, "trace_sha256", "trace identity"),
+        (measure, "deployment_authorized = $false", "offline deployment denial"),
+        (metrics_regression, "zero-bout", "zero-bout regression"),
+        (metrics_regression, "first-bout", "first-bout regression"),
+        (
+            metrics_regression,
+            "first_bout_added_to_empty_list = $true",
+            "empty-list first-bout assertion",
+        ),
+    ):
+        require(text, marker, label)
     forbidden_collector_markers = (
         "$env:LOCALAPPDATA",
         "[System.IO.Path]::GetTempPath()",
@@ -125,19 +148,21 @@ def main() -> None:
         "CopyFromScreen",
     )
     for marker in forbidden_collector_markers:
-        if marker in collector:
+        if marker in collector or marker in measure or marker in metrics_regression:
             raise ValueError(f"visual collector contains forbidden boundary: {marker}")
 
     required_files = (
         "docs/N4.1-Visual-Acceptance.md",
         ".github/workflows/n4-1-visual-review.yml",
+        "tools/Measure-N41NaturalMotionEvidence.ps1",
+        "tools/Test-N41VisualReviewMetrics.ps1",
     )
     for relative in required_files:
         if not (root / relative).is_file():
             raise ValueError(f"required visual-review artifact is missing: {relative}")
 
     receipt = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "PASS",
         "classification": "feature_gated_n4_1_b_live_visual_review_boundary",
         "canonical_application_default_profile": "n4",
@@ -152,6 +177,8 @@ def main() -> None:
         "late_window_start_seconds": 300,
         "late_window_end_seconds": 600,
         "full_desktop_capture": False,
+        "offline_metrics_replay": True,
+        "empty_collection_regression": True,
         "appdata_write_authorized": False,
         "promotion_authorized": False,
         "deployment_authorized": False,

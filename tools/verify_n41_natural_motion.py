@@ -47,6 +47,12 @@ def main() -> None:
     collector = (root / "tools/Invoke-N41VisualReview.ps1").read_text(
         encoding="utf-8"
     )
+    measure = (root / "tools/Measure-N41NaturalMotionEvidence.ps1").read_text(
+        encoding="utf-8"
+    )
+    metrics_regression = (root / "tools/Test-N41VisualReviewMetrics.ps1").read_text(
+        encoding="utf-8"
+    )
     probe = (root / "crates/mechofly-core/examples/n41_live_profile.rs").read_text(
         encoding="utf-8"
     )
@@ -66,16 +72,25 @@ def main() -> None:
         (evidence, "No screen API is used", "screen-independent evidence"),
         (collector, "Get-NaturalMotionMetrics", "objective live gate"),
         (collector, "walk_duration_distance_r_squared", "clockwork correlation gate"),
+        (collector, "[AllowEmptyCollection()]", "empty-collection binding repair"),
         (collector, "Stop-ReviewCandidate -Process $process", "trace writer close"),
+        (measure, "trace_sha256", "offline evidence identity"),
+        (measure, "Get-NaturalMotionMetrics", "offline metrics replay"),
+        (metrics_regression, "zero-bout", "zero-bout metrics regression"),
+        (metrics_regression, "first-bout", "first-bout metrics regression"),
         (probe, "APP_MODEL_SEED", "exact application seed probe"),
         (probe, '"extended-65536"', "exact likely Windows tier probe"),
     )
     for text, marker, label in required:
         require(text, marker, label)
+    if collector.count("[AllowEmptyCollection()]") < 5:
+        raise ValueError("natural-motion collector does not protect supported empty collections")
 
     forbidden = (
         (collector, "CopyFromScreen", "desktop screen capture"),
         (collector, "$env:LOCALAPPDATA", "AppData mutation"),
+        (measure, "$env:LOCALAPPDATA", "offline AppData mutation"),
+        (metrics_regression, "$env:LOCALAPPDATA", "regression AppData mutation"),
         (app, "self.pet.screen_position = events.position", "integer round-trip overwrite"),
     )
     for text, marker, label in forbidden:

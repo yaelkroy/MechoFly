@@ -18,6 +18,9 @@ jobs:
       - name: Static natural-motion boundary
         shell: pwsh
         run: python tools/verify_n41_natural_motion.py --root . --receipt target/n41-natural-motion.json
+      - name: Visual metrics empty-collection regression
+        shell: pwsh
+        run: ./tools/Test-N41VisualReviewMetrics.ps1 -OutputDirectory target/n41-visual-metrics-regression
       - name: Canonical self-test schema compatibility
         shell: pwsh
         run: python tools/verify_n4_integration.py --root . --receipt target/n4-runtime-integration.json

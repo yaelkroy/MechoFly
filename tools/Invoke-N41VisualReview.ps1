@@ -339,6 +339,7 @@ function Get-PhaseRatings {
 function Get-MeanAndCv {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [double[]] $Values
     )
     if ($Values.Count -eq 0) {
@@ -359,6 +360,7 @@ function Get-MeanAndCv {
 function Get-NearestRank {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [double[]] $SortedValues,
 
         [Parameter(Mandatory = $true)]
@@ -374,9 +376,11 @@ function Get-NearestRank {
 function Get-SquaredCorrelation {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [double[]] $X,
 
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [double[]] $Y
     )
     if ($X.Count -lt 3 -or $X.Count -ne $Y.Count) { return 1.0 }
@@ -403,6 +407,7 @@ function Add-CompletedWalkBout {
         [hashtable] $Bout,
 
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [System.Collections.Generic.List[object]] $Destination
     )
     if ($Bout.interactive -or $Bout.pairs -lt 1 -or $Bout.speed_count -lt 1) { return }
