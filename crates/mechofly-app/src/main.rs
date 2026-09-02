@@ -34,9 +34,17 @@ use serde::Serialize;
 const N41_B_VISUAL_REVIEW_FLAG: &str = "--n41-b-visual-review";
 const N41_VISUAL_REVIEW_RECEIPT_OPTION: &str = "--n41-visual-review-receipt";
 const N6_PRODUCT_CHECKPOINT_SELF_TEST_OPTION: &str = "--n6-product-checkpoint-self-test";
+const N6_COUNTERFACTUAL_REPLAY_SELF_TEST_OPTION: &str = "--n6-counterfactual-replay-self-test";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if option_value(&args, N6_COUNTERFACTUAL_REPLAY_SELF_TEST_OPTION).is_some() {
+        if let Err(error) = run_n6_counterfactual_replay(&args) {
+            eprintln!("MechoFly: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if option_value(&args, N6_PRODUCT_CHECKPOINT_SELF_TEST_OPTION).is_some() {
         if let Err(error) = run_n6_product_checkpoint(&args) {
             eprintln!("MechoFly: {error}");
@@ -50,6 +58,18 @@ fn main() {
         eprintln!("MechoFly: {error}");
         std::process::exit(1);
     }
+}
+
+#[cfg(feature = "n6-counterfactual-replay")]
+fn run_n6_counterfactual_replay(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let path = option_value(args, N6_COUNTERFACTUAL_REPLAY_SELF_TEST_OPTION)
+        .ok_or("N6 counterfactual-replay receipt path is missing")?;
+    product_checkpoint::run_counterfactual_replay(PathBuf::from(path).as_path())
+}
+
+#[cfg(not(feature = "n6-counterfactual-replay"))]
+fn run_n6_counterfactual_replay(_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    Err("N6 counterfactual-replay self-test requires feature n6-counterfactual-replay".into())
 }
 
 #[cfg(feature = "n6-product-checkpoint")]
