@@ -15,6 +15,7 @@ default = []
 n41-visual-review-b = ["dep:png"]
 n6-product-checkpoint = []
 n6-counterfactual-replay = ["n6-product-checkpoint"]
+n7-scientific-explanation = ["n6-counterfactual-replay"]
 
 [dependencies]
 bytemuck.workspace = true

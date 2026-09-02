@@ -16,6 +16,8 @@ mod product_checkpoint;
 #[cfg(feature = "n41-visual-review-b")]
 mod review_evidence;
 mod runtime;
+#[cfg(feature = "n7-scientific-explanation")]
+mod scientific_explanation;
 mod self_test;
 mod storage;
 mod tray;
@@ -35,9 +37,17 @@ const N41_B_VISUAL_REVIEW_FLAG: &str = "--n41-b-visual-review";
 const N41_VISUAL_REVIEW_RECEIPT_OPTION: &str = "--n41-visual-review-receipt";
 const N6_PRODUCT_CHECKPOINT_SELF_TEST_OPTION: &str = "--n6-product-checkpoint-self-test";
 const N6_COUNTERFACTUAL_REPLAY_SELF_TEST_OPTION: &str = "--n6-counterfactual-replay-self-test";
+const N7_SCIENTIFIC_EXPLANATION_SELF_TEST_OPTION: &str = "--n7-scientific-explanation-self-test";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if option_value(&args, N7_SCIENTIFIC_EXPLANATION_SELF_TEST_OPTION).is_some() {
+        if let Err(error) = run_n7_scientific_explanation(&args) {
+            eprintln!("MechoFly: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if option_value(&args, N6_COUNTERFACTUAL_REPLAY_SELF_TEST_OPTION).is_some() {
         if let Err(error) = run_n6_counterfactual_replay(&args) {
             eprintln!("MechoFly: {error}");
@@ -58,6 +68,18 @@ fn main() {
         eprintln!("MechoFly: {error}");
         std::process::exit(1);
     }
+}
+
+#[cfg(feature = "n7-scientific-explanation")]
+fn run_n7_scientific_explanation(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let path = option_value(args, N7_SCIENTIFIC_EXPLANATION_SELF_TEST_OPTION)
+        .ok_or("N7 scientific-explanation receipt path is missing")?;
+    scientific_explanation::run(PathBuf::from(path).as_path())
+}
+
+#[cfg(not(feature = "n7-scientific-explanation"))]
+fn run_n7_scientific_explanation(_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    Err("N7 scientific-explanation self-test requires feature n7-scientific-explanation".into())
 }
 
 #[cfg(feature = "n6-counterfactual-replay")]

@@ -44,6 +44,9 @@ const COUNTERFACTUAL_INTERVENTION_FRAMES: usize = 12;
 const COUNTERFACTUAL_INTERVENTION_LOOM_Q15: i32 = 8_192;
 #[cfg(feature = "n6-counterfactual-replay")]
 const COUNTERFACTUAL_STEP_SECONDS: f32 = 0.033;
+#[cfg(feature = "n7-scientific-explanation")]
+const ACCEPTED_R10_REPLAY_CAPSULE_SHA256: &str =
+    "d93d88d8ab2b2d0da15605e761adcdb9b303345756ed14c2f2f41e6ddc7c7835";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -572,6 +575,211 @@ fn first_output_divergence(
         .iter()
         .zip(&alternative.frames)
         .position(|(actual, alternative)| !actual.modeled_output_eq(alternative))
+}
+
+#[cfg(feature = "n7-scientific-explanation")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ScientificControllerFrame {
+    pub(crate) offset: usize,
+    pub(crate) model_frame: u64,
+    pub(crate) input_cursor_loom_q15: i32,
+    pub(crate) behavior: Behavior,
+    pub(crate) spike_count: usize,
+    pub(crate) mean_activation_q15: i32,
+    pub(crate) state_digest: String,
+    pub(crate) motor_digest: String,
+    pub(crate) product_digest: String,
+    pub(crate) controller: mechofly_core::behavior_dynamics::BehaviorDynamicsState,
+    pub(crate) intent: mechofly_core::BehaviorIntentSnapshot,
+}
+
+#[cfg(feature = "n7-scientific-explanation")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ScientificControllerLane {
+    pub(crate) label: String,
+    pub(crate) frames: Vec<ScientificControllerFrame>,
+    pub(crate) final_product_digest: String,
+}
+
+#[cfg(feature = "n7-scientific-explanation")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ScientificReplaySource {
+    pub(crate) replay_capsule_sha256: String,
+    pub(crate) replay_capsule_serialized_bytes: usize,
+    pub(crate) source_checkpoint_sha256: String,
+    pub(crate) graph: mechofly_core::GraphIdentity,
+    pub(crate) seed: u64,
+    pub(crate) source_frame: u64,
+    pub(crate) frame_count: usize,
+    pub(crate) history_limit_frames: usize,
+    pub(crate) intervention_start_offset: usize,
+    pub(crate) intervention_duration_frames: usize,
+    pub(crate) intervention_cursor_loom_q15: i32,
+    pub(crate) first_divergence_offset: usize,
+    pub(crate) first_divergence_model_frame: u64,
+    pub(crate) first_divergence_reason: String,
+    pub(crate) actual: ScientificControllerLane,
+    pub(crate) alternative: ScientificControllerLane,
+    pub(crate) live_state_digest_unchanged: bool,
+    pub(crate) live_policy_digest_unchanged: bool,
+    pub(crate) live_motor_digest_unchanged: bool,
+}
+
+#[cfg(feature = "n7-scientific-explanation")]
+fn record_scientific_controller_lane(
+    session: &SimulationSession,
+    checkpoint: &ProductCheckpoint,
+    label: &str,
+    intervention: Option<&CounterfactualIntervention>,
+    expected: &CounterfactualReplayLane,
+    screen_origin: Pos2,
+    screen_size: Vec2,
+) -> Result<ScientificControllerLane, String> {
+    let mut branch = ProductBranch::from_checkpoint(session, checkpoint)?;
+    let mut frames = Vec::with_capacity(expected.frames.len());
+    for (offset, expected_frame) in expected.frames.iter().enumerate() {
+        let input_cursor_loom_q15 = intervention.map_or(0, |value| value.input_at(offset));
+        let output = branch.step(
+            input_cursor_loom_q15,
+            COUNTERFACTUAL_STEP_SECONDS,
+            screen_origin,
+            screen_size,
+        )?;
+        let branch_checkpoint = branch.checkpoint();
+        let controller = branch_checkpoint
+            .runtime
+            .state
+            .behavior_dynamics
+            .clone()
+            .ok_or_else(|| "N7 explanation source lacks duration-controller state".to_owned())?;
+        let frame = ScientificControllerFrame {
+            offset,
+            model_frame: output.summary.frame,
+            input_cursor_loom_q15,
+            behavior: output.summary.behavior,
+            spike_count: output.summary.spike_count,
+            mean_activation_q15: output.summary.mean_activation_q15,
+            state_digest: output.summary.state_digest,
+            motor_digest: output.motor_digest,
+            product_digest: output.product_digest,
+            controller,
+            intent: branch_checkpoint.runtime.last_behavior_intent,
+        };
+        if frame.offset != expected_frame.offset
+            || frame.model_frame != expected_frame.model_frame
+            || frame.input_cursor_loom_q15 != expected_frame.input_cursor_loom_q15
+            || frame.behavior != expected_frame.behavior
+            || frame.state_digest != expected_frame.state_digest
+            || frame.motor_digest != expected_frame.motor_digest
+            || frame.product_digest != expected_frame.product_digest
+        {
+            return Err("N7 controller observation differs from accepted R10 replay".to_owned());
+        }
+        frames.push(frame);
+    }
+    let final_product_digest = branch.checkpoint().digest(session)?;
+    if final_product_digest != expected.final_product_digest {
+        return Err("N7 controller lane final digest differs from R10 replay".to_owned());
+    }
+    Ok(ScientificControllerLane {
+        label: label.to_owned(),
+        frames,
+        final_product_digest,
+    })
+}
+
+#[cfg(feature = "n7-scientific-explanation")]
+pub(crate) fn scientific_replay_source() -> Result<ScientificReplaySource, String> {
+    let seed = 0x4D45_4348_4F46_4C59;
+    let mut session = SimulationSession::product_checkpoint_fixture(seed);
+    let mut motor = PetMotion::default();
+    let screen_origin = Pos2::ZERO;
+    let screen_size = Vec2::new(1_920.0, 1_080.0);
+    for _ in 0..12 {
+        session.step();
+        motor.advance(
+            COUNTERFACTUAL_STEP_SECONDS,
+            session.last_summary.behavior,
+            screen_origin,
+            screen_size,
+            false,
+            None,
+        );
+    }
+    let policy = PetPolicy::default();
+    let checkpoint = ProductCheckpoint::capture(
+        &session,
+        &motor,
+        &policy,
+        Action::Explore,
+        PolicyContext {
+            behavior: session.last_summary.behavior,
+            recent_interaction: false,
+        },
+        seed,
+        Skin::Drosophila,
+    );
+    checkpoint.validate(&session)?;
+
+    let live_state_before = session.live_digest();
+    let live_policy_before = policy.digest();
+    let live_motor_before = motor.checkpoint().digest()?;
+    let capsule =
+        CounterfactualReplayCapsule::build(&session, &checkpoint, screen_origin, screen_size)?;
+    let replay_capsule_sha256 = capsule.encoded_digest()?;
+    if replay_capsule_sha256 != ACCEPTED_R10_REPLAY_CAPSULE_SHA256 {
+        return Err("N7 explanation source is not the accepted R10 replay capsule".to_owned());
+    }
+    let replay_capsule_serialized_bytes = serde_json::to_vec(&capsule)
+        .map_err(|error| format!("cannot encode accepted R10 replay capsule: {error}"))?
+        .len();
+    let actual = record_scientific_controller_lane(
+        &session,
+        &checkpoint,
+        "actual",
+        None,
+        &capsule.actual,
+        screen_origin,
+        screen_size,
+    )?;
+    let alternative = record_scientific_controller_lane(
+        &session,
+        &checkpoint,
+        "changed_input",
+        Some(&capsule.intervention),
+        &capsule.alternative,
+        screen_origin,
+        screen_size,
+    )?;
+    let live_state_digest_unchanged = session.live_digest() == live_state_before;
+    let live_policy_digest_unchanged = policy.digest() == live_policy_before;
+    let live_motor_digest_unchanged = motor.checkpoint().digest()? == live_motor_before;
+    if !(live_state_digest_unchanged && live_policy_digest_unchanged && live_motor_digest_unchanged)
+    {
+        return Err("N7 explanation extraction mutated live product state".to_owned());
+    }
+
+    Ok(ScientificReplaySource {
+        replay_capsule_sha256,
+        replay_capsule_serialized_bytes,
+        source_checkpoint_sha256: capsule.source_checkpoint_sha256,
+        graph: capsule.graph,
+        seed: capsule.seed,
+        source_frame: capsule.source_frame,
+        frame_count: capsule.frame_count,
+        history_limit_frames: capsule.history_limit_frames,
+        intervention_start_offset: capsule.intervention.start_offset,
+        intervention_duration_frames: capsule.intervention.duration_frames,
+        intervention_cursor_loom_q15: capsule.intervention.cursor_loom_q15,
+        first_divergence_offset: capsule.first_divergence_offset,
+        first_divergence_model_frame: capsule.first_divergence_model_frame,
+        first_divergence_reason: capsule.first_divergence_reason,
+        actual,
+        alternative,
+        live_state_digest_unchanged,
+        live_policy_digest_unchanged,
+        live_motor_digest_unchanged,
+    })
 }
 
 #[cfg(feature = "n6-counterfactual-replay")]
