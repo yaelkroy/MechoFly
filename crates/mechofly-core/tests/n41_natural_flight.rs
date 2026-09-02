@@ -46,7 +46,11 @@ fn natural_flight_profile_is_additive_and_preserves_every_frozen_identity() {
         dynamics_version_for_sha256(NATURAL_FLIGHT_SHA256),
         Some(N41_NATURAL_FLIGHT_DYNAMICS_VERSION)
     );
+    assert!(N41_NATURAL_FLIGHT_DYNAMICS_VERSION.contains("uncued-exploration-prior-v2"));
     assert!(N41_NATURAL_FLIGHT_DYNAMICS_CLAIM.contains("not fitted biological constants"));
+    assert!(
+        N41_NATURAL_FLIGHT_DYNAMICS_CLAIM.contains("not a food-search or territory-coverage model")
+    );
 }
 
 #[test]

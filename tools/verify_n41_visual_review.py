@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed static verification for the N4.1-C live visual-review slice."""
+"""Fail-closed static verification for the N4.1-D exploratory review slice."""
 from __future__ import annotations
 
 import argparse
@@ -41,7 +41,7 @@ def main() -> None:
     if sha256(n41_b_natural) != EXPECTED_N41_B_NATURAL:
         raise ValueError("N4.1-B natural-bout parameter artifact changed")
     if sha256(n41_b_natural_flight) != EXPECTED_N41_B_NATURAL_FLIGHT:
-        raise ValueError("N4.1-C natural-flight parameter artifact changed")
+        raise ValueError("frozen natural-flight parameter artifact changed")
 
     cargo = (root / "crates/mechofly-app/Cargo.toml").read_text(encoding="utf-8")
     main_rs = (root / "crates/mechofly-app/src/main.rs").read_text(encoding="utf-8")
@@ -100,7 +100,7 @@ def main() -> None:
     )
     require(
         app,
-        '"MechoFly N4.1-C natural flight review pet"',
+        '"MechoFly N4.1-D exploratory flight review pet"',
         "visibly labeled candidate window",
     )
     require(desktop_pet, "pub fn new(position: Pos2, title: &str)", "explicit pet title")
@@ -111,6 +111,7 @@ def main() -> None:
     require(evidence, "review-trace.jsonl", "direct motion trace")
     require(evidence, "review-captures", "direct pet captures")
     require(evidence, "composite_bgra_pixel", "constant-backdrop compositor")
+    require(evidence, "movement_left", "normalized virtual-desktop bounds")
 
     for marker, label in (
         ("$EarlyBoundarySeconds = 30", "30-second early boundary"),
@@ -127,6 +128,10 @@ def main() -> None:
         ("flight_duration_cv", "flight-duration evidence"),
         ("flight_mean_speed_cv", "flight-speed evidence"),
         ("flight_saccades", "rapid-turn evidence"),
+        ("flight_observed_horizontal_span_fraction", "horizontal span evidence"),
+        ("flight_horizontal_tertiles_visited", "horizontal tertile evidence"),
+        ("flight_leftward_displacement_bouts", "leftward bout evidence"),
+        ("flight_rightward_displacement_bouts", "rightward bout evidence"),
         ("natural_flight_motion_all_bouts", "feature-gated motor evidence"),
         ("[AllowEmptyCollection()]", "empty-collection parameter binding repair"),
         ("deployment_authorized = $false", "collector deployment denial"),
@@ -150,6 +155,16 @@ def main() -> None:
             metrics_regression,
             "first_flight_bout_added_to_empty_list = $true",
             "empty-list first-flight assertion",
+        ),
+        (
+            metrics_regression,
+            "confined_flight_detected_by_anti_confinement_metrics = $true",
+            "confined-flight assertion",
+        ),
+        (
+            metrics_regression,
+            "exploratory_flight_directional_metrics_passed = $true",
+            "exploratory-flight directional assertion",
         ),
         (
             measure,
@@ -180,9 +195,9 @@ def main() -> None:
             raise ValueError(f"required visual-review artifact is missing: {relative}")
 
     receipt = {
-        "schema_version": 4,
+        "schema_version": 5,
         "status": "PASS",
-        "classification": "feature_gated_n4_1_c_natural_flight_visual_review_boundary",
+        "classification": "feature_gated_n4_1_d_exploratory_flight_visual_review_boundary",
         "canonical_application_default_profile": "n4",
         "review_profile": "n41-b-natural-flight",
         "review_feature": "n41-visual-review-b",
@@ -199,6 +214,7 @@ def main() -> None:
         "offline_metrics_replay": True,
         "empty_collection_regression": True,
         "first_flight_collection_regression": True,
+        "normalized_anti_confinement_flight_metrics": True,
         "appdata_write_authorized": False,
         "promotion_authorized": False,
         "deployment_authorized": False,

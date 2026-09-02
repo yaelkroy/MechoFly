@@ -83,7 +83,7 @@ $captureRecords = @(Get-ChildItem -LiteralPath $captures -Filter '*.png' -File |
         }
     })
 $receipt = [pscustomobject][ordered]@{
-    schema_version = 2
+    schema_version = 3
     status = 'PASS'
     classification = 'offline_n4_1_natural_motion_evidence_measurement'
     collector = $collector

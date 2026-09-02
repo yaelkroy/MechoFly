@@ -11,6 +11,7 @@ use std::{
     time::Instant,
 };
 
+use eframe::egui::{Pos2, Vec2};
 use mechofly_core::{
     Behavior,
     grooming_program::{GroomingMotorSubstate, grooming_program_at},
@@ -32,6 +33,10 @@ struct ReviewTraceRecord {
     grooming_substate: Option<GroomingMotorSubstate>,
     screen_x: f32,
     screen_y: f32,
+    movement_left: f32,
+    movement_top: f32,
+    movement_right: f32,
+    movement_bottom: f32,
     heading_radians: f32,
     speed_pixels_per_second: f32,
     altitude_pixels: f32,
@@ -83,6 +88,8 @@ impl ReviewEvidence {
         behavior_age_frames: u32,
         behavior: Behavior,
         pet: &PetMotion,
+        screen_origin: Pos2,
+        screen_size: Vec2,
         skin: Skin,
         cursor_hovered: bool,
         dragging: bool,
@@ -91,6 +98,13 @@ impl ReviewEvidence {
         self.sequence = self.sequence.saturating_add(1);
         let grooming =
             (behavior == Behavior::Groom).then(|| grooming_program_at(behavior_age_frames));
+        let width = screen_size.x.max(480.0);
+        let height = screen_size.y.max(320.0);
+        let movement_left = screen_origin.x + 8.0;
+        let movement_top = screen_origin.y + 8.0;
+        let movement_right = (screen_origin.x + width - PET_WIDTH as f32 - 8.0).max(movement_left);
+        let movement_bottom =
+            (screen_origin.y + height - PET_HEIGHT as f32 - 8.0).max(movement_top);
         let record = ReviewTraceRecord {
             sequence: self.sequence,
             wall_elapsed_ms: self.started.elapsed().as_millis(),
@@ -101,6 +115,10 @@ impl ReviewEvidence {
             grooming_substate: grooming.map(|program| program.substate),
             screen_x: pet.screen_position.x,
             screen_y: pet.screen_position.y,
+            movement_left,
+            movement_top,
+            movement_right,
+            movement_bottom,
             heading_radians: pet.heading_radians,
             speed_pixels_per_second: pet.speed_pixels_per_second(),
             altitude_pixels: pet.altitude_pixels,

@@ -27,6 +27,13 @@ const REVERSE_SPEED_PIXELS_PER_SECOND: f32 = -2.2 / REFERENCE_TICK_SECONDS;
 const ESCAPE_SPEED_PIXELS_PER_SECOND: f32 = 18.0 / REFERENCE_TICK_SECONDS;
 const FLIGHT_SPEED_PIXELS_PER_SECOND: f32 = 8.4 / REFERENCE_TICK_SECONDS;
 const FLIGHT_SPEED_BLEND_SECONDS: f32 = 0.22;
+const FLIGHT_COURSE_SELECTION_MAX_RADIANS: f32 = 2.60;
+const FLIGHT_COURSE_SELECTION_MIN_RADIANS: f32 = 0.45;
+const FLIGHT_EDGE_AVOIDANCE_FRACTION: f32 = 0.10;
+const FLIGHT_EDGE_AVOIDANCE_MIN_PIXELS: f32 = 48.0;
+const FLIGHT_EDGE_AVOIDANCE_MAX_PIXELS: f32 = 160.0;
+const FLIGHT_EDGE_AVOIDANCE_GAIN: f32 = 2.40;
+const FLIGHT_EDGE_AVOIDANCE_MAX_TURN_RADIANS_PER_SECOND: f32 = 2.20;
 
 const NERVOUS_SPEED_PIXELS_PER_SECOND: f32 = 3.0 / REFERENCE_TICK_SECONDS;
 const LANDING_COMPLETION_SECONDS: f32 = 0.495;
@@ -168,6 +175,13 @@ impl FlightPathProfile {
                 .sum::<f32>()
     }
 
+    fn saccade_active(self, age_seconds: f32) -> bool {
+        self.saccades.iter().any(|saccade| {
+            let local = age_seconds - saccade.start_seconds;
+            (0.0..saccade.duration_seconds).contains(&local) && saccade.angle_radians != 0.0
+        })
+    }
+
     fn speed_pixels_per_second(self, age_seconds: f32) -> f32 {
         let cruise = FLIGHT_SPEED_PIXELS_PER_SECOND
             * self.speed_multiplier
@@ -176,6 +190,86 @@ impl FlightPathProfile {
         let blend = smootherstep((age_seconds / FLIGHT_SPEED_BLEND_SECONDS).clamp(0.0, 1.0));
         lerp_scalar(ESCAPE_SPEED_PIXELS_PER_SECOND, cruise, blend)
     }
+}
+
+fn uncued_exploratory_heading(sequence: u64) -> f32 {
+    let key = motor_mix64(sequence ^ 0x554E_4355_4544_5632);
+    let unit = (key & 0xffff_ffff) as f32 / u32::MAX as f32;
+    -PI + unit * TAU
+}
+
+fn uncued_course_selection_saccade(
+    sequence: u64,
+    current_heading_radians: f32,
+    fallback_angle_radians: f32,
+) -> f32 {
+    let desired_heading = uncued_exploratory_heading(sequence);
+    let error = wrapped_angle(desired_heading - current_heading_radians);
+    if error.abs() < FLIGHT_COURSE_SELECTION_MIN_RADIANS {
+        fallback_angle_radians
+    } else {
+        error.clamp(
+            -FLIGHT_COURSE_SELECTION_MAX_RADIANS,
+            FLIGHT_COURSE_SELECTION_MAX_RADIANS,
+        )
+    }
+}
+
+fn flight_edge_avoidance_turn_rate(
+    position: Pos2,
+    heading_radians: f32,
+    movement_bounds: Rect,
+    age_seconds: f32,
+    profile: FlightPathProfile,
+) -> f32 {
+    if profile.saccade_active(age_seconds) {
+        return 0.0;
+    }
+
+    let horizontal_margin = (movement_bounds.width().max(1.0) * FLIGHT_EDGE_AVOIDANCE_FRACTION)
+        .clamp(
+            FLIGHT_EDGE_AVOIDANCE_MIN_PIXELS,
+            FLIGHT_EDGE_AVOIDANCE_MAX_PIXELS,
+        );
+    let vertical_margin = (movement_bounds.height().max(1.0) * FLIGHT_EDGE_AVOIDANCE_FRACTION)
+        .clamp(
+            FLIGHT_EDGE_AVOIDANCE_MIN_PIXELS,
+            FLIGHT_EDGE_AVOIDANCE_MAX_PIXELS,
+        );
+    let mut inward = Vec2::ZERO;
+    if position.x < movement_bounds.left() + horizontal_margin {
+        inward.x += smootherstep(
+            ((movement_bounds.left() + horizontal_margin - position.x) / horizontal_margin)
+                .clamp(0.0, 1.0),
+        );
+    } else if position.x > movement_bounds.right() - horizontal_margin {
+        inward.x -= smootherstep(
+            ((position.x - (movement_bounds.right() - horizontal_margin)) / horizontal_margin)
+                .clamp(0.0, 1.0),
+        );
+    }
+    if position.y < movement_bounds.top() + vertical_margin {
+        inward.y += smootherstep(
+            ((movement_bounds.top() + vertical_margin - position.y) / vertical_margin)
+                .clamp(0.0, 1.0),
+        );
+    } else if position.y > movement_bounds.bottom() - vertical_margin {
+        inward.y -= smootherstep(
+            ((position.y - (movement_bounds.bottom() - vertical_margin)) / vertical_margin)
+                .clamp(0.0, 1.0),
+        );
+    }
+    if inward.length_sq() <= f32::EPSILON {
+        return 0.0;
+    }
+
+    let target_heading = inward.y.atan2(inward.x);
+    let heading_error = wrapped_angle(target_heading - heading_radians);
+    let proximity = inward.length().min(1.0);
+    (heading_error * FLIGHT_EDGE_AVOIDANCE_GAIN).clamp(
+        -FLIGHT_EDGE_AVOIDANCE_MAX_TURN_RADIANS_PER_SECOND,
+        FLIGHT_EDGE_AVOIDANCE_MAX_TURN_RADIANS_PER_SECOND,
+    ) * proximity
 }
 
 impl Default for GroundSpeedProfile {
@@ -334,10 +428,9 @@ impl PetMotion {
     pub fn flight_maneuver_active(&self) -> bool {
         self.natural_flight_motion
             && self.last_behavior == Behavior::Flight
-            && self.flight_path_profile.saccades.iter().any(|saccade| {
-                let local = self.behavior_age_seconds - saccade.start_seconds;
-                (0.0..saccade.duration_seconds).contains(&local) && saccade.angle_radians != 0.0
-            })
+            && self
+                .flight_path_profile
+                .saccade_active(self.behavior_age_seconds)
     }
 
     pub fn advance(
@@ -356,6 +449,7 @@ impl PetMotion {
         let top = screen_origin.y + 8.0;
         let right = (screen_origin.x + width - PET_WIDTH as f32 - 8.0).max(left);
         let bottom = (screen_origin.y + height - PET_HEIGHT as f32 - 8.0).max(top);
+        let movement_bounds = Rect::from_min_max(Pos2::new(left, top), Pos2::new(right, bottom));
 
         if behavior != self.last_behavior {
             self.last_behavior = behavior;
@@ -368,7 +462,13 @@ impl PetMotion {
             }
             if behavior == Behavior::Flight && self.natural_flight_motion {
                 self.flight_bout_sequence = self.flight_bout_sequence.saturating_add(1);
-                self.flight_path_profile = FlightPathProfile::for_bout(self.flight_bout_sequence);
+                let mut profile = FlightPathProfile::for_bout(self.flight_bout_sequence);
+                profile.saccades[0].angle_radians = uncued_course_selection_saccade(
+                    self.flight_bout_sequence,
+                    self.heading_radians,
+                    profile.saccades[0].angle_radians,
+                );
+                self.flight_path_profile = profile;
             }
             if behavior == Behavior::Landing {
                 self.landing_start_position = self.screen_position;
@@ -459,10 +559,24 @@ impl PetMotion {
                     let age_start = (age_end - dt).max(0.0);
                     let turn_rate_start = self
                         .flight_path_profile
-                        .turn_rate_radians_per_second(age_start);
+                        .turn_rate_radians_per_second(age_start)
+                        + flight_edge_avoidance_turn_rate(
+                            self.screen_position,
+                            self.heading_radians,
+                            movement_bounds,
+                            age_start,
+                            self.flight_path_profile,
+                        );
                     let turn_rate_end = self
                         .flight_path_profile
-                        .turn_rate_radians_per_second(age_end);
+                        .turn_rate_radians_per_second(age_end)
+                        + flight_edge_avoidance_turn_rate(
+                            self.screen_position,
+                            self.heading_radians,
+                            movement_bounds,
+                            age_end,
+                            self.flight_path_profile,
+                        );
                     self.heading_radians = wrapped_angle(
                         self.heading_radians + (turn_rate_start + turn_rate_end) * 0.5 * dt,
                     );
@@ -2797,6 +2911,93 @@ mod tests {
             repeat.saccades[0].angle_radians,
             same.saccades[0].angle_radians
         );
+    }
+
+    #[test]
+    fn uncued_course_selection_is_deterministic_and_position_independent() {
+        let headings = (1..=64).map(uncued_exploratory_heading).collect::<Vec<_>>();
+        assert_eq!(headings[0], uncued_exploratory_heading(1));
+        assert!(headings.iter().any(|heading| heading.cos() < -0.70));
+        assert!(headings.iter().any(|heading| heading.cos() > 0.70));
+        assert!(headings.iter().any(|heading| heading.sin() < -0.70));
+        assert!(headings.iter().any(|heading| heading.sin() > 0.70));
+
+        let fallback = 0.75;
+        let from_same_heading = uncued_course_selection_saccade(7, PI, fallback);
+        let repeated = uncued_course_selection_saccade(7, PI, fallback);
+        assert_eq!(from_same_heading, repeated);
+        assert!(from_same_heading.abs() <= FLIGHT_COURSE_SELECTION_MAX_RADIANS);
+    }
+
+    #[test]
+    fn edge_avoidance_is_local_and_turns_an_outward_course_inward() {
+        let profile = FlightPathProfile::for_bout(1);
+        let left = 8.0;
+        let top = 8.0;
+        let right = 2_132.0;
+        let bottom = 1_152.0;
+        let center = Pos2::new((left + right) * 0.5, (top + bottom) * 0.5);
+        let movement_bounds = Rect::from_min_max(Pos2::new(left, top), Pos2::new(right, bottom));
+        assert_eq!(
+            flight_edge_avoidance_turn_rate(center, PI, movement_bounds, 0.0, profile),
+            0.0
+        );
+        assert_eq!(
+            flight_edge_avoidance_turn_rate(
+                Pos2::new(left, center.y),
+                0.0,
+                movement_bounds,
+                0.0,
+                profile,
+            ),
+            0.0
+        );
+        assert!(
+            flight_edge_avoidance_turn_rate(
+                Pos2::new(left, center.y),
+                PI,
+                movement_bounds,
+                0.0,
+                profile,
+            )
+            .abs()
+                > 1.0
+        );
+    }
+
+    #[test]
+    fn repeated_cursor_escape_heading_does_not_create_a_one_side_motor_lock() {
+        let origin = Pos2::ZERO;
+        let screen = Vec2::new(2_560.0, 1_440.0);
+        let left = origin.x + 8.0;
+        let right = origin.x + screen.x - PET_WIDTH as f32 - 8.0;
+        let horizontal_span = right - left;
+        let durations: [f32; 12] = [
+            1.716, 2.574, 0.594, 1.485, 4.422, 6.171, 0.990, 0.594, 4.224, 1.980, 1.023, 4.224,
+        ];
+
+        let mut motion = PetMotion {
+            screen_position: Pos2::new(96.0, 640.0),
+            natural_flight_motion: true,
+            ..PetMotion::default()
+        };
+        let mut tertiles = [false; 3];
+        for duration in durations {
+            motion.advance(1.0 / 60.0, Behavior::Quiet, origin, screen, false, None);
+            motion.heading_radians = PI;
+            let frames = (duration * 60.0).ceil() as usize;
+            for _ in 0..frames {
+                motion.advance(1.0 / 60.0, Behavior::Flight, origin, screen, false, None);
+                let fraction =
+                    ((motion.screen_position.x - left) / horizontal_span).clamp(0.0, 1.0);
+                tertiles[(fraction * 3.0).floor().min(2.0) as usize] = true;
+            }
+            for _ in 0..30 {
+                motion.advance(1.0 / 60.0, Behavior::Landing, origin, screen, false, None);
+            }
+        }
+        let visited_tertiles = tertiles.iter().filter(|visited| **visited).count();
+        assert!(visited_tertiles >= 2, "tertiles={tertiles:?}");
     }
 
     #[test]

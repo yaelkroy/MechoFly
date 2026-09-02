@@ -124,7 +124,7 @@ impl MechoFlyApp {
         }
         #[cfg(all(windows, feature = "n41-visual-review-b"))]
         let desktop_pet_title = if config.n41_visual_review_b {
-            "MechoFly N4.1-C natural flight review pet"
+            "MechoFly N4.1-D exploratory flight review pet"
         } else {
             "MechoFly desktop pet"
         };
@@ -546,6 +546,8 @@ impl eframe::App for MechoFlyApp {
                 self.session.engine.state.behavior_age_frames,
                 authoritative_display_behavior(self.session.engine.state.behavior),
                 &self.pet,
+                screen_origin,
+                screen_size,
                 self.skin,
                 cursor_over_pet,
                 held,

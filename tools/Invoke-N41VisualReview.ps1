@@ -32,7 +32,7 @@ $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $script:BackdropColor = [System.Drawing.Color]::FromArgb(28, 24, 36)
 $ExpectedParameterSha256 =
     'cb3cd2654dcd4fa9def34fb0145645f5d61b59c96c407669cf1e9dd4f12628ef'
-$ExpectedPetTitle = 'MechoFly N4.1-C natural flight review pet'
+$ExpectedPetTitle = 'MechoFly N4.1-D exploratory flight review pet'
 $EarlyBoundarySeconds = 30
 $LateBoundarySeconds = 300
 $LateMidpointSeconds = 450
@@ -80,7 +80,7 @@ function Test-ProcessAlive {
         if (Test-Path -LiteralPath $StandardErrorPath -PathType Leaf) {
             $stderr = [System.IO.File]::ReadAllText($StandardErrorPath)
         }
-        throw ('N4.1-C visual-review process exited unexpectedly. ExitCode=' +
+        throw ('N4.1-D visual-review process exited unexpectedly. ExitCode=' +
             [string]$Process.ExitCode + [Environment]::NewLine + $stderr)
     }
 }
@@ -147,7 +147,7 @@ function Get-ReviewPetWindow {
         [string]$_.class_name -eq 'MechoFlyDesktopPetLayeredWindowV1'
     })
     Assert-Condition ($pets.Count -eq 1) (
-        'Expected exactly one layered N4.1-C review pet window; found ' +
+        'Expected exactly one layered N4.1-D review pet window; found ' +
         [string]$pets.Count + '.')
     Assert-Condition ([string]$pets[0].title -ceq $ExpectedPetTitle) (
         'Review pet title mismatch: ' + [string]$pets[0].title)
@@ -281,7 +281,7 @@ function Ask-Criterion {
     $answer = [System.Windows.Forms.MessageBox]::Show(
         $Question + [Environment]::NewLine + [Environment]::NewLine +
             'Yes = pass, No = fail, Cancel = abort the review.',
-        ('MechoFly N4.1-C ' + $Phase + ' review — ' + $Criterion),
+        ('MechoFly N4.1-D ' + $Phase + ' review — ' + $Criterion),
         [System.Windows.Forms.MessageBoxButtons]::YesNoCancel,
         [System.Windows.Forms.MessageBoxIcon]::Question,
         [System.Windows.Forms.MessageBoxDefaultButton]::Button1)
@@ -437,6 +437,18 @@ function Add-CompletedFlightBout {
             [double]$Bout.speed_sum / [double]$Bout.speed_count
         saccades = [int]$Bout.saccades
         natural_motion = [bool]$Bout.natural_motion
+        normalized_x_start = [double]$Bout.normalized_x_start
+        normalized_x_end = [double]$Bout.normalized_x_end
+        normalized_x_min = [double]$Bout.normalized_x_min
+        normalized_x_max = [double]$Bout.normalized_x_max
+        normalized_x_span =
+            [double]$Bout.normalized_x_max - [double]$Bout.normalized_x_min
+        normalized_x_displacement =
+            [double]$Bout.normalized_x_end -
+            [double]$Bout.normalized_x_start
+        visited_left_tertile = [bool]$Bout.visited_left_tertile
+        visited_middle_tertile = [bool]$Bout.visited_middle_tertile
+        visited_right_tertile = [bool]$Bout.visited_right_tertile
     })
 }
 
@@ -483,6 +495,33 @@ function Get-NaturalMotionMetrics {
         $interactive = [bool]$sample.dragging -or
             [bool]$sample.cursor_hovered -or
             [bool]$sample.evidence_hold
+        $normalizedFlightX = $null
+        if ($behavior -ceq 'flight') {
+            foreach ($field in @(
+                'movement_left',
+                'movement_top',
+                'movement_right',
+                'movement_bottom')) {
+                Assert-Condition (
+                    $sample.PSObject.Properties.Name -ccontains $field) (
+                    'Flight trace is missing spatial-bound field: ' + $field)
+            }
+            $movementLeft = [double]$sample.movement_left
+            $movementTop = [double]$sample.movement_top
+            $movementRight = [double]$sample.movement_right
+            $movementBottom = [double]$sample.movement_bottom
+            Assert-Condition (
+                $movementRight -gt $movementLeft -and
+                $movementBottom -gt $movementTop) (
+                'Flight trace contains invalid movement bounds at modeled frame ' +
+                [string]$sample.model_frame)
+            $normalizedFlightX = [Math]::Max(
+                0.0,
+                [Math]::Min(
+                    1.0,
+                    (([double]$sample.screen_x - $movementLeft) /
+                        ($movementRight - $movementLeft))))
+        }
         if ($behavior -ceq 'groom') {
             [void]$groomingFrames.Add([long]$sample.model_frame)
             if ($null -ne $sample.grooming_substate) {
@@ -518,6 +557,15 @@ function Get-NaturalMotionMetrics {
                 in_saccade = $false
                 completed_to_landing = $false
                 natural_motion = [bool]$sample.natural_flight_motion
+                normalized_x_start = [double]$normalizedFlightX
+                normalized_x_end = [double]$normalizedFlightX
+                normalized_x_min = [double]$normalizedFlightX
+                normalized_x_max = [double]$normalizedFlightX
+                visited_left_tertile = [double]$normalizedFlightX -lt (1.0 / 3.0)
+                visited_middle_tertile =
+                    [double]$normalizedFlightX -ge (1.0 / 3.0) -and
+                    [double]$normalizedFlightX -lt (2.0 / 3.0)
+                visited_right_tertile = [double]$normalizedFlightX -ge (2.0 / 3.0)
             }
         }
         elseif ($behavior -cne 'flight' -and
@@ -551,6 +599,22 @@ function Get-NaturalMotionMetrics {
             $currentFlightBout.natural_motion =
                 [bool]$currentFlightBout.natural_motion -and
                 [bool]$sample.natural_flight_motion
+            $currentFlightBout.normalized_x_end = [double]$normalizedFlightX
+            $currentFlightBout.normalized_x_min = [Math]::Min(
+                [double]$currentFlightBout.normalized_x_min,
+                [double]$normalizedFlightX)
+            $currentFlightBout.normalized_x_max = [Math]::Max(
+                [double]$currentFlightBout.normalized_x_max,
+                [double]$normalizedFlightX)
+            if ([double]$normalizedFlightX -lt (1.0 / 3.0)) {
+                $currentFlightBout.visited_left_tertile = $true
+            }
+            elseif ([double]$normalizedFlightX -lt (2.0 / 3.0)) {
+                $currentFlightBout.visited_middle_tertile = $true
+            }
+            else {
+                $currentFlightBout.visited_right_tertile = $true
+            }
         }
 
         if ($null -ne $previous -and
@@ -667,6 +731,44 @@ function Get-NaturalMotionMetrics {
     $flightDistinctDurations = @($flightDurations | Select-Object -Unique).Count
     $allFlightMotionNatural = $flightBouts.Count -gt 0 -and
         @($flightBouts | Where-Object { -not [bool]$_.natural_motion }).Count -eq 0
+    $flightNormalizedXMinimum = 0.0
+    $flightNormalizedXMaximum = 0.0
+    $flightObservedHorizontalSpan = 0.0
+    $flightLeftwardBouts = 0
+    $flightRightwardBouts = 0
+    $visitedLeftTertile = $false
+    $visitedMiddleTertile = $false
+    $visitedRightTertile = $false
+    if ($flightBouts.Count -gt 0) {
+        $minimumXMeasure = $flightBouts |
+            Measure-Object -Property normalized_x_min -Minimum
+        $maximumXMeasure = $flightBouts |
+            Measure-Object -Property normalized_x_max -Maximum
+        $flightNormalizedXMinimum = [double]$minimumXMeasure.Minimum
+        $flightNormalizedXMaximum = [double]$maximumXMeasure.Maximum
+        $flightObservedHorizontalSpan =
+            $flightNormalizedXMaximum - $flightNormalizedXMinimum
+        $flightLeftwardBouts = @($flightBouts | Where-Object {
+            [double]$_.normalized_x_displacement -le -0.05
+        }).Count
+        $flightRightwardBouts = @($flightBouts | Where-Object {
+            [double]$_.normalized_x_displacement -ge 0.05
+        }).Count
+        $visitedLeftTertile = @($flightBouts | Where-Object {
+            [bool]$_.visited_left_tertile
+        }).Count -gt 0
+        $visitedMiddleTertile = @($flightBouts | Where-Object {
+            [bool]$_.visited_middle_tertile
+        }).Count -gt 0
+        $visitedRightTertile = @($flightBouts | Where-Object {
+            [bool]$_.visited_right_tertile
+        }).Count -gt 0
+    }
+    $flightHorizontalTertilesVisited = @(@(
+        $visitedLeftTertile,
+        $visitedMiddleTertile,
+        $visitedRightTertile
+    ) | Where-Object { $_ }).Count
 
     $requiredCaptures = @(
         'groom-head-sweep.png',
@@ -702,13 +804,16 @@ function Get-NaturalMotionMetrics {
         $speedStats.cv -ge 0.18 -and
         ($speedMaximum - $speedMinimum) -ge 20.0 -and
         $durationDistanceR2 -le 0.98 -and
-        $flightBouts.Count -ge 6 -and
+        $flightBouts.Count -ge 10 -and
         $flightDistinctDurations -ge 3 -and
         $flightDurationStats.cv -ge 0.25 -and
         $flightSpeedStats.cv -ge 0.08 -and
         ($flightSpeedMaximum - $flightSpeedMinimum) -ge 30.0 -and
         $flightPath -ge 500.0 -and
         $flightSaccades -ge 2 -and
+        $flightHorizontalTertilesVisited -ge 2 -and
+        $flightLeftwardBouts -ge 1 -and
+        $flightRightwardBouts -ge 1 -and
         $allFlightMotionNatural -and
         $observedFlightCaptures.Count -eq $requiredFlightCaptures.Count -and
         $groomingBouts -ge 1 -and
@@ -753,6 +858,13 @@ function Get-NaturalMotionMetrics {
         flight_mean_speed_cv = [Math]::Round($flightSpeedStats.cv, 6)
         flight_path_pixels = [Math]::Round($flightPath, 3)
         flight_saccades = $flightSaccades
+        flight_normalized_x_min = [Math]::Round($flightNormalizedXMinimum, 6)
+        flight_normalized_x_max = [Math]::Round($flightNormalizedXMaximum, 6)
+        flight_observed_horizontal_span_fraction =
+            [Math]::Round($flightObservedHorizontalSpan, 6)
+        flight_horizontal_tertiles_visited = $flightHorizontalTertilesVisited
+        flight_leftward_displacement_bouts = $flightLeftwardBouts
+        flight_rightward_displacement_bouts = $flightRightwardBouts
         natural_flight_motion_all_bouts = $allFlightMotionNatural
         required_flight_captures = $requiredFlightCaptures
         observed_flight_captures = $observedFlightCaptures
@@ -762,7 +874,7 @@ function Get-NaturalMotionMetrics {
         grooming_substates = @($groomingSubstates | Sort-Object)
         required_grooming_captures = $requiredCaptures
         observed_grooming_captures = $observedCaptures
-        gate = 'ground gates preserved; >= 6 complete flight bouts; >= 3 flight durations; flight duration CV >= 0.25; flight speed CV >= 0.08 and range >= 30 px/s; >= 500 px flight path; >= 2 rapid saccades; natural-flight flag and five phase captures present; grooming sequence and captures complete'
+        gate = 'ground gates preserved; >= 10 complete flight bouts; >= 3 flight durations; flight duration CV >= 0.25; flight speed CV >= 0.08 and range >= 30 px/s; >= 500 px flight path; >= 2 rapid saccades; anti-confinement diagnostic visits at least two horizontal tertiles and includes both leftward and rightward bouts; no screen-coverage target or threshold; natural-flight flag and five phase captures present; grooming sequence and captures complete'
     }
 }
 
@@ -978,20 +1090,20 @@ namespace MechoFly.N41VisualReview
 }
 
 $intro = [System.Windows.Forms.MessageBox]::Show(
-    'This launches the isolated N4.1-C natural-flight candidate for ten minutes.' +
+    'This launches the isolated N4.1-D exploratory-flight candidate for ten minutes.' +
         [Environment]::NewLine + [Environment]::NewLine +
         'Observe the first 30 seconds, then the final five-minute window.' +
         ' Watch specifically for varied walking, grooming, and visibly different' +
         ' flight lengths, speeds, and paths.' +
         [Environment]::NewLine + [Environment]::NewLine +
-        'Trigger at least eight separate flights across the early and late windows' +
+        'Trigger at least twelve separate flights across the early and late windows' +
         ' with Ctrl+Alt+L. After each trigger, move the pointer away and allow the' +
         ' complete takeoff, flight, maneuver, landing, and touchdown to finish.' +
         ' Keep the triggers separated so each flight is a complete bout.' +
         [Environment]::NewLine + [Environment]::NewLine +
         'The review does not deploy anything, change shortcuts, or write to AppData.' +
         ' Press Cancel if you cannot observe the full session.',
-    'MechoFly N4.1-C natural-flight visual acceptance',
+    'MechoFly N4.1-D exploratory-flight visual acceptance',
     [System.Windows.Forms.MessageBoxButtons]::OKCancel,
     [System.Windows.Forms.MessageBoxIcon]::Information,
     [System.Windows.Forms.MessageBoxDefaultButton]::Button1)
@@ -1068,7 +1180,7 @@ try {
     Assert-Condition ([string]$launchReceipt.status -ceq 'PASS') 'Candidate launch receipt failed.'
     Assert-Condition ([string]$launchReceipt.active_profile -ceq 'n41-b-natural-flight') 'Candidate did not activate n41-b-natural-flight.'
     Assert-Condition ([string]$launchReceipt.canonical_default_profile -ceq 'n4') 'Canonical default is not N4.'
-    Assert-Condition ([string]$launchReceipt.parameter_sha256 -ceq $ExpectedParameterSha256) 'N4.1-C parameter identity mismatch.'
+    Assert-Condition ([string]$launchReceipt.parameter_sha256 -ceq $ExpectedParameterSha256) 'N4.1-D parameter identity mismatch.'
     Assert-Condition ([string]$launchReceipt.executable_sha256 -ceq $ExecutableSha256) 'Candidate launch binary identity mismatch.'
     Assert-Condition ([bool]$launchReceipt.storage_override_active) 'Downloads storage override was not active.'
     Assert-Condition ([string]$launchReceipt.capture_source -ceq
@@ -1193,9 +1305,9 @@ try {
             $confirmation = [System.Windows.Forms.MessageBox]::Show(
                 'All six early/late criteria passed.' +
                     [Environment]::NewLine + [Environment]::NewLine +
-                    'Accept this exact N4.1-C natural-flight candidate binary only for the next guarded step?' +
+                    'Accept this exact N4.1-D exploratory-flight candidate binary only for the next guarded step?' +
                     ' This still does not authorize deployment or shortcut changes.',
-                'MechoFly N4.1-C explicit visual-acceptance decision',
+                'MechoFly N4.1-D explicit visual-acceptance decision',
                 [System.Windows.Forms.MessageBoxButtons]::YesNo,
                 [System.Windows.Forms.MessageBoxIcon]::Question,
                 [System.Windows.Forms.MessageBoxDefaultButton]::Button2)
@@ -1217,9 +1329,9 @@ try {
         0
     }
     $receipt = [ordered]@{
-        schema_version = 4
+        schema_version = 5
         status = 'PASS'
-        classification = 'single_owner_formative_natural_flight_review'
+        classification = 'single_owner_formative_uncued_exploratory_flight_review'
         candidate_profile = 'n41-b-natural-flight'
         parameter_sha256 = $ExpectedParameterSha256
         source_branch = $SourceBranch

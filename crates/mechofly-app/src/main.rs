@@ -219,7 +219,8 @@ fn visual_review_enabled(args: &[String]) -> Result<bool, String> {
         || option_value(args, N41_VISUAL_REVIEW_RECEIPT_OPTION).is_some()
     {
         return Err(
-            "N4.1-C visual review requires a build with feature n41-visual-review-b".into(),
+            "N4.1-D exploratory-flight review requires a build with feature n41-visual-review-b"
+                .into(),
         );
     }
     Ok(false)
@@ -252,9 +253,9 @@ fn write_n41_visual_review_launch_receipt(
         return Err("N4.1 visual review requires MECHOFLY_DATA_DIR".into());
     }
     let receipt = N41VisualReviewLaunchReceipt {
-        schema_version: 4,
+        schema_version: 5,
         status: "PASS",
-        classification: "feature_gated_natural_flight_visual_review_candidate",
+        classification: "feature_gated_uncued_exploratory_flight_visual_review_candidate",
         review_feature: "n41-visual-review-b",
         required_explicit_flag: N41_B_VISUAL_REVIEW_FLAG,
         canonical_default_profile: "n4",

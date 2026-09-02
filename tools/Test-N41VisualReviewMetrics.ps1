@@ -46,6 +46,10 @@ function Write-SyntheticTrace {
                 grooming_substate = $null
                 screen_x = $x
                 screen_y = 200.0
+                movement_left = 8.0
+                movement_top = 8.0
+                movement_right = 2132.0
+                movement_bottom = 1152.0
                 heading_radians = 0.0
                 speed_pixels_per_second = $(if ($walking) { 60.0 } else { 0.0 })
                 altitude_pixels = 0.0
@@ -91,8 +95,70 @@ function Write-SyntheticFlightTrace {
                 grooming_substate = $null
                 screen_x = $x
                 screen_y = 200.0
+                movement_left = 8.0
+                movement_top = 8.0
+                movement_right = 2132.0
+                movement_bottom = 1152.0
                 heading_radians = $(if ($frame -eq 1) { 0.2 } else { 0.0 })
                 speed_pixels_per_second = $(if ($flying) { 120.0 } else { 0.0 })
+                altitude_pixels = $(if ($flying) { 72.0 } else { 0.0 })
+                natural_flight_motion = $flying
+                cursor_hovered = $false
+                dragging = $false
+                evidence_hold = $false
+            }
+            $writer.WriteLine(($record | ConvertTo-Json -Compress))
+        }
+    }
+    finally {
+        $writer.Dispose()
+    }
+}
+
+function Write-SyntheticExploratoryFlightTrace {
+    param(
+        [string] $LiteralPath
+    )
+    $writer = New-Object System.IO.StreamWriter(
+        $LiteralPath,
+        $false,
+        $script:Utf8NoBom)
+    try {
+        for ($frame = 0; $frame -lt 1000; $frame++) {
+            $bout = [Math]::Floor([double]$frame / 6.0)
+            $local = $frame % 6
+            $inReviewSample = $bout -lt 10
+            $flying = $inReviewSample -and $local -lt 5
+            $landing = $inReviewSample -and $local -eq 5
+            $behavior = if ($flying) { 'flight' } elseif ($landing) {
+                'landing'
+            } else { 'quiet' }
+            $leftToRight = ([int]$bout % 2) -eq 0
+            $flightX = if ($leftToRight) {
+                100.0 + 450.0 * $local
+            }
+            else {
+                1900.0 - 450.0 * $local
+            }
+            $x = if ($flying) { $flightX } elseif ($landing) {
+                if ($leftToRight) { 1900.0 } else { 100.0 }
+            } else { 100.0 }
+            $record = [pscustomobject][ordered]@{
+                sequence = $frame + 1
+                wall_elapsed_ms = $frame * 33
+                model_frame = $frame
+                modeled_ms = $frame * 33
+                behavior = $behavior
+                behavior_age_frames = $(if ($flying) { $local } else { 0 })
+                grooming_substate = $null
+                screen_x = $x
+                screen_y = 400.0
+                movement_left = 8.0
+                movement_top = 8.0
+                movement_right = 2132.0
+                movement_bottom = 1152.0
+                heading_radians = $(if ($local -eq 2) { 0.2 } else { 0.0 })
+                speed_pixels_per_second = $(if ($flying) { 180.0 } else { 0.0 })
                 altitude_pixels = $(if ($flying) { 72.0 } else { 0.0 })
                 natural_flight_motion = $flying
                 cursor_hovered = $false
@@ -119,10 +185,12 @@ foreach ($path in @($measure, $collector)) {
 $quietRoot = Join-Path $output 'zero-bout'
 $walkRoot = Join-Path $output 'first-bout'
 $flightRoot = Join-Path $output 'first-flight-bout'
+$exploratoryFlightRoot = Join-Path $output 'exploratory-flight'
 New-Item -ItemType Directory -Path @(
     (Join-Path $quietRoot 'captures'),
     (Join-Path $walkRoot 'captures'),
-    (Join-Path $flightRoot 'captures')
+    (Join-Path $flightRoot 'captures'),
+    (Join-Path $exploratoryFlightRoot 'captures')
 ) -Force | Out-Null
 $quietTrace = Join-Path $quietRoot 'trace.jsonl'
 $walkTrace = Join-Path $walkRoot 'trace.jsonl'
@@ -130,9 +198,12 @@ $quietReceipt = Join-Path $quietRoot 'metrics.json'
 $walkReceipt = Join-Path $walkRoot 'metrics.json'
 $flightTrace = Join-Path $flightRoot 'trace.jsonl'
 $flightReceipt = Join-Path $flightRoot 'metrics.json'
+$exploratoryFlightTrace = Join-Path $exploratoryFlightRoot 'trace.jsonl'
+$exploratoryFlightReceipt = Join-Path $exploratoryFlightRoot 'metrics.json'
 Write-SyntheticTrace -LiteralPath $quietTrace -IncludeCompletedWalk $false
 Write-SyntheticTrace -LiteralPath $walkTrace -IncludeCompletedWalk $true
 Write-SyntheticFlightTrace -LiteralPath $flightTrace
+Write-SyntheticExploratoryFlightTrace -LiteralPath $exploratoryFlightTrace
 
 & $measure `
     -CollectorPath $collector `
@@ -149,10 +220,17 @@ Write-SyntheticFlightTrace -LiteralPath $flightTrace
     -TracePath $flightTrace `
     -CaptureDirectory (Join-Path $flightRoot 'captures') `
     -ReceiptPath $flightReceipt
+& $measure `
+    -CollectorPath $collector `
+    -TracePath $exploratoryFlightTrace `
+    -CaptureDirectory (Join-Path $exploratoryFlightRoot 'captures') `
+    -ReceiptPath $exploratoryFlightReceipt
 
 $quiet = Get-Content -LiteralPath $quietReceipt -Raw | ConvertFrom-Json
 $walk = Get-Content -LiteralPath $walkReceipt -Raw | ConvertFrom-Json
 $flight = Get-Content -LiteralPath $flightReceipt -Raw | ConvertFrom-Json
+$exploratoryFlight = Get-Content -LiteralPath $exploratoryFlightReceipt -Raw |
+    ConvertFrom-Json
 Assert-TestCondition ([string]$quiet.status -ceq 'PASS') (
     'Zero-bout measurement did not complete.')
 Assert-TestCondition (
@@ -189,9 +267,27 @@ Assert-TestCondition (
 Assert-TestCondition (
     [int]$flight.objective_natural_motion.flight_saccades -eq 1) (
     'The first completed Flight bout rapid-turn count changed unexpectedly.')
+Assert-TestCondition (
+    [double]$flight.objective_natural_motion.flight_observed_horizontal_span_fraction -lt 0.01) (
+    'The confined Flight regression was not identified as horizontally narrow.')
+Assert-TestCondition (
+    [int]$flight.objective_natural_motion.flight_horizontal_tertiles_visited -eq 1) (
+    'The confined Flight regression visited an unexpected horizontal tertile.')
+Assert-TestCondition (
+    [double]$exploratoryFlight.objective_natural_motion.flight_observed_horizontal_span_fraction -ge 0.80) (
+    'The exploratory Flight regression lost its observed horizontal span.')
+Assert-TestCondition (
+    [int]$exploratoryFlight.objective_natural_motion.flight_horizontal_tertiles_visited -eq 3) (
+    'The exploratory Flight regression did not visit all horizontal tertiles.')
+Assert-TestCondition (
+    [int]$exploratoryFlight.objective_natural_motion.flight_leftward_displacement_bouts -eq 5) (
+    'The exploratory Flight regression lost leftward bouts.')
+Assert-TestCondition (
+    [int]$exploratoryFlight.objective_natural_motion.flight_rightward_displacement_bouts -eq 5) (
+    'The exploratory Flight regression lost rightward bouts.')
 
 $regression = [pscustomobject][ordered]@{
-    schema_version = 3
+    schema_version = 4
     status = 'PASS'
     classification = 'n4_1_visual_metrics_empty_collection_regression'
     zero_bout_measurement_completed = $true
@@ -201,6 +297,8 @@ $regression = [pscustomobject][ordered]@{
     flight_saccade_counted = $true
     empty_numeric_distributions_supported = $true
     empty_flight_aggregates_are_numeric_zero = $true
+    confined_flight_detected_by_anti_confinement_metrics = $true
+    exploratory_flight_directional_metrics_passed = $true
     collector_sha256 = (Get-FileHash `
         -LiteralPath $collector `
         -Algorithm SHA256).Hash.ToLowerInvariant()

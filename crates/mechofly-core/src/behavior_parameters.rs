@@ -22,11 +22,11 @@ pub const N41_DYNAMICS_VERSION: &str = "n4.1-graded-fatigue-engineering-v1";
 pub const N41_NATURAL_BOUT_DYNAMICS_VERSION: &str =
     "n4.1-literature-shaped-walk-bouts-product-prior-v1";
 pub const N41_NATURAL_FLIGHT_DYNAMICS_VERSION: &str =
-    "n4.1-literature-shaped-walk-flight-bouts-product-prior-v1";
+    "n4.1-literature-shaped-walk-flight-bouts-uncued-exploration-prior-v2";
 pub const DYNAMICS_CLAIM: &str =
     "MODELED / ENGINEERING PRIOR; context and duration rules are authored, not biologically fitted";
 pub const N41_NATURAL_BOUT_DYNAMICS_CLAIM: &str = "MODELED / LITERATURE-SHAPED PRODUCT PRIOR; walk-bout quantiles are authored from reported qualitative time scales, not fitted biological constants";
-pub const N41_NATURAL_FLIGHT_DYNAMICS_CLAIM: &str = "MODELED / LITERATURE-SHAPED PRODUCT PRIOR; walk and flight quantiles and flight motor motifs are authored from reported qualitative time scales and maneuver structure, not fitted biological constants";
+pub const N41_NATURAL_FLIGHT_DYNAMICS_CLAIM: &str = "MODELED / LITERATURE-SHAPED PRODUCT PRIOR; walk and flight quantiles, uncued course selection, and local edge avoidance are authored from qualitative evidence and product constraints, not fitted biological constants; this is not a food-search or territory-coverage model";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
