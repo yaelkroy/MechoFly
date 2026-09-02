@@ -13,6 +13,7 @@ path = "src/main.rs"
 [features]
 default = []
 n41-visual-review-b = ["dep:png"]
+n6-product-checkpoint = []
 
 [dependencies]
 bytemuck.workspace = true

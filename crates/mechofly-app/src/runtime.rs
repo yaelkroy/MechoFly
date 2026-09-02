@@ -11,6 +11,10 @@ use mechofly_core::{
     },
     provenance::sha256_hex,
 };
+#[cfg(feature = "n6-product-checkpoint")]
+use mechofly_core::{BehaviorIntentSnapshot, GraphIdentity, ModelState, StepInput};
+#[cfg(feature = "n6-product-checkpoint")]
+use serde::{Deserialize, Serialize};
 
 use crate::compute::{
     ActiveBackend, CapacityAssessment, ComputePreference, RuntimeBackend, assess_capacity,
@@ -39,7 +43,183 @@ struct AuthoredDrive {
     expires_after_frame: u64,
 }
 
+#[cfg(feature = "n6-product-checkpoint")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthoredDriveCheckpoint {
+    population_offset: usize,
+    expires_after_frame: u64,
+}
+
+#[cfg(feature = "n6-product-checkpoint")]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SimulationRuntimeCheckpoint {
+    pub(crate) schema_version: u32,
+    pub(crate) graph: GraphIdentity,
+    pub(crate) model_identity: String,
+    pub(crate) state: ModelState,
+    pub(crate) summary: FrameSummary,
+    pub(crate) last_behavior_intent: BehaviorIntentSnapshot,
+    sensory_stimulus: Vec<i32>,
+    cursor_loom_q15: i32,
+    authored_drive: Option<AuthoredDriveCheckpoint>,
+    live_digest: String,
+}
+
+#[cfg(feature = "n6-product-checkpoint")]
+impl SimulationRuntimeCheckpoint {
+    pub(crate) fn validate(&self, graph: &ModelGraph) -> Result<(), String> {
+        if self.schema_version != 1 {
+            return Err("unsupported simulation-runtime checkpoint schema".to_owned());
+        }
+        if self.graph != graph.identity {
+            return Err("simulation-runtime checkpoint graph identity mismatch".to_owned());
+        }
+        if self.state.activation.len() != graph.neuron_ids.len()
+            || self.state.spikes.len() != graph.neuron_ids.len()
+            || self.sensory_stimulus.len() != graph.neuron_ids.len()
+        {
+            return Err("simulation-runtime checkpoint dimensions do not match graph".to_owned());
+        }
+        if !(0..=8_192).contains(&self.cursor_loom_q15) {
+            return Err("simulation-runtime checkpoint cursor loom is out of range".to_owned());
+        }
+        if let Some(drive) = self.authored_drive
+            && drive.population_offset >= FUNCTIONAL_POPULATION_COUNT
+        {
+            return Err("simulation-runtime checkpoint authored drive is invalid".to_owned());
+        }
+        let digest = self.state.digest();
+        if digest != self.live_digest || self.summary.state_digest != digest {
+            return Err("simulation-runtime checkpoint state digest mismatch".to_owned());
+        }
+        if self.summary.frame != self.state.frame
+            || self.summary.behavior != self.state.behavior
+            || self.last_behavior_intent.frame != self.state.frame
+        {
+            return Err("simulation-runtime checkpoint frame or behavior mismatch".to_owned());
+        }
+        let restored = ModelEngine::from_state(Arc::new(graph.clone()), self.state.clone())?;
+        if restored.model_identity() != self.model_identity {
+            return Err("simulation-runtime checkpoint model identity mismatch".to_owned());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn digest(&self, graph: &ModelGraph) -> Result<String, String> {
+        self.validate(graph)?;
+        let encoded = serde_json::to_vec(self)
+            .map_err(|error| format!("cannot encode simulation-runtime checkpoint: {error}"))?;
+        Ok(sha256_hex([encoded]))
+    }
+}
+
+#[cfg(feature = "n6-product-checkpoint")]
+pub(crate) struct DiscardedSimulationBranch {
+    graph: Arc<ModelGraph>,
+    engine: ModelEngine,
+    last_summary: FrameSummary,
+    sensory_stimulus: Vec<i32>,
+    cursor_loom_q15: i32,
+    authored_drive: Option<AuthoredDrive>,
+}
+
+#[cfg(feature = "n6-product-checkpoint")]
+impl DiscardedSimulationBranch {
+    fn from_checkpoint(
+        graph: Arc<ModelGraph>,
+        checkpoint: &SimulationRuntimeCheckpoint,
+    ) -> Result<Self, String> {
+        checkpoint.validate(&graph)?;
+        let mut engine = ModelEngine::from_state(Arc::clone(&graph), checkpoint.state.clone())?;
+        engine.last_behavior_intent = checkpoint.last_behavior_intent;
+        Ok(Self {
+            graph,
+            engine,
+            last_summary: checkpoint.summary.clone(),
+            sensory_stimulus: checkpoint.sensory_stimulus.clone(),
+            cursor_loom_q15: checkpoint.cursor_loom_q15,
+            authored_drive: checkpoint.authored_drive.map(|drive| AuthoredDrive {
+                population_offset: drive.population_offset,
+                expires_after_frame: drive.expires_after_frame,
+            }),
+        })
+    }
+
+    pub(crate) fn set_cursor_loom_q15(&mut self, value: i32) {
+        self.cursor_loom_q15 = value.clamp(0, 8_192);
+    }
+
+    pub(crate) fn step(&mut self) -> FrameSummary {
+        self.sensory_stimulus.fill(0);
+        apply_population_drive(
+            &mut self.sensory_stimulus,
+            LOOM_POPULATION_OFFSET,
+            self.cursor_loom_q15,
+        );
+        if self
+            .authored_drive
+            .is_some_and(|drive| self.engine.state.frame >= drive.expires_after_frame)
+        {
+            self.authored_drive = None;
+        }
+        if let Some(drive) = self.authored_drive {
+            apply_population_drive(&mut self.sensory_stimulus, drive.population_offset, 8_192);
+        }
+        self.last_summary = self.engine.step_cpu(StepInput {
+            stimulus_q15: &self.sensory_stimulus,
+        });
+        self.last_summary.clone()
+    }
+
+    pub(crate) fn checkpoint(&self) -> SimulationRuntimeCheckpoint {
+        SimulationRuntimeCheckpoint {
+            schema_version: 1,
+            graph: self.graph.identity.clone(),
+            model_identity: self.engine.model_identity(),
+            state: self.engine.state.clone(),
+            summary: self.last_summary.clone(),
+            last_behavior_intent: self.engine.last_behavior_intent,
+            sensory_stimulus: self.sensory_stimulus.clone(),
+            cursor_loom_q15: self.cursor_loom_q15,
+            authored_drive: self.authored_drive.map(|drive| AuthoredDriveCheckpoint {
+                population_offset: drive.population_offset,
+                expires_after_frame: drive.expires_after_frame,
+            }),
+            live_digest: self.engine.state.digest(),
+        }
+    }
+}
+
 impl SimulationSession {
+    #[cfg(feature = "n6-product-checkpoint")]
+    pub(crate) fn product_runtime_checkpoint(&self) -> SimulationRuntimeCheckpoint {
+        SimulationRuntimeCheckpoint {
+            schema_version: 1,
+            graph: self.graph.identity.clone(),
+            model_identity: self.engine.model_identity(),
+            state: self.engine.state.clone(),
+            summary: self.last_summary.clone(),
+            last_behavior_intent: self.engine.last_behavior_intent,
+            sensory_stimulus: self.sensory_stimulus.clone(),
+            cursor_loom_q15: self.cursor_loom_q15,
+            authored_drive: self.authored_drive.map(|drive| AuthoredDriveCheckpoint {
+                population_offset: drive.population_offset,
+                expires_after_frame: drive.expires_after_frame,
+            }),
+            live_digest: self.live_digest(),
+        }
+    }
+
+    #[cfg(feature = "n6-product-checkpoint")]
+    pub(crate) fn discarded_branch(
+        &self,
+        checkpoint: &SimulationRuntimeCheckpoint,
+    ) -> Result<DiscardedSimulationBranch, String> {
+        DiscardedSimulationBranch::from_checkpoint(Arc::clone(&self.graph), checkpoint)
+    }
+
     pub fn calibrated(
         render_state: Option<&eframe::egui_wgpu::RenderState>,
         preference: ComputePreference,
@@ -49,6 +229,31 @@ impl SimulationSession {
         let assessment = assess_capacity(render_state, preference);
         let graph = Arc::new(ModelGraph::synthetic(assessment.tier, seed ^ 0x47A9_2D31));
         Self::with_graph(render_state, assessment, graph, seed, started_unix_millis)
+    }
+
+    #[cfg(feature = "n6-product-checkpoint")]
+    pub(crate) fn product_checkpoint_fixture(seed: u64) -> Self {
+        let graph = Arc::new(ModelGraph::synthetic(
+            ModelTier::Demo4096,
+            seed ^ 0x47A9_2D31,
+        ));
+        let assessment = CapacityAssessment {
+            schema_version: 1,
+            requested: ComputePreference::Cpu,
+            selected: ActiveBackend::Cpu,
+            tier: ModelTier::Demo4096,
+            logical_cpu_count: 1,
+            cpu_calibration_ms: 0.0,
+            gpu_available: false,
+            gpu_calibration_ms: None,
+            gpu_adapter: None,
+            gpu_backend: None,
+            gpu_device_type: None,
+            gpu_exact_match: None,
+            reason: "fixed CPU-only N6 product-checkpoint fixture".to_owned(),
+            started_new_session: true,
+        };
+        Self::with_graph(None, assessment, graph, seed, 0)
     }
 
     #[cfg(feature = "n41-visual-review-b")]

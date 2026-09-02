@@ -48,7 +48,7 @@ const LANDING_SAFE_BOTTOM_FRACTION: f32 = 0.12;
 const LANDING_SAFE_BOTTOM_MIN_PIXELS: f32 = 56.0;
 const LANDING_SAFE_BOTTOM_MAX_PIXELS: f32 = 112.0;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 enum GroundPathMotif {
     Straight,
     CurveLeft,
@@ -86,7 +86,7 @@ impl GroundPathMotif {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 struct GroundSpeedProfile {
     multiplier: f32,
     stride_phase: f32,
@@ -95,7 +95,7 @@ struct GroundSpeedProfile {
     drift_radians_per_second: f32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 struct FlightSaccade {
     start_seconds: f32,
     duration_seconds: f32,
@@ -113,7 +113,7 @@ impl FlightSaccade {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 struct FlightPathProfile {
     speed_multiplier: f32,
     speed_phase: f32,
@@ -380,6 +380,93 @@ pub struct PetMotion {
     pub reduced_motion: bool,
 }
 
+#[cfg(feature = "n6-product-checkpoint")]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PetMotionCheckpoint {
+    schema_version: u32,
+    screen_position: [f32; 2],
+    heading_radians: f32,
+    speed_pixels_per_second: f32,
+    animation_seconds: f32,
+    behavior_age_seconds: f32,
+    altitude_pixels: f32,
+    last_behavior: Behavior,
+    behavior_start_altitude_pixels: f32,
+    landing_start_position: [f32; 2],
+    landing_target_position: [f32; 2],
+    landing_start_velocity: [f32; 2],
+    landing_start_heading: f32,
+    landing_target_heading: f32,
+    landing_start_altitude_pixels: f32,
+    landing_active: bool,
+    ground_bout_sequence: u64,
+    ground_path_motif: GroundPathMotif,
+    ground_speed_profile: GroundSpeedProfile,
+    flight_bout_sequence: u64,
+    flight_path_profile: FlightPathProfile,
+    natural_flight_motion: bool,
+    paused: bool,
+    reduced_motion: bool,
+}
+
+#[cfg(feature = "n6-product-checkpoint")]
+impl PetMotionCheckpoint {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.schema_version != 1 {
+            return Err("unsupported pet-motion checkpoint schema".to_owned());
+        }
+        let values = [
+            self.screen_position[0],
+            self.screen_position[1],
+            self.heading_radians,
+            self.speed_pixels_per_second,
+            self.animation_seconds,
+            self.behavior_age_seconds,
+            self.altitude_pixels,
+            self.behavior_start_altitude_pixels,
+            self.landing_start_position[0],
+            self.landing_start_position[1],
+            self.landing_target_position[0],
+            self.landing_target_position[1],
+            self.landing_start_velocity[0],
+            self.landing_start_velocity[1],
+            self.landing_start_heading,
+            self.landing_target_heading,
+            self.landing_start_altitude_pixels,
+            self.ground_speed_profile.multiplier,
+            self.ground_speed_profile.stride_phase,
+            self.ground_speed_profile.drift_phase,
+            self.ground_speed_profile.stride_radians_per_second,
+            self.ground_speed_profile.drift_radians_per_second,
+            self.flight_path_profile.speed_multiplier,
+            self.flight_path_profile.speed_phase,
+            self.flight_path_profile.speed_radians_per_second,
+            self.flight_path_profile.drift_radians_per_second,
+            self.flight_path_profile.saccades[0].start_seconds,
+            self.flight_path_profile.saccades[0].duration_seconds,
+            self.flight_path_profile.saccades[0].angle_radians,
+            self.flight_path_profile.saccades[1].start_seconds,
+            self.flight_path_profile.saccades[1].duration_seconds,
+            self.flight_path_profile.saccades[1].angle_radians,
+        ];
+        if values.iter().any(|value| !value.is_finite()) {
+            return Err("pet-motion checkpoint contains a non-finite value".to_owned());
+        }
+        if self.behavior_age_seconds < 0.0 || self.altitude_pixels < 0.0 {
+            return Err("pet-motion checkpoint contains a negative age or altitude".to_owned());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn digest(&self) -> Result<String, String> {
+        self.validate()?;
+        let encoded = serde_json::to_vec(self)
+            .map_err(|error| format!("cannot encode pet-motion checkpoint: {error}"))?;
+        Ok(mechofly_core::sha256_hex([encoded]))
+    }
+}
+
 impl Default for PetMotion {
     fn default() -> Self {
         Self {
@@ -411,6 +498,81 @@ impl Default for PetMotion {
 }
 
 impl PetMotion {
+    #[cfg(feature = "n6-product-checkpoint")]
+    pub(crate) fn checkpoint(&self) -> PetMotionCheckpoint {
+        PetMotionCheckpoint {
+            schema_version: 1,
+            screen_position: [self.screen_position.x, self.screen_position.y],
+            heading_radians: self.heading_radians,
+            speed_pixels_per_second: self.speed_pixels_per_second,
+            animation_seconds: self.animation_seconds,
+            behavior_age_seconds: self.behavior_age_seconds,
+            altitude_pixels: self.altitude_pixels,
+            last_behavior: self.last_behavior,
+            behavior_start_altitude_pixels: self.behavior_start_altitude_pixels,
+            landing_start_position: [self.landing_start_position.x, self.landing_start_position.y],
+            landing_target_position: [
+                self.landing_target_position.x,
+                self.landing_target_position.y,
+            ],
+            landing_start_velocity: [self.landing_start_velocity.x, self.landing_start_velocity.y],
+            landing_start_heading: self.landing_start_heading,
+            landing_target_heading: self.landing_target_heading,
+            landing_start_altitude_pixels: self.landing_start_altitude_pixels,
+            landing_active: self.landing_active,
+            ground_bout_sequence: self.ground_bout_sequence,
+            ground_path_motif: self.ground_path_motif,
+            ground_speed_profile: self.ground_speed_profile,
+            flight_bout_sequence: self.flight_bout_sequence,
+            flight_path_profile: self.flight_path_profile,
+            natural_flight_motion: self.natural_flight_motion,
+            paused: self.paused,
+            reduced_motion: self.reduced_motion,
+        }
+    }
+
+    #[cfg(feature = "n6-product-checkpoint")]
+    pub(crate) fn from_checkpoint(checkpoint: &PetMotionCheckpoint) -> Result<Self, String> {
+        checkpoint.validate()?;
+        Ok(Self {
+            screen_position: Pos2::new(
+                checkpoint.screen_position[0],
+                checkpoint.screen_position[1],
+            ),
+            heading_radians: checkpoint.heading_radians,
+            speed_pixels_per_second: checkpoint.speed_pixels_per_second,
+            animation_seconds: checkpoint.animation_seconds,
+            behavior_age_seconds: checkpoint.behavior_age_seconds,
+            altitude_pixels: checkpoint.altitude_pixels,
+            last_behavior: checkpoint.last_behavior,
+            behavior_start_altitude_pixels: checkpoint.behavior_start_altitude_pixels,
+            landing_start_position: Pos2::new(
+                checkpoint.landing_start_position[0],
+                checkpoint.landing_start_position[1],
+            ),
+            landing_target_position: Pos2::new(
+                checkpoint.landing_target_position[0],
+                checkpoint.landing_target_position[1],
+            ),
+            landing_start_velocity: Vec2::new(
+                checkpoint.landing_start_velocity[0],
+                checkpoint.landing_start_velocity[1],
+            ),
+            landing_start_heading: checkpoint.landing_start_heading,
+            landing_target_heading: checkpoint.landing_target_heading,
+            landing_start_altitude_pixels: checkpoint.landing_start_altitude_pixels,
+            landing_active: checkpoint.landing_active,
+            ground_bout_sequence: checkpoint.ground_bout_sequence,
+            ground_path_motif: checkpoint.ground_path_motif,
+            ground_speed_profile: checkpoint.ground_speed_profile,
+            flight_bout_sequence: checkpoint.flight_bout_sequence,
+            flight_path_profile: checkpoint.flight_path_profile,
+            natural_flight_motion: checkpoint.natural_flight_motion,
+            paused: checkpoint.paused,
+            reduced_motion: checkpoint.reduced_motion,
+        })
+    }
+
     /// Synchronize coordinates only while Windows is actively dragging the native window.
     /// Autonomous motion retains its floating-point accumulator between integer HWND updates.
     pub fn synchronize_native_drag(&mut self, dragging: bool, position: Option<Pos2>) {

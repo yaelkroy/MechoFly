@@ -11,6 +11,8 @@ mod desktop_pet;
 mod diagnostics;
 mod live_brain;
 mod pet;
+#[cfg(feature = "n6-product-checkpoint")]
+mod product_checkpoint;
 #[cfg(feature = "n41-visual-review-b")]
 mod review_evidence;
 mod runtime;
@@ -31,39 +33,59 @@ use serde::Serialize;
 
 const N41_B_VISUAL_REVIEW_FLAG: &str = "--n41-b-visual-review";
 const N41_VISUAL_REVIEW_RECEIPT_OPTION: &str = "--n41-visual-review-receipt";
+const N6_PRODUCT_CHECKPOINT_SELF_TEST_OPTION: &str = "--n6-product-checkpoint-self-test";
 
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if option_value(&args, N6_PRODUCT_CHECKPOINT_SELF_TEST_OPTION).is_some() {
+        if let Err(error) = run_n6_product_checkpoint(&args) {
+            eprintln!("MechoFly: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     diagnostics::initialize();
-    if let Err(error) = run() {
+    if let Err(error) = run(&args) {
         diagnostics::record_fatal_error(&error.to_string());
         eprintln!("MechoFly: {error}");
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(path) = option_value(&args, "--self-test") {
+#[cfg(feature = "n6-product-checkpoint")]
+fn run_n6_product_checkpoint(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let path = option_value(args, N6_PRODUCT_CHECKPOINT_SELF_TEST_OPTION)
+        .ok_or("N6 product-checkpoint receipt path is missing")?;
+    product_checkpoint::run(PathBuf::from(path).as_path())
+}
+
+#[cfg(not(feature = "n6-product-checkpoint"))]
+fn run_n6_product_checkpoint(_args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    Err("N6 product-checkpoint self-test requires feature n6-product-checkpoint".into())
+}
+
+fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(path) = option_value(args, "--self-test") {
         diagnostics::mark("starting isolated deterministic self-test");
         self_test::run(PathBuf::from(path).as_path())?;
         diagnostics::mark("isolated deterministic self-test completed");
         return Ok(());
     }
-    if let Some(path) = option_value(&args, "--behavior-baseline") {
+    if let Some(path) = option_value(args, "--behavior-baseline") {
         diagnostics::mark("starting deterministic behavior telemetry baseline");
-        behavior_baseline::run(PathBuf::from(path).as_path(), &args)?;
+        behavior_baseline::run(PathBuf::from(path).as_path(), args)?;
         diagnostics::mark("deterministic behavior telemetry baseline completed");
         return Ok(());
     }
-    if let Some(path) = option_value(&args, "--behavior-campaign") {
-        behavior_campaign::run(PathBuf::from(path).as_path(), &args)?;
+    if let Some(path) = option_value(args, "--behavior-campaign") {
+        behavior_campaign::run(PathBuf::from(path).as_path(), args)?;
         return Ok(());
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
         .try_init()
         .ok();
-    let config = AppConfig::from_profile_and_args(&args)?;
-    write_n41_visual_review_launch_receipt(&args, &config)?;
+    let config = AppConfig::from_profile_and_args(args)?;
+    write_n41_visual_review_launch_receipt(args, &config)?;
     diagnostics::mark("runtime profile and command line accepted");
     let icon = app_icon();
     let options = eframe::NativeOptions {
