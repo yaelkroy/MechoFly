@@ -1,47 +1,87 @@
 # MechoFly architecture and trust boundaries
 
-## Current implementation boundary
+## Independent implementation boundary
 
-No third-party source tree or source archive is present in this tree. The
-application uses a fresh Windows Forms architecture and a deterministic model
-defined in `src/MechoFly`. This statement describes repository contents; it is
-not a legal clean-room certification and does not rewrite earlier Git history.
+The active application is written in Rust under `crates/`. The accepted legacy
+desktop experience is the user-approved acceptance and visual-geometry
+reference for the companion and observatory, but no earlier runtime, C#
+assembly, or .NET architecture ships in or is invoked by MechoFly. This is a
+repository-design statement, not a legal opinion or a rewrite of Git history.
+The restored presentation is taken from MechoFly's earlier native Rust commit
+`43ba4aa406c5a39f642dace33951fcf10a7c00cf`; it does not copy or invoke the
+upstream SceneKit brain window.
 
-## Runtime flow
+## Runtime ownership
 
 ```text
-modeled topology -> live state -> bounded snapshot ring -> deep-copy branch
-                                              |               |
-                                              |               +-> authored preview
-                                              +------------------> actual frames
-                                                     paired comparison -> UI
+versioned graph ──> immutable incoming CSR ──> deterministic fixed-point step
+                                                │
+                                                v
+                                      one live ModelState owner
+                                                │
+                              ┌─────────────────┴─────────────────┐
+                              v                                   v
+                    bounded checkpoint ring                pet presentation
+                              │                                   │
+                    full checkpoint clone              separate policy ledger
+                              │                          (explicit feedback only)
+                  ┌───────────┴───────────┐
+                  v                       v
+              actual branch       authored alternative
+                  └───────────┬───────────┘
+                              v
+                  filmstrip + immutable receipt
 ```
 
-`SimulationCoordinator` is the only owner of mutable live state. Preview work
-occurs while holding the coordinator boundary long enough to copy a replay
-window and calculate the live-state digest. All subsequent stepping uses a
-detached `NeuralState` instance. The receipt must report identical live-state
-digests before and after generation.
+`SimulationSession` is the sole owner of mutable live neural state. A preview
+receives a copied checkpoint and immutable shared graph. The comparison code
+has no reference that can mutate the session, policy, filesystem, network, or a
+device. Before/after live digests are included in the receipt.
 
-## Replay limits
+The pet policy is a separate serialized object. It selects authored companion
+actions; it does not write the graph or model state. Only explicit encourage or
+discourage input invokes its bounded update rule.
 
-- at most 240 stored frames;
-- at most 120 frames in one comparison;
-- fixed 33 ms model step;
-- deep copies only;
-- no file, network, device, or hardware side effect in preview generation.
+## Compute equivalence
 
-## Stimulation preview policy
+CPU and GPU implement one signed 32-bit fixed-point gather kernel. Every target
+reads a stable incoming CSR interval. There are no unordered float atomics.
+Startup calibration executes both kernels when GPU compute is available and
+requires exact state equality before GPU can be selected.
 
-A valid plan is explicitly marked `user_authored_preview`, is preview-only,
-targets no more than 64 unique modeled neurons, uses amplitude in `(0, 0.25]`,
-uses duration from 33 through 990 ms, and stays within the dosage ceiling.
-The UI never exposes a commit/apply operation. Rejected plans produce no branch.
+Capacity evaluation chooses a named synthetic tier only at a session boundary.
+An imported graph is never automatically truncated. Re-evaluation starts a new
+session identifier and replay epoch.
 
-## Claims
+## UI processes and windows
 
-Neural positions, topology, dynamics, spike events, stimulation, and behavior
-are labeled as modeled or simulated unless a separately governed dataset is
-loaded. A counterfactual branch is an alternative model trajectory, not a
-prediction of an animal or a treatment recommendation.
+One `MechoFly.exe` process owns:
 
+- a compact native Win32 layered pet window with per-pixel alpha;
+- a system tray menu; and
+- an opaque resizable Brain Lab child viewport.
+
+All artwork is procedural. The Windows pet is supersampled in Rust into
+premultiplied BGRA and sent to `UpdateLayeredWindow`; zero-alpha pixels are
+desktop holes. `WM_NCHITTEST` samples the same alpha mask and returns
+`HTTRANSPARENT` for a hole, preventing the invisible bounds from swallowing
+desktop interaction. `eframe` remains hidden at the root and owns the opaque
+Brain Lab viewport plus portable `wgpu` compute. No magenta/chroma-key
+transparency is used. Visual repaint timing is independent from the fixed 33
+ms model step.
+
+The layered window registers the eight documented global shortcuts and also
+polls their physical key state with edge detection. The second path covers
+reserved F12 and registration conflicts without installing a keyboard hook.
+While Brain Lab is open, the pet is moved out of the topmost band so it cannot
+cover observatory controls; closing Brain Lab restores desktop-topmost behavior.
+
+## Safety limits
+
+- 240 retained checkpoints maximum;
+- 120 comparison frames maximum;
+- 64 unique intervention targets maximum;
+- amplitude greater than zero and at most 0.25;
+- duration 33–990 ms in 33 ms increments;
+- four neuron-seconds dosage ceiling; and
+- `live_hardware_authority = NONE` in runtime and receipts.

@@ -1,0 +1,174 @@
+name: MechoFly N7 scientific explanation foundation
+
+on:
+  push:
+    branches: ["feat/n7-scientific-explanation-foundation-rust-v24"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: n7-scientific-explanation-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            target
+          key: mechofly-n7-explanation-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            mechofly-n7-explanation-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
+            mechofly-n6-replay-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
+
+      - name: Frozen behavior and static boundaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          cargo fmt --all --check
+          if ($LASTEXITCODE -ne 0) { throw 'Formatting failed.' }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Whitespace check failed.' }
+          python tools/verify_n41_integration.py --root . --receipt artifacts/n41-runtime-isolation.json
+          if ($LASTEXITCODE -ne 0) { throw 'N4.1 runtime isolation failed.' }
+          python tools/verify_n41_natural_motion.py --root . --receipt artifacts/n41-natural-motion.json
+          if ($LASTEXITCODE -ne 0) { throw 'Accepted natural-motion boundary failed.' }
+          python tools/verify_n41_natural_flight.py --root . --receipt artifacts/n41-natural-flight.json
+          if ($LASTEXITCODE -ne 0) { throw 'Natural-flight boundary failed.' }
+          python tools/verify_n41_exploratory_flight.py --root . --receipt artifacts/n41-exploratory-flight.json
+          if ($LASTEXITCODE -ne 0) { throw 'Exploratory-flight boundary failed.' }
+          python tools/verify_n6_product_checkpoint.py --root . --receipt artifacts/n6-checkpoint-static.json
+          if ($LASTEXITCODE -ne 0) { throw 'N6 product-checkpoint boundary failed.' }
+          python tools/verify_n6_counterfactual_replay.py --root . --receipt artifacts/n6-replay-static.json
+          if ($LASTEXITCODE -ne 0) { throw 'N6 counterfactual-replay boundary failed.' }
+          python tools/verify_n7_scientific_explanation.py --root . --receipt artifacts/n7-explanation-static.json
+          if ($LASTEXITCODE -ne 0) { throw 'N7 scientific-explanation boundary failed.' }
+
+      - name: Canonical N6 and N7 Rust gates
+        shell: pwsh
+        run: |
+          cargo test --release --locked --workspace --all-targets
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical workspace tests failed.' }
+          cargo test --release --locked --workspace --all-targets --features mechofly-app/n6-counterfactual-replay
+          if ($LASTEXITCODE -ne 0) { throw 'N6 replay workspace tests failed.' }
+          cargo test --release --locked --workspace --all-targets --features mechofly-app/n7-scientific-explanation
+          if ($LASTEXITCODE -ne 0) { throw 'N7 explanation workspace tests failed.' }
+          cargo clippy --release --locked --workspace --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical clippy failed.' }
+          cargo clippy --release --locked --workspace --all-targets --features mechofly-app/n7-scientific-explanation -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'N7 explanation clippy failed.' }
+
+      - name: Feature isolation preservation and deterministic explanation
+        shell: pwsh
+        run: |
+          $env:MECHOFLY_DATA_DIR = (Join-Path $PWD 'artifacts\explicit-data')
+          $checkpointHash = '573db2c974577e6b20a6e263d8bd99518dd410a34adec4ba3c5b34b42932052c'
+          $replayHash = '55c636ecf713ae9d4f75e6a509a9bc176033d7554e2ad6a773cf7a4ffb62d65e'
+
+          cargo build --release --locked -p mechofly-app
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical build failed.' }
+          $canonical = (Resolve-Path 'target\release\MechoFly.exe').Path
+          $canonicalReject = (Join-Path $PWD 'artifacts\canonical-must-reject-n7.json')
+          $process = Start-Process -FilePath $canonical -ArgumentList @('--n7-scientific-explanation-self-test', ('"' + $canonicalReject + '"')) -Wait -PassThru
+          if ($process.ExitCode -eq 0 -or (Test-Path -LiteralPath $canonicalReject)) {
+            throw 'Canonical binary accepted the N7 command.'
+          }
+
+          $replayTarget = (Join-Path $PWD 'artifacts\replay-target')
+          cargo build --release --locked -p mechofly-app --features n6-counterfactual-replay --target-dir $replayTarget
+          if ($LASTEXITCODE -ne 0) { throw 'R10 replay build failed.' }
+          $replayBinary = (Resolve-Path (Join-Path $replayTarget 'release\MechoFly.exe')).Path
+          $replayReject = (Join-Path $PWD 'artifacts\replay-must-reject-n7.json')
+          $process = Start-Process -FilePath $replayBinary -ArgumentList @('--n7-scientific-explanation-self-test', ('"' + $replayReject + '"')) -Wait -PassThru
+          if ($process.ExitCode -eq 0 -or (Test-Path -LiteralPath $replayReject)) {
+            throw 'R10 replay-only binary accepted the N7 command.'
+          }
+
+          $n7Target = (Join-Path $PWD 'artifacts\n7-target')
+          cargo build --release --locked -p mechofly-app --features n7-scientific-explanation --target-dir $n7Target
+          if ($LASTEXITCODE -ne 0) { throw 'N7 explanation build failed.' }
+          $n7Binary = (Resolve-Path (Join-Path $n7Target 'release\MechoFly.exe')).Path
+
+          $checkpointReceipt = (Join-Path $PWD 'artifacts\n7-preserved-n6-checkpoint.json')
+          $process = Start-Process -FilePath $n7Binary -ArgumentList @('--n6-product-checkpoint-self-test', ('"' + $checkpointReceipt + '"')) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'N7 build regressed the R9 checkpoint self-test.' }
+          if ((Get-FileHash -LiteralPath $checkpointReceipt -Algorithm SHA256).Hash.ToLowerInvariant() -ne $checkpointHash) {
+            throw 'N7 build changed the accepted R9 checkpoint receipt.'
+          }
+
+          $replayReceipt = (Join-Path $PWD 'artifacts\n7-preserved-n6-replay.json')
+          $process = Start-Process -FilePath $n7Binary -ArgumentList @('--n6-counterfactual-replay-self-test', ('"' + $replayReceipt + '"')) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'N7 build regressed the R10 replay self-test.' }
+          if ((Get-FileHash -LiteralPath $replayReceipt -Algorithm SHA256).Hash.ToLowerInvariant() -ne $replayHash) {
+            throw 'N7 build changed the accepted R10 replay receipt.'
+          }
+
+          $receiptA = (Join-Path $PWD 'artifacts\n7-scientific-explanation-a.json')
+          $receiptB = (Join-Path $PWD 'artifacts\n7-scientific-explanation-b.json')
+          foreach ($receiptPath in @($receiptA, $receiptB)) {
+            $process = Start-Process -FilePath $n7Binary -ArgumentList @('--n7-scientific-explanation-self-test', ('"' + $receiptPath + '"')) -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw 'N7 explanation self-test failed.' }
+          }
+          if ((Get-FileHash -LiteralPath $receiptA -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $receiptB -Algorithm SHA256).Hash) {
+            throw 'N7 explanation receipts were not byte-identical.'
+          }
+          $receipt = Get-Content -LiteralPath $receiptA -Raw | ConvertFrom-Json
+          if ($receipt.status -ne 'PASS' -or
+              -not $receipt.accepted_r10_capsule_exact -or
+              -not $receipt.actual_and_counterfactual_controller_lanes -or
+              -not $receipt.evidence_vocabulary_complete -or
+              -not $receipt.every_displayed_quantity_tagged -or
+              -not $receipt.why_began_present -or
+              -not $receipt.why_persisted_present -or
+              -not $receipt.why_ended_present -or
+              -not $receipt.minimum_dwell_present -or
+              -not $receipt.sampled_duration_present -or
+              -not $receipt.hysteresis_present -or
+              -not $receipt.refractory_present -or
+              -not $receipt.interruptibility_present -or
+              -not $receipt.uncertainty_not_fabricated -or
+              -not $receipt.serialization_round_trip_exact -or
+              -not $receipt.deterministic_reverification_exact -or
+              -not $receipt.live_state_digest_unchanged -or
+              $receipt.live_restore_authorized -or
+              $receipt.controller_or_motor_semantics_changed -or
+              $receipt.parameter_json_changed -or
+              $receipt.live_ui_promoted -or
+              $receipt.screen_ecology_added -or
+              $receipt.food_search_added -or
+              $receipt.appdata_write_authorized -or
+              $receipt.promotion_authorized -or
+              $receipt.deployment_authorized) {
+            throw 'N7 explanation receipt did not preserve the fail-closed contract.'
+          }
+
+      - name: Final source immutability
+        shell: pwsh
+        run: |
+          cargo fmt --all --check
+          if ($LASTEXITCODE -ne 0) { throw 'Formatting drifted.' }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'Validation mutated tracked source.' }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mechofly-n7-scientific-explanation
+          path: artifacts
+          if-no-files-found: warn
+          retention-days: 14

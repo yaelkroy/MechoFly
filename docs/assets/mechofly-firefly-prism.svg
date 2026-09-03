@@ -59,6 +59,6 @@
   </g>
   <text x="830" y="226" fill="#f5ffe7" font-family="Segoe UI, Arial, sans-serif" font-size="72" font-weight="700">MechoFly</text>
   <text x="834" y="292" fill="#cfff73" font-family="Segoe UI, Arial, sans-serif" font-size="42" font-weight="600" letter-spacing="4">FIREFLY PRISM</text>
-  <text x="836" y="342" fill="#a9c4b2" font-family="Segoe UI, Arial, sans-serif" font-size="23">Two procedural skins · Drosophila default</text>
-  <text x="836" y="378" fill="#82a28d" font-family="Segoe UI, Arial, sans-serif" font-size="21">Firefly development profile on AI100</text>
+  <text x="836" y="342" fill="#a9c4b2" font-family="Segoe UI, Arial, sans-serif" font-size="23">Recording-matched Prism · Rust runtime</text>
+  <text x="836" y="378" fill="#82a28d" font-family="Segoe UI, Arial, sans-serif" font-size="21">Prism default · Drosophila Natural alternate</text>
 </svg>

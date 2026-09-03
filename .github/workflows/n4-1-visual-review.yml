@@ -1,0 +1,131 @@
+name: MechoFly N4.1-B visual-review candidate
+
+on:
+  push:
+    branches: ["fix/n4-1-b-natural-bouts-review-rust-v19"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: n4-1-b-visual-review-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  candidate-boundary:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: rustfmt, clippy
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            target
+          key: mechofly-n41-visual-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            mechofly-n41-visual-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
+            mechofly-n41-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
+      - name: Static boundary and immutable parameters
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          cargo fmt --all --check
+          if ($LASTEXITCODE -ne 0) { throw 'Formatting failed.' }
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { throw 'Whitespace check failed.' }
+          python tools/verify_n41_integration.py `
+            --root . `
+            --receipt artifacts/n41-runtime-isolation.json
+          if ($LASTEXITCODE -ne 0) { throw 'N4.1 runtime boundary failed.' }
+          python tools/verify_n41_visual_review.py `
+            --root . `
+            --receipt artifacts/n41-visual-review-integration.json
+          if ($LASTEXITCODE -ne 0) { throw 'N4.1-B visual-review boundary failed.' }
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+            -File tools/Test-N41VisualReviewMetrics.ps1 `
+            -OutputDirectory artifacts/n41-visual-metrics-regression
+          if ($LASTEXITCODE -ne 0) { throw 'N4.1-B visual metrics regression failed.' }
+      - name: Frozen controller and application tests
+        shell: powershell
+        run: |
+          cargo test --release --locked -p mechofly-core --test n4_dynamics -- --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen N4 controller tests failed.' }
+          cargo test --release --locked -p mechofly-core --test n41_soft_fatigue -- --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'N4.1 controller tests failed.' }
+          cargo test --release --locked -p mechofly-app -- --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical application tests failed.' }
+          cargo test --release --locked -p mechofly-app --features n41-visual-review-b -- --nocapture
+          if ($LASTEXITCODE -ne 0) { throw 'Visual-review application tests failed.' }
+      - name: Warnings denied for both build surfaces
+        shell: powershell
+        run: |
+          cargo clippy --release --locked -p mechofly-app --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical application Clippy failed.' }
+          cargo clippy --release --locked -p mechofly-app --all-targets --features n41-visual-review-b -- -D warnings
+          if ($LASTEXITCODE -ne 0) { throw 'Visual-review application Clippy failed.' }
+      - name: Build canonical and feature-gated candidate
+        shell: powershell
+        run: |
+          $env:MECHOFLY_DATA_DIR = (Join-Path $PWD 'artifacts\canonical-app-data')
+          cargo build --release --locked -p mechofly-app
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical application build failed.' }
+          $canonical = (Resolve-Path 'target\release\MechoFly.exe').Path
+          $canonicalHash = (Get-FileHash $canonical -Algorithm SHA256).Hash.ToLowerInvariant()
+          $canonicalReceipt = (Join-Path $PWD 'artifacts\canonical-self-test.json')
+          $process = Start-Process -FilePath $canonical -ArgumentList @('--self-test', ('"' + $canonicalReceipt + '"')) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Canonical self-test failed.' }
+          $rejectReceipt = (Join-Path $PWD 'artifacts\canonical-must-reject-review.json')
+          $process = Start-Process -FilePath $canonical -ArgumentList @('--n41-b-visual-review', '--n41-visual-review-receipt', ('"' + $rejectReceipt + '"')) -Wait -PassThru
+          if ($process.ExitCode -eq 0 -or (Test-Path -LiteralPath $rejectReceipt)) { throw 'Canonical binary accepted a visual-review request.' }
+
+          $candidateTarget = (Join-Path $PWD 'artifacts\candidate-target')
+          cargo build --release --locked -p mechofly-app --features n41-visual-review-b --target-dir $candidateTarget
+          if ($LASTEXITCODE -ne 0) { throw 'Feature-gated candidate build failed.' }
+          $candidate = (Resolve-Path (Join-Path $candidateTarget 'release\MechoFly.exe')).Path
+          $candidateHash = (Get-FileHash $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+          $candidateSelfTest = (Join-Path $PWD 'artifacts\candidate-self-test.json')
+          $process = Start-Process -FilePath $candidate -ArgumentList @('--self-test', ('"' + $candidateSelfTest + '"')) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Candidate self-test failed.' }
+          [ordered]@{
+            schema_version = 1
+            status = 'PASS'
+            canonical_executable_sha256 = $canonicalHash
+            candidate_executable_sha256 = $candidateHash
+            hashes_differ = ($canonicalHash -cne $candidateHash)
+            canonical_default_profile = 'n4'
+            candidate_review_profile = 'n41-b-natural'
+            candidate_requires_feature = 'n41-visual-review-b'
+            candidate_requires_flag = '--n41-b-visual-review'
+            live_gui_review_run_in_ci = $false
+            promotion_authorized = $false
+            deployment_authorized = $false
+          } | ConvertTo-Json | Set-Content -LiteralPath artifacts\candidate-build-receipt.json -Encoding utf8
+      - name: Final source immutability
+        shell: powershell
+        run: |
+          cargo fmt --all --check
+          if ($LASTEXITCODE -ne 0) { throw 'Formatting drifted.' }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'Validation mutated tracked source.' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mechofly-n41-b-natural-visual-review-candidate
+          path: |
+            artifacts/n41-runtime-isolation.json
+            artifacts/n41-visual-review-integration.json
+            artifacts/n41-visual-metrics-regression/regression-receipt.json
+            artifacts/canonical-self-test.json
+            artifacts/candidate-self-test.json
+            artifacts/candidate-build-receipt.json
+            artifacts/candidate-target/release/MechoFly.exe
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,37 @@
+[package]
+name = "mechofly-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "MechoFly"
+path = "src/main.rs"
+
+[features]
+default = []
+n41-visual-review-b = ["dep:png"]
+n6-product-checkpoint = []
+n6-counterfactual-replay = ["n6-product-checkpoint"]
+n7-scientific-explanation = ["n6-counterfactual-replay"]
+
+[dependencies]
+bytemuck.workspace = true
+eframe.workspace = true
+env_logger.workspace = true
+log.workspace = true
+mechofly-core = { path = "../mechofly-core" }
+pollster.workspace = true
+png = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+wgpu.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+tray-icon.workspace = true
+windows-sys.workspace = true
+
+[build-dependencies]
+naga.workspace = true
