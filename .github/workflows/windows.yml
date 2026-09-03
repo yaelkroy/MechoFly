@@ -200,7 +200,7 @@ jobs:
           if (-not $receipt.two_way_neuron_selection_sync) { throw 'Live Brain and Brain Lab neuron selection did not synchronize both ways.' }
           if (@($receipt.brain_lab_reference_columns).Count -ne 4) { throw 'Brain Lab reference columns are incomplete.' }
           if (-not $receipt.behavior_program_timeline) { throw 'Behavior-program timeline is absent.' }
-          if (-not $receipt.grooming_substate_timeline -or @($receipt.grooming_program_substates).Count -ne 4) { throw 'Animated grooming substate program is incomplete.' }
+          if (-not $receipt.grooming_substate_timeline -or @($receipt.grooming_program_substates).Count -ne 6) { throw 'Animated grooming substate program is incomplete.' }
           if ($receipt.anatomical_context_points -ne 23210) { throw 'Anatomical context point count changed.' }
           if ($receipt.anatomical_context_measured) { throw 'Anatomical context was mislabeled as measured.' }
           if ($receipt.connectome_mutated_by_learning) { throw 'Learning mutated the connectome.' }
